@@ -11,7 +11,7 @@
     notifyMessageSound,
     notifyJoinLeaveSound,
   } from '$lib/stores/settings';
-  import { selectedInputDeviceId, selectedOutputDeviceId } from '$lib/stores/media';
+  import { selectedInputDeviceId, selectedOutputDeviceId, selectedVideoDeviceId } from '$lib/stores/media';
   import { currentUser, updateProfile, changePassword } from '$lib/stores/auth';
   import { applyNoiseSuppression } from '$lib/webrtc';
   import { api } from '$lib/api';
@@ -29,8 +29,12 @@
 
   let inputDevices = $state<MediaDeviceInfo[]>([]);
   let outputDevices = $state<MediaDeviceInfo[]>([]);
+  let videoDevices = $state<MediaDeviceInfo[]>([]);
   let loadingDevices = $state(true);
   let capturingPttKey = $state(false);
+
+  let videoPreviewStream = $state<MediaStream | null>(null);
+  let videoPreviewEl = $state<HTMLVideoElement>();
 
   const MOUSE_BUTTON_NAMES: Record<string, string> = {
     Mouse0: 'Left Click',
@@ -377,12 +381,13 @@
     loadingDevices = true;
     try {
       // Request permission first so labels are available
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
       stream.getTracks().forEach((t) => t.stop());
 
       const devices = await navigator.mediaDevices.enumerateDevices();
       inputDevices = devices.filter((d) => d.kind === 'audioinput');
       outputDevices = devices.filter((d) => d.kind === 'audiooutput');
+      videoDevices = devices.filter((d) => d.kind === 'videoinput');
     } catch {
       // Permission denied or no devices
     } finally {
@@ -393,6 +398,45 @@
   $effect(() => {
     loadDevices();
   });
+
+  function stopVideoPreview() {
+    if (videoPreviewStream) {
+      videoPreviewStream.getTracks().forEach((t) => t.stop());
+      videoPreviewStream = null;
+    }
+  }
+
+  async function toggleVideoPreview() {
+    if (videoPreviewStream) {
+      stopVideoPreview();
+    } else {
+      try {
+        videoPreviewStream = await navigator.mediaDevices.getUserMedia({
+          video: $selectedVideoDeviceId ? { deviceId: { exact: $selectedVideoDeviceId } } : true,
+        });
+      } catch (err) {
+        console.error('Failed to start video preview:', err);
+      }
+    }
+  }
+
+  $effect(() => {
+    if (videoPreviewEl && videoPreviewStream) {
+      videoPreviewEl.srcObject = videoPreviewStream;
+    }
+  });
+
+  // Stop video preview if we switch away from voice-video tab
+  $effect(() => {
+    if (activeTab !== 'voice-video') {
+      stopVideoPreview();
+    }
+  });
+
+  function handleClose() {
+    stopVideoPreview();
+    onclose();
+  }
 
   async function handleChangePassword() {
     cpError = '';
@@ -533,7 +577,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onclick={onclose} onkeydown={(e) => e.key === 'Escape' && onclose()}>
+<div class="overlay" onclick={handleClose} onkeydown={(e) => e.key === 'Escape' && handleClose()}>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal" onclick={(e) => e.stopPropagation()}>
     <div class="sidebar">
@@ -1051,6 +1095,35 @@
                 </button>
               </div>
             {/if}
+
+            <div class="section-divider"></div>
+
+            <h4 class="section-subtitle">Video Settings</h4>
+            <div class="form-group">
+              <label>Camera</label>
+              <select bind:value={$selectedVideoDeviceId} disabled={loadingDevices} onchange={stopVideoPreview}>
+                <option value="">Default</option>
+                {#each videoDevices as d}
+                  <option value={d.deviceId}>{d.label || 'Camera'}</option>
+                {/each}
+              </select>
+            </div>
+
+            <div class="video-preview-container">
+              <div class="video-preview-box">
+                {#if videoPreviewStream}
+                  <video bind:this={videoPreviewEl} autoplay playsinline muted class="preview-video"></video>
+                {:else}
+                  <div class="preview-placeholder">
+                    <Icon name="video-off" size={48} />
+                    <span>Video Preview Disabled</span>
+                  </div>
+                {/if}
+              </div>
+              <button class="btn-accent" onclick={toggleVideoPreview}>
+                {videoPreviewStream ? 'Stop Testing' : 'Test Video'}
+              </button>
+            </div>
           </section>
 
         {:else if activeTab === 'notifications'}
@@ -1151,7 +1224,7 @@
       </div>
 
       <div class="esc-container">
-        <button class="close-modal-btn" onclick={onclose} aria-label="Close settings">
+        <button class="close-modal-btn" onclick={handleClose} aria-label="Close settings">
           <Icon name="x" size={24} />
         </button>
       </div>
@@ -2576,5 +2649,49 @@
     .footer-btns { gap: 10px; }
     .btn-success { padding: 8px 16px; font-size: 0.85rem; }
     .form-grid { grid-template-columns: 1fr; }
+  }
+
+  /* Video Preview */
+  .video-preview-container {
+    margin-top: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+
+  .video-preview-box {
+    width: 100%;
+    max-width: 480px;
+    aspect-ratio: 16 / 9;
+    background: #05050a;
+    border-radius: var(--radius);
+    border: 1px solid var(--glass-border);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .preview-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+  }
+
+  .preview-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-dim);
+  }
+
+  .preview-placeholder span {
+    font-size: 0.9rem;
+    font-weight: 600;
   }
 </style>

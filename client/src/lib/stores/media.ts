@@ -26,6 +26,7 @@ export const isDeafenedStore = writable(false);
 export const speakingUsers = writable<Set<string>>(new Set());
 export const selectedInputDeviceId = writable<string>('');
 export const selectedOutputDeviceId = writable<string>('');
+export const selectedVideoDeviceId = writable<string>('');
 export const pingMs = writable<number | null>(null);
 
 // Sidebar app panels (triggered from AppsMenu)
