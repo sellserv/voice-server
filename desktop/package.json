@@ -49,7 +49,7 @@
       "icon": "icons/icon.ico"
     },
     "appx": {
-      "identityName": "SellServ.Voice",
+      "identityName": "SellServ.SellServVoice",
       "publisher": "CN=A6EC5758-5994-4311-928E-7C47085DB9B1",
       "publisherDisplayName": "SellServ",
       "applicationId": "SellServVoice",
