@@ -955,13 +955,13 @@ export function initSchema() {
         const insertMember = db.prepare('INSERT OR IGNORE INTO server_members (server_id, user_id) VALUES (?, ?)');
         for (const u of users) insertMember.run(defaultServerId, u.id);
 
-        // Backfill server_id on all existing data
-        db.prepare('UPDATE channels SET server_id = ? WHERE server_id IS NULL AND type != \'dm\'').run(defaultServerId);
+        // Backfill server_id on all existing data (try-catch for fresh installs where tables may not exist yet)
+        try { db.prepare('UPDATE channels SET server_id = ? WHERE server_id IS NULL AND type != \'dm\'').run(defaultServerId); } catch {}
         for (const table of ['channel_groups', 'roles', 'custom_emojis', 'soundboard_sounds', 'invite_codes', 'bots', 'audit_log', 'server_bans', 'polls']) {
-          db.prepare(`UPDATE ${table} SET server_id = ? WHERE server_id IS NULL`).run(defaultServerId);
+          try { db.prepare(`UPDATE ${table} SET server_id = ? WHERE server_id IS NULL`).run(defaultServerId); } catch {}
         }
-        db.prepare('UPDATE channel_permission_overrides SET server_id = ? WHERE server_id IS NULL').run(defaultServerId);
-        db.prepare('UPDATE group_permission_overrides SET server_id = ? WHERE server_id IS NULL').run(defaultServerId);
+        try { db.prepare('UPDATE channel_permission_overrides SET server_id = ? WHERE server_id IS NULL').run(defaultServerId); } catch {}
+        try { db.prepare('UPDATE group_permission_overrides SET server_id = ? WHERE server_id IS NULL').run(defaultServerId); } catch {}
       });
       migrate();
     }
