@@ -1,0 +1,57 @@
+name: Deploy Staging
+
+on:
+  push:
+    branches: [staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Deploy to staging
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 8m
+          script: |
+            cd /opt/voip-server-staging
+            git checkout -- .
+            git clean -fd --exclude=.env.staging --exclude=uploads-staging/ --exclude=data/
+            git fetch origin staging
+            git reset --hard origin/staging
+
+            # Skip npm ci if lockfile unchanged
+            NEW_HASH=$(md5sum package-lock.json | cut -d' ' -f1)
+            OLD_HASH=$(cat .last-lock-hash 2>/dev/null || echo "")
+            if [ ! -f node_modules/.bin/vite ]; then OLD_HASH=""; fi
+            if [ "$NEW_HASH" != "$OLD_HASH" ]; then
+              echo "package-lock.json changed — running npm ci"
+              npm ci
+              echo "$NEW_HASH" > .last-lock-hash
+            else
+              echo "package-lock.json unchanged — skipping npm ci"
+            fi
+
+            npm run build
+            npm prune --omit=dev
+
+            sudo systemctl restart voip-server-staging
+            sleep 5
+            for i in 1 2 3 4 5 6; do
+              curl -sf http://localhost:3001/api/health && { echo "Staging deploy successful"; exit 0; }
+              echo "Health check attempt $i failed, retrying..."
+              sleep 5
+            done
+            echo "STAGING DEPLOY FAILED — service not healthy after 30s"
+            sudo journalctl -u voip-server-staging --no-pager -n 40
+            exit 1
