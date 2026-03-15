@@ -27,7 +27,8 @@ jobs:
             cd /opt/voip-server
             git checkout -- .
             git clean -fd --exclude=.env --exclude=uploads/ --exclude=data/
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
 
             # Skip npm ci if lockfile unchanged (check node_modules too)
             NEW_HASH=$(md5sum package-lock.json | cut -d' ' -f1)
