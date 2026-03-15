@@ -1,0 +1,86 @@
+{
+  "name": "sellserv-voice",
+  "version": "1.0.12",
+  "description": "SellServ Voice Desktop Client",
+  "author": "SellServ <support@sellserv.net>",
+  "homepage": "https://github.com/sellserv/voice-server",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win --publish never",
+    "build:linux": "electron-builder --linux --publish never",
+    "build:mac": "electron-builder --mac --publish never"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0",
+    "electron-updater": "^6.3.9",
+    "electron-window-state": "^5.0.3",
+    "uiohook-napi": "^1.5.4"
+  },
+  "devDependencies": {
+    "electron": "33.3.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "npmRebuild": false,
+    "appId": "com.voip-server.desktop",
+    "productName": "SellServ Voice",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "icons/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../client/build",
+        "to": "app",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": ["nsis", "appx"],
+      "icon": "icons/icon.ico"
+    },
+    "appx": {
+      "identityName": "SellServ.Voice",
+      "publisher": "CN=A6EC5758-5994-4311-928E-7C47085DB9B1",
+      "publisherDisplayName": "SellServ",
+      "applicationId": "SellServVoice",
+      "backgroundColor": "#141423"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "runAfterFinish": false,
+      "differentialPackage": false
+    },
+    "compression": "normal",
+    "artifactName": "SellServ-Voice-${version}-${arch}.${ext}",
+    "linux": {
+      "target": [
+        "deb",
+        "AppImage",
+        "pacman"
+      ],
+      "icon": "icons",
+      "category": "Network",
+      "executableName": "sellserv-voice"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "icons/icon.icns"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "sellserv",
+      "repo": "voice-server"
+    }
+  }
+}

@@ -1,0 +1,74 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 8m
+          script: |
+            cd /opt/voip-server
+            git checkout -- .
+            git clean -fd --exclude=.env --exclude=uploads/ --exclude=data/
+            git pull origin main
+
+            # Skip npm ci if lockfile unchanged (check node_modules too)
+            NEW_HASH=$(md5sum package-lock.json | cut -d' ' -f1)
+            OLD_HASH=$(cat .last-lock-hash 2>/dev/null || echo "")
+            # Force reinstall if vite is missing (dev deps were pruned)
+            if [ ! -f node_modules/.bin/vite ]; then OLD_HASH=""; fi
+            if [ "$NEW_HASH" != "$OLD_HASH" ]; then
+              echo "package-lock.json changed — running npm ci"
+              npm ci
+              echo "$NEW_HASH" > .last-lock-hash
+            else
+              echo "package-lock.json unchanged — skipping npm ci"
+            fi
+
+            npm run build
+            npm prune --omit=dev
+
+            # Sync nginx config if it exists on this server and has changed
+            NGINX_CONF=/etc/nginx/sites-available/voip-server
+            if [ -f "$NGINX_CONF" ] && ! diff -q deploy/nginx.conf "$NGINX_CONF" > /dev/null 2>&1; then
+              echo "nginx config changed — updating"
+              sudo cp "$NGINX_CONF" "$NGINX_CONF.bak"
+              sudo cp deploy/nginx.conf "$NGINX_CONF"
+              if sudo nginx -t; then
+                sudo nginx -s reload
+              else
+                echo "nginx config test failed — rolling back"
+                sudo cp "$NGINX_CONF.bak" "$NGINX_CONF"
+                sudo nginx -s reload
+              fi
+            fi
+
+            # Only restart after successful build
+            sudo systemctl restart voip-server
+            sleep 5
+            for i in 1 2 3 4 5 6; do
+              curl -sf http://localhost:3000/api/health && { echo "Deploy successful"; exit 0; }
+              echo "Health check attempt $i failed, retrying..."
+              sleep 5
+            done
+            echo "DEPLOY FAILED — service not healthy after 30s"
+            echo "=== Recent service logs ==="
+            sudo journalctl -u voip-server --no-pager -n 40
+            exit 1

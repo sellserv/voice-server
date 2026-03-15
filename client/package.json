@@ -1,0 +1,26 @@
+{
+  "name": "@voip-server/client",
+  "version": "2.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev --port 5173",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@emoji-mart/data": "^1.2.1",
+    "@sapphi-red/web-noise-suppressor": "^0.3.5",
+    "@voip-server/shared": "*",
+    "emoji-mart": "^5.6.0",
+    "mediasoup-client": "^3.7.17"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "^3.0.8",
+    "@sveltejs/kit": "^2.16.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "svelte": "^5.19.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
+  }
+}

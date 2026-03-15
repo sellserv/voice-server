@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.svelte-kit/
+build/
+.env
+*.db
+*.db-journal
+uploads/
+data/
+.idea/
+.last-lock-hash
+
+# SQLite temp files
+:memory:*
+

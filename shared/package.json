@@ -1,0 +1,7 @@
+{
+  "name": "@voip-server/shared",
+  "version": "2.3.0",
+  "private": true,
+  "main": "./types.ts",
+  "types": "./types.ts"
+}

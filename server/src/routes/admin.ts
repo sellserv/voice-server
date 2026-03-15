@@ -1,0 +1,485 @@
+import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'crypto';
+import { nanoid } from 'nanoid';
+import db from '../db/connection.js';
+import { requirePermission, requireAdmin, requireAuth, isInstanceAdmin } from '../auth/middleware.js';
+import { hasPermission } from '../auth/permissions.js';
+import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
+import { broadcast, disconnectUser, getOnlineUsers, sendToMany } from '../ws/index.js';
+import type { InviteCode } from '@voip-server/shared';
+import { logAuditEvent, getAuditLog } from '../audit/log.js';
+
+function getServerMemberUserIds(serverId: string): string[] {
+  return (db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(serverId) as { user_id: string }[])
+    .map(r => r.user_id);
+}
+
+const adminRateLimit = {
+  config: {
+    rateLimit: {
+      max: 30,
+      timeWindow: '1 minute',
+      keyGenerator: (request: any) => request.ip,
+    },
+  },
+};
+
+export default async function adminRoutes(app: FastifyInstance) {
+  // ─── Instance Admin ─────────────────────────────────────
+
+  // Platform stats overview
+  app.get(
+    '/api/admin/stats',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async () => {
+      const userCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as any).c;
+      const serverCount = (db.prepare('SELECT COUNT(*) as c FROM servers').get() as any).c;
+      const messageCount = (db.prepare('SELECT COUNT(*) as c FROM messages').get() as any).c;
+      const fileCount = (db.prepare('SELECT COUNT(*) as c FROM files').get() as any).c;
+      const diskUsage = (db.prepare('SELECT COALESCE(SUM(size_bytes), 0) as total FROM files').get() as any).total;
+      const onlineCount = getOnlineUsers().length;
+      const openReports = (db.prepare("SELECT COUNT(*) as c FROM reports WHERE status = 'open'").get() as any).c;
+
+      return {
+        users: userCount,
+        servers: serverCount,
+        messages: messageCount,
+        files: fileCount,
+        disk_usage_bytes: diskUsage,
+        online: onlineCount,
+        open_reports: openReports,
+      };
+    },
+  );
+
+  // List all platform users (with detail)
+  app.get(
+    '/api/admin/users',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async () => {
+      return db.prepare(
+        `SELECT u.id, u.username, u.display_name, u.avatar_url, u.email, u.banned, u.created_at,
+                (SELECT COUNT(*) FROM server_members WHERE user_id = u.id) as server_count,
+                (SELECT COUNT(*) FROM messages WHERE user_id = u.id) as message_count,
+                (SELECT ip FROM audit_log WHERE user_id = u.id AND event_type = 'successful_login' ORDER BY created_at DESC LIMIT 1) as last_ip
+         FROM users u ORDER BY u.created_at DESC`,
+      ).all();
+    },
+  );
+
+  // Get single user detail
+  app.get<{ Params: { id: string } }>(
+    '/api/admin/users/:id',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async (request, reply) => {
+      const { id } = request.params;
+      const user = db.prepare(
+        `SELECT u.id, u.username, u.display_name, u.email, u.avatar_url, u.bio, u.banned, u.ban_reason, u.created_at,
+                (SELECT COUNT(*) FROM messages WHERE user_id = u.id) as message_count,
+                (SELECT ip FROM audit_log WHERE user_id = u.id AND event_type = 'successful_login' ORDER BY created_at DESC LIMIT 1) as last_ip
+         FROM users u WHERE u.id = ?`,
+      ).get(id) as any;
+      if (!user) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+      user.servers = db.prepare(
+        `SELECT s.id, s.name FROM servers s
+         JOIN server_members sm ON sm.server_id = s.id
+         WHERE sm.user_id = ?`,
+      ).all(id);
+      return user;
+    },
+  );
+
+  // Platform-wide ban
+  app.post<{ Params: { id: string }; Body: { reason?: string } }>(
+    '/api/admin/users/:id/ban',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async (request, reply) => {
+      const { id } = request.params;
+      const { reason } = request.body || {};
+
+      if (id === request.user.userId) {
+        return reply.code(400).send({ error: 'Cannot ban yourself' });
+      }
+
+      const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id) as
+        | { id: string; username: string }
+        | undefined;
+      if (!user) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+
+      if (isInstanceAdmin(user.username)) {
+        return reply.code(400).send({ error: 'Cannot ban an instance admin' });
+      }
+
+      const trimmedReason = reason?.trim().slice(0, 1000) || null;
+      db.prepare('UPDATE users SET banned = 1, ban_reason = ? WHERE id = ?').run(trimmedReason, id);
+      logAuditEvent('platform_ban', request.user.userId, id, request.ip, { reason: trimmedReason });
+      broadcast({ type: 'user:banned', userId: id });
+      disconnectUser(id);
+
+      return { ok: true };
+    },
+  );
+
+  // Platform-wide unban
+  app.post<{ Params: { id: string } }>(
+    '/api/admin/users/:id/unban',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+      if (!user) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+
+      db.prepare('UPDATE users SET banned = 0, ban_reason = NULL WHERE id = ?').run(id);
+      logAuditEvent('platform_unban', request.user.userId, id, request.ip);
+
+      return { ok: true };
+    },
+  );
+
+  // List all platform servers
+  app.get(
+    '/api/admin/servers',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async () => {
+      const rows = db.prepare(
+        `SELECT s.id, s.name, s.icon_file_id, s.owner_id, s.created_at,
+                u.username as owner_username,
+                f.stored_name as icon_stored_name,
+                (SELECT COUNT(*) FROM server_members WHERE server_id = s.id) as member_count,
+                (SELECT COUNT(*) FROM channels WHERE server_id = s.id AND type != 'dm') as channel_count
+         FROM servers s LEFT JOIN users u ON u.id = s.owner_id
+         LEFT JOIN files f ON f.id = s.icon_file_id
+         ORDER BY s.created_at DESC`,
+      ).all() as any[];
+      return rows.map((r: any) => ({
+        ...r,
+        icon_url: r.icon_stored_name ? '/uploads/' + r.icon_stored_name : null,
+      }));
+    },
+  );
+
+  // Delete server (instance admin)
+  app.delete<{ Params: { id: string } }>(
+    '/api/admin/servers/:id',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      const server = db.prepare('SELECT id, name FROM servers WHERE id = ?').get(id) as
+        | { id: string; name: string }
+        | undefined;
+      if (!server) {
+        return reply.code(404).send({ error: 'Server not found' });
+      }
+
+      const memberIds = getServerMemberUserIds(id);
+
+      const deleteServer = db.transaction(() => {
+        db.prepare('DELETE FROM invite_codes WHERE server_id = ?').run(id);
+        db.prepare('DELETE FROM channel_permission_overrides WHERE server_id = ?').run(id);
+        db.prepare('DELETE FROM group_permission_overrides WHERE server_id = ?').run(id);
+        db.prepare('DELETE FROM custom_emojis WHERE server_id = ?').run(id);
+        db.prepare('DELETE FROM soundboard_sounds WHERE server_id = ?').run(id);
+        db.prepare('DELETE FROM bots WHERE server_id = ?').run(id);
+        db.prepare('DELETE FROM audit_log WHERE server_id = ?').run(id);
+        db.prepare('DELETE FROM reports WHERE server_id = ?').run(id);
+        db.prepare('DELETE FROM server_bans WHERE server_id = ?').run(id);
+        db.prepare('DELETE FROM channel_groups WHERE server_id = ?').run(id);
+        db.prepare('DELETE FROM channels WHERE server_id = ?').run(id);
+        db.prepare('DELETE FROM roles WHERE server_id = ?').run(id);
+        db.prepare('DELETE FROM server_members WHERE server_id = ?').run(id);
+        db.prepare('DELETE FROM servers WHERE id = ?').run(id);
+      });
+      deleteServer();
+
+      logAuditEvent('server_deleted', request.user.userId, null, request.ip, { name: server.name });
+      sendToMany(memberIds, { type: 'server:deleted', serverId: id });
+
+      return { ok: true };
+    },
+  );
+
+  // Global audit log (all events across all servers)
+  app.get(
+    '/api/admin/audit-log',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async (request) => {
+      const { page, limit, event_type, user_id } = request.query as {
+        page?: string;
+        limit?: string;
+        event_type?: string;
+        user_id?: string;
+      };
+      return getAuditLog({
+        page: page ? (parseInt(page, 10) || 1) : undefined,
+        limit: limit ? Math.min(parseInt(limit, 10) || 50, 100) : undefined,
+        eventType: event_type,
+        userId: user_id,
+      });
+    },
+  );
+
+  // ─── Reports ────────────────────────────────────────────
+
+  // Submit a report (any authenticated user)
+  app.post<{ Body: { message_id: string; reason: string } }>(
+    '/api/reports',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { message_id, reason } = request.body || {};
+
+      if (!message_id || !reason?.trim()) {
+        return reply.code(400).send({ error: 'Message ID and reason are required' });
+      }
+
+      if (reason.trim().length > 1000) {
+        return reply.code(400).send({ error: 'Reason must be 1000 characters or less' });
+      }
+
+      const message = db.prepare(
+        `SELECT m.id, m.user_id, m.content, m.channel_id, c.server_id
+         FROM messages m LEFT JOIN channels c ON c.id = m.channel_id
+         WHERE m.id = ?`,
+      ).get(message_id) as any;
+
+      if (!message) {
+        return reply.code(404).send({ error: 'Message not found' });
+      }
+
+      if (message.user_id === request.user.userId) {
+        return reply.code(400).send({ error: 'Cannot report your own message' });
+      }
+
+      // Prevent duplicate open reports for same message by same user
+      const existing = db.prepare(
+        "SELECT id FROM reports WHERE reporter_id = ? AND message_id = ? AND status = 'open'",
+      ).get(request.user.userId, message_id);
+      if (existing) {
+        return reply.code(409).send({ error: 'You have already reported this message' });
+      }
+
+      const id = randomUUID();
+      db.prepare(
+        `INSERT INTO reports (id, reporter_id, message_id, reported_user_id, channel_id, server_id, reason, message_content)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(id, request.user.userId, message_id, message.user_id, message.channel_id, message.server_id, reason.trim(), message.content);
+
+      logAuditEvent('report_submitted', request.user.userId, message.user_id, request.ip, { message_id, reason: reason.trim() }, message.server_id);
+
+      return { ok: true };
+    },
+  );
+
+  // List reports (instance admin)
+  app.get(
+    '/api/admin/reports',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async (request, reply) => {
+      const { status } = request.query as { status?: string };
+      const validStatuses = ['open', 'resolved', 'dismissed'];
+      if (status && !validStatuses.includes(status)) {
+        return reply.code(400).send({ error: 'Invalid status filter' });
+      }
+      const filter = status ? "WHERE r.status = ?" : "";
+      const params = status ? [status] : [];
+
+      return db.prepare(
+        `SELECT r.*,
+                reporter.username as reporter_username,
+                reported.username as reported_username,
+                s.name as server_name
+         FROM reports r
+         LEFT JOIN users reporter ON reporter.id = r.reporter_id
+         LEFT JOIN users reported ON reported.id = r.reported_user_id
+         LEFT JOIN servers s ON s.id = r.server_id
+         ${filter}
+         ORDER BY r.created_at DESC`,
+      ).all(...params);
+    },
+  );
+
+  // Resolve/dismiss a report (instance admin)
+  app.post<{ Params: { id: string }; Body: { status: 'resolved' | 'dismissed'; note?: string } }>(
+    '/api/admin/reports/:id',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async (request, reply) => {
+      const { id } = request.params;
+      const { status, note } = request.body || {};
+
+      if (status !== 'resolved' && status !== 'dismissed') {
+        return reply.code(400).send({ error: 'Status must be resolved or dismissed' });
+      }
+
+      const report = db.prepare('SELECT id, reported_user_id, status FROM reports WHERE id = ?').get(id) as any;
+      if (!report) {
+        return reply.code(404).send({ error: 'Report not found' });
+      }
+      if (report.status !== 'open') {
+        return reply.code(400).send({ error: 'Report is already ' + report.status });
+      }
+
+      db.prepare(
+        "UPDATE reports SET status = ?, resolved_by = ?, resolution_note = ?, resolved_at = datetime('now') WHERE id = ?",
+      ).run(status, request.user.userId, note || null, id);
+
+      logAuditEvent('report_resolved', request.user.userId, report.reported_user_id, request.ip, { report_id: id, status, note });
+
+      return { ok: true };
+    },
+  );
+
+  // ─── Server-Scoped Admin ────────────────────────────────
+
+  // Ban user (remove from server)
+  app.post<{ Params: { serverId: string; id: string }; Body: { reason?: string } }>(
+    '/api/servers/:serverId/admin/ban/:id',
+    { preHandler: [requirePermission('ban_members'), requireServerMember] },
+    async (request, reply) => {
+      const { id } = request.params;
+      const { reason } = request.body || {};
+      const serverId = getServerId(request);
+
+      if (id === request.user.userId) {
+        return reply.code(400).send({ error: 'Cannot ban yourself' });
+      }
+
+      const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id) as
+        | { id: string; role: string }
+        | undefined;
+      if (!user) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+
+      // Can't ban someone with administrator permission
+      if (hasPermission(id, 'administrator')) {
+        return reply.code(400).send({ error: 'Cannot ban an administrator' });
+      }
+
+      const trimmedReason = reason?.trim().slice(0, 1000) || null;
+
+      const performBan = db.transaction(() => {
+        // Record the ban
+        db.prepare(
+          'INSERT OR REPLACE INTO server_bans (server_id, user_id, reason, banned_by) VALUES (?, ?, ?, ?)'
+        ).run(serverId, id, trimmedReason, request.user.userId);
+
+        // Remove user from this server's membership
+        db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(
+          serverId,
+          id,
+        );
+      });
+      performBan();
+
+      logAuditEvent('user_ban', request.user.userId, id, request.ip, { reason: trimmedReason }, serverId);
+
+      // Notify only members of this server (not all connected users)
+      const memberIds = getServerMemberUserIds(serverId);
+      sendToMany(memberIds, { type: 'server:memberLeft', serverId, userId: id });
+
+      return { ok: true };
+    },
+  );
+
+  // Unban user (re-add to server)
+  app.post<{ Params: { serverId: string; id: string } }>(
+    '/api/servers/:serverId/admin/unban/:id',
+    { preHandler: [requirePermission('ban_members'), requireServerMember] },
+    async (request, reply) => {
+      const { id } = request.params;
+      const serverId = getServerId(request);
+
+      const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+      if (!user) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+
+      // Remove from server_bans
+      db.prepare(
+        'DELETE FROM server_bans WHERE server_id = ? AND user_id = ?'
+      ).run(serverId, id);
+
+      logAuditEvent('user_unban', request.user.userId, id, request.ip, undefined, serverId);
+      return { ok: true };
+    },
+  );
+
+  // ─── Invite Codes ────────────────────────────────────────
+
+  // Create invite code
+  app.post<{ Params: { serverId: string }; Body: { max_uses?: number; expires_at?: string } }>(
+    '/api/servers/:serverId/admin/invite-codes',
+    { preHandler: [requirePermission('manage_invite_codes'), requireServerMember] },
+    async (request, reply) => {
+      const { max_uses, expires_at } = request.body || {};
+      const serverId = getServerId(request);
+
+      const id = randomUUID();
+      const code = nanoid(8);
+      const defaultExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+      db.prepare(
+        'INSERT INTO invite_codes (id, code, created_by, max_uses, expires_at, server_id) VALUES (?, ?, ?, ?, ?, ?)',
+      ).run(id, code, request.user.userId, max_uses ?? null, expires_at ?? defaultExpiry, serverId);
+
+      logAuditEvent('invite_create', request.user.userId, null, request.ip, { code }, serverId);
+      return db.prepare('SELECT * FROM invite_codes WHERE id = ?').get(id) as InviteCode;
+    },
+  );
+
+  // List invite codes
+  app.get<{ Params: { serverId: string } }>(
+    '/api/servers/:serverId/admin/invite-codes',
+    { preHandler: [requirePermission('manage_invite_codes'), requireServerMember] },
+    async (request) => {
+      const serverId = getServerId(request);
+      return db
+        .prepare('SELECT * FROM invite_codes WHERE server_id = ? ORDER BY created_at DESC')
+        .all(serverId) as InviteCode[];
+    },
+  );
+
+  // Get instance settings
+  app.get('/api/admin/instance-settings', { preHandler: requireAdmin }, async () => {
+    const settings = db.prepare('SELECT allow_server_creation, allow_registration FROM instance_settings WHERE id = 1').get() as any;
+    return settings || { allow_server_creation: 1, allow_registration: 1 };
+  });
+
+  // Update instance settings
+  app.patch<{ Body: { allow_registration?: boolean } }>(
+    '/api/admin/instance-settings',
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      const { allow_registration } = request.body;
+      if (allow_registration !== undefined) {
+        db.prepare('UPDATE instance_settings SET allow_registration = ? WHERE id = 1').run(allow_registration ? 1 : 0);
+      }
+      const settings = db.prepare('SELECT allow_server_creation, allow_registration FROM instance_settings WHERE id = 1').get() as any;
+      return settings;
+    },
+  );
+
+  // Delete invite code
+  app.delete<{ Params: { serverId: string; id: string } }>(
+    '/api/servers/:serverId/admin/invite-codes/:id',
+    { preHandler: [requirePermission('manage_invite_codes'), requireServerMember] },
+    async (request, reply) => {
+      const { id } = request.params;
+      const serverId = getServerId(request);
+      const result = db.prepare('DELETE FROM invite_codes WHERE id = ? AND server_id = ?').run(id, serverId);
+      if (result.changes === 0) {
+        return reply.code(404).send({ error: 'Invite code not found' });
+      }
+      logAuditEvent('invite_delete', request.user.userId, null, request.ip, { id }, serverId);
+      return { ok: true };
+    },
+  );
+
+}

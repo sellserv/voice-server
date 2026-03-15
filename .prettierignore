@@ -1,0 +1,8 @@
+node_modules
+dist
+build
+.svelte-kit
+desktop/dist
+*.ico
+*.icns
+*.png

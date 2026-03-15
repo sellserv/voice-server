@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Permanent+Marker&family=Press+Start+2P&family=Pacifico&family=Bangers&family=Creepster&family=Fredoka:wght@600&family=Caveat:wght@600&family=Special+Elite&family=Orbitron:wght@600&family=Silkscreen&family=Bebas+Neue&family=Righteous&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" href="/favicon.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#7289da" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="SellServ Voice" />
+    <title>SellServ Voice</title>
+    <style>
+      body {
+        background: #08080f;
+        color: #f0f0f5;
+        font-family: sans-serif;
+        margin: 0;
+      }
+      #boot-msg {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 12px;
+        z-index: 99999;
+        font-size: 16px;
+      }
+      #boot-msg.hidden {
+        display: none;
+      }
+      #debug-error {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: #1a1a2e;
+        color: #ff6b6b;
+        font-family: monospace;
+        padding: 40px;
+        z-index: 999999;
+        white-space: pre-wrap;
+        font-size: 14px;
+        overflow: auto;
+        display: none;
+      }
+      #debug-error.show {
+        display: block;
+      }
+    </style>
+    <script>
+      window.__errors = [];
+      window.onerror = function (msg, src, line, col, err) {
+        window.__errors.push(msg + ' at ' + src + ':' + line + ':' + col);
+        var el = document.getElementById('debug-error');
+        if (el) {
+          el.textContent = 'JS ERRORS:\n\n' + window.__errors.join('\n\n');
+          el.className = 'show';
+        }
+      };
+      window.onunhandledrejection = function (e) {
+        window.__errors.push('Unhandled promise: ' + ((e.reason && e.reason.stack) || e.reason));
+        var el = document.getElementById('debug-error');
+        if (el) {
+          el.textContent = 'JS ERRORS:\n\n' + window.__errors.join('\n\n');
+          el.className = 'show';
+        }
+      };
+    </script>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div id="debug-error"></div>
+    <div id="boot-msg">
+      <p>SellServ Voice is loading...</p>
+      <p style="font-size: 12px; color: #6b6b82">
+        If you see this for more than 5 seconds, the app failed to start.
+      </p>
+    </div>
+    <div style="display: contents">%sveltekit.body%</div>
+    <script>
+      // Hide boot message once Svelte mounts
+      var observer = new MutationObserver(function () {
+        var root = document.querySelector('[data-sveltekit-preload-data]');
+        if (root && root.querySelector('.app-shell, .loading-screen, .connect-container, form')) {
+          document.getElementById('boot-msg').className = 'hidden';
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    </script>
+  </body>
+</html>
