@@ -166,6 +166,11 @@
   let showServerBannerGifPicker = $state(false);
   let loadingServerProfile = $state(false);
 
+  // Track original server profile values for change detection
+  let origServerNickname = $state('');
+  let origServerAvatarPreview = $state<string | null>(null);
+  let origServerBannerPreview = $state<string | null>(null);
+
   async function loadServerProfile() {
     if (!selectedServerId) return;
     loadingServerProfile = true;
@@ -179,6 +184,10 @@
         serverBannerPreview = me.member_banner_url || null;
         serverBannerFile = null;
         serverBannerGiphyUrl = null;
+        // Store originals for change detection
+        origServerNickname = serverNickname;
+        origServerAvatarPreview = serverAvatarPreview;
+        origServerBannerPreview = serverBannerPreview;
       }
     } catch {
       // ignore
@@ -625,12 +634,12 @@
         );
       } else {
         return (
-          serverNickname !== '' ||
+          serverNickname !== origServerNickname ||
           serverAvatarFile !== null ||
-          serverAvatarPreview !== null ||
+          serverAvatarPreview !== origServerAvatarPreview ||
           serverBannerFile !== null ||
           serverBannerGiphyUrl !== null ||
-          serverBannerPreview !== null
+          serverBannerPreview !== origServerBannerPreview
         );
       }
     }
