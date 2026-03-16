@@ -146,7 +146,7 @@
     viewingScreenUserId ? $activeScreenShares.get(viewingScreenUserId) : null,
   );
 
-  let appLoading = $state(true);
+  let appLoading = $state(false);
 
   async function initApp() {
     if (initialized) return;
