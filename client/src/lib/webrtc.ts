@@ -212,6 +212,10 @@ function activateVad() {
 
   const dataArray = new Float32Array(vadAnalyser.fftSize);
 
+  // Smoothed RMS to prevent single-frame noise from triggering/closing the gate
+  let smoothedDb = -100;
+  const SMOOTHING = 0.3; // 0 = no smoothing, 1 = fully smoothed (higher = more stable)
+
   vadInterval = setInterval(() => {
     if (!vadAnalyser || manuallyMuted) return;
 
@@ -225,10 +229,13 @@ function activateVad() {
     const rms = Math.sqrt(sum / dataArray.length);
     const dbFS = rms > 0 ? 20 * Math.log10(rms) : -100;
 
+    // Smooth the dB value to avoid jitter
+    smoothedDb = SMOOTHING * smoothedDb + (1 - SMOOTHING) * dbFS;
+
     // Map sensitivity (0-100) to threshold: 0 = -70dB (very sensitive), 100 = -20dB (least sensitive)
     const threshold = -70 + (currentVadSensitivity / 100) * 50;
 
-    if (dbFS >= threshold) {
+    if (smoothedDb >= threshold) {
       if (vadHoldTimer) {
         clearTimeout(vadHoldTimer);
         vadHoldTimer = null;
@@ -238,11 +245,12 @@ function activateVad() {
         openVadGate();
       }
     } else if (vadSpeaking && !vadHoldTimer) {
+      // 400ms hold time prevents end-of-word clipping
       vadHoldTimer = setTimeout(() => {
         vadHoldTimer = null;
         vadSpeaking = false;
         closeVadGate();
-      }, 250);
+      }, 400);
     }
   }, 20);
 }
@@ -418,7 +426,7 @@ export async function joinVoice(channelId: string): Promise<MediaStream> {
   const inputDeviceId = get(selectedInputDeviceId);
   const audioConstraints: MediaTrackConstraints = {
     echoCancellation: true,
-    noiseSuppression: false,
+    noiseSuppression: !get(noiseSuppression),  // Use browser suppression as fallback when RNNoise is off
     autoGainControl: true,
     sampleRate: 48000,
     channelCount: 1,
@@ -555,6 +563,7 @@ export async function joinVoice(channelId: string): Promise<MediaStream> {
       opusDtx: true,
       opusFec: true,
       opusMaxPlaybackRate: 48000,
+      opusPtime: 20,
     },
     encodings: [{ maxBitrate: 128000 }],
   });
