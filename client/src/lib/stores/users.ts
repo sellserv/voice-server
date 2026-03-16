@@ -16,6 +16,8 @@ export interface UserInfo {
   role_names?: string[];
   role_colors?: string[];
   server_nickname?: string | null;
+  member_avatar_url?: string | null;
+  member_banner_url?: string | null;
   name_font?: string | null;
   name_color?: string | null;
   is_bot: number;
