@@ -154,11 +154,16 @@
             userId={user.userId}
             showStatus={true}
           />
-          <span
-            class="username"
-            style={nameStyle(userData?.name_color, userData?.role_color, userData?.name_font)}
-            >{userData?.server_nickname || user.display_name || user.username}</span
-          >
+          <div class="user-info">
+            <span
+              class="username"
+              style={nameStyle(userData?.name_color, userData?.role_color, userData?.name_font)}
+              >{userData?.server_nickname || user.display_name || user.username}</span
+            >
+            {#if user.activity}
+              <span class="user-activity">Playing {user.activity}</span>
+            {/if}
+          </div>
           {#if userData?.is_bot === 1}
             <span class="bot-tag">BOT</span>
           {/if}
@@ -336,6 +341,22 @@
   .user.offline:hover {
     opacity: 0.8;
     filter: grayscale(0);
+  }
+
+  .user-info {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .user-activity {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .username {

@@ -33,6 +33,57 @@
   let loadingDevices = $state(true);
   let capturingPttKey = $state(false);
 
+  // Game Activity settings
+  let gameEnabled = $state(true);
+  let gameVisibility = $state<'all' | 'selected'>('all');
+  let gameServerIds = $state<string[]>([]);
+  let customGames = $state<Record<string, string>>({});
+  let newGameExe = $state('');
+  let newGameName = $state('');
+
+  async function loadGameSettings() {
+    if (!window.electronAPI?.getGameSettings) return;
+    const s = await window.electronAPI.getGameSettings();
+    gameEnabled = s.enabled;
+    gameVisibility = s.visibility;
+    gameServerIds = s.selectedServerIds;
+    customGames = s.customGames;
+  }
+
+  async function saveGameEnabled(enabled: boolean) {
+    gameEnabled = enabled;
+    await window.electronAPI?.setGameEnabled(enabled);
+  }
+
+  async function saveGameVisibility(vis: 'all' | 'selected') {
+    gameVisibility = vis;
+    await window.electronAPI?.setGameVisibility(vis);
+  }
+
+  async function toggleGameServer(serverId: string) {
+    if (gameServerIds.includes(serverId)) {
+      gameServerIds = gameServerIds.filter(id => id !== serverId);
+    } else {
+      gameServerIds = [...gameServerIds, serverId];
+    }
+    await window.electronAPI?.setGameServerIds(gameServerIds);
+  }
+
+  async function addCustomGame() {
+    if (!newGameExe.trim() || !newGameName.trim()) return;
+    await window.electronAPI?.addCustomGame(newGameExe.trim(), newGameName.trim());
+    customGames = { ...customGames, [newGameExe.trim().toLowerCase()]: newGameName.trim() };
+    newGameExe = '';
+    newGameName = '';
+  }
+
+  async function removeCustomGame(exe: string) {
+    await window.electronAPI?.removeCustomGame(exe);
+    const updated = { ...customGames };
+    delete updated[exe];
+    customGames = updated;
+  }
+
   let videoPreviewStream = $state<MediaStream | null>(null);
   let videoPreviewEl = $state<HTMLVideoElement>();
 
@@ -592,6 +643,7 @@
         <button class="sidebar-item" class:active={activeTab === 'voice-video'} onclick={() => activeTab = 'voice-video'}>Voice & Video</button>
         <button class="sidebar-item" class:active={activeTab === 'notifications'} onclick={() => activeTab = 'notifications'}>Notifications</button>
         <button class="sidebar-item" class:active={activeTab === 'appearance'} onclick={() => activeTab = 'appearance'}>Appearance</button>
+        <button class="sidebar-item" class:active={activeTab === 'game-activity'} onclick={() => { activeTab = 'game-activity'; loadGameSettings(); }}>Game Activity</button>
         {#if isDesktop}
           <button class="sidebar-item" class:active={activeTab === 'desktop'} onclick={() => activeTab = 'desktop'}>Desktop</button>
         {/if}
@@ -1194,6 +1246,100 @@
                 </button>
               {/each}
             </div>
+          </section>
+
+        {:else if activeTab === 'game-activity'}
+          <section class="section">
+            <h3 class="content-title">Game Activity</h3>
+
+            {#if !window.electronAPI}
+              <div class="setting-toggle-row">
+                <div class="toggle-info">
+                  <div class="toggle-label">Desktop Only</div>
+                  <div class="toggle-desc">Game detection is only available in the desktop app. Download it from the <a href="https://info.sellserv.net/downloads.html" target="_blank" rel="noopener">downloads page</a>.</div>
+                </div>
+              </div>
+            {:else}
+              <div class="setting-toggle-row">
+                <div class="toggle-info">
+                  <div class="toggle-label">Display Current Activity</div>
+                  <div class="toggle-desc">Automatically detect and show what game you're playing.</div>
+                </div>
+                <button class="toggle-switch" class:active={gameEnabled} onclick={() => saveGameEnabled(!gameEnabled)}>
+                  <div class="toggle-knob"></div>
+                </button>
+              </div>
+
+              {#if gameEnabled}
+                <div class="section-divider"></div>
+
+                <h4 class="section-subtitle">Visibility</h4>
+                <div class="input-mode-selector">
+                  <button class="mode-btn" class:active={gameVisibility === 'all'} onclick={() => saveGameVisibility('all')}>
+                    <Icon name="users" size={18} />
+                    <span>All Servers</span>
+                  </button>
+                  <button class="mode-btn" class:active={gameVisibility === 'selected'} onclick={() => saveGameVisibility('selected')}>
+                    <Icon name="shield-check" size={18} />
+                    <span>Selected Servers</span>
+                  </button>
+                </div>
+
+                {#if gameVisibility === 'selected'}
+                  <div class="server-checkboxes">
+                    {#each $servers as server (server.id)}
+                      <label class="checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={gameServerIds.includes(server.id)}
+                          onchange={() => toggleGameServer(server.id)}
+                        />
+                        <span>{server.name}</span>
+                      </label>
+                    {/each}
+                  </div>
+                {/if}
+
+                <div class="section-divider"></div>
+
+                <h4 class="section-subtitle">Custom Games</h4>
+                <p class="toggle-desc" style="margin-bottom: 12px;">Add games that aren't automatically detected.</p>
+
+                {#if Object.keys(customGames).length > 0}
+                  <div class="custom-games-list">
+                    {#each Object.entries(customGames) as [exe, name] (exe)}
+                      <div class="custom-game-row">
+                        <div class="custom-game-info">
+                          <span class="custom-game-name">{name}</span>
+                          <span class="custom-game-exe">{exe}</span>
+                        </div>
+                        <button class="remove-game-btn" onclick={() => removeCustomGame(exe)}>
+                          <Icon name="x" size={14} />
+                        </button>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+
+                <div class="add-game-form">
+                  <input
+                    type="text"
+                    class="game-input"
+                    placeholder="Executable (e.g. mygame.exe)"
+                    bind:value={newGameExe}
+                  />
+                  <input
+                    type="text"
+                    class="game-input"
+                    placeholder="Display name (e.g. My Game)"
+                    bind:value={newGameName}
+                  />
+                  <button class="btn-accent" onclick={addCustomGame} disabled={!newGameExe.trim() || !newGameName.trim()}>
+                    Add Game
+                  </button>
+                </div>
+              {/if}
+            {/if}
           </section>
 
         {:else if activeTab === 'desktop' && isDesktop}
@@ -2693,5 +2839,102 @@
   .preview-placeholder span {
     font-size: 0.9rem;
     font-weight: 600;
+  }
+
+  /* Game Activity */
+  .server-checkboxes {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 12px;
+    background: var(--bg-mid);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-light);
+  }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .custom-games-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+
+  .custom-game-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    background: var(--bg-mid);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-light);
+  }
+
+  .custom-game-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .custom-game-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: white;
+  }
+
+  .custom-game-exe {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+  }
+
+  .remove-game-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .remove-game-btn:hover {
+    background: var(--danger);
+    color: white;
+  }
+
+  .add-game-form {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .game-input {
+    flex: 1;
+    padding: 8px 12px;
+    background: var(--bg-mid);
+    color: var(--text);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-light);
+    font-size: 0.85rem;
+    outline: none;
+    transition: border-color 150ms;
+  }
+
+  .game-input:focus {
+    border-color: var(--accent);
   }
 </style>

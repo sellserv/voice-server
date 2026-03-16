@@ -32,6 +32,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   downloadUpdate: () => ipcRenderer.invoke('updater:download'),
   installUpdate: () => ipcRenderer.invoke('updater:install'),
 
+  // Game Activity
+  getGameSettings: () => ipcRenderer.invoke('game:getSettings'),
+  getCurrentGame: () => ipcRenderer.invoke('game:getCurrent'),
+  setGameEnabled: (enabled) => ipcRenderer.invoke('game:setEnabled', enabled),
+  setGameVisibility: (visibility) => ipcRenderer.invoke('game:setVisibility', visibility),
+  setGameServerIds: (ids) => ipcRenderer.invoke('game:setServerIds', ids),
+  addCustomGame: (exe, name) => ipcRenderer.invoke('game:addCustomGame', exe, name),
+  removeCustomGame: (exe) => ipcRenderer.invoke('game:removeCustomGame', exe),
+  getCustomGames: () => ipcRenderer.invoke('game:getCustomGames'),
+  onGameActivityChanged: (callback) => {
+    const handler = (_e, game) => callback(game);
+    ipcRenderer.on('game:activity-changed', handler);
+    return () => ipcRenderer.removeListener('game:activity-changed', handler);
+  },
+
   // Global PTT
   configurePtt: (key) => ipcRenderer.invoke('ptt:configure', key),
   onPttDown: (callback) => {

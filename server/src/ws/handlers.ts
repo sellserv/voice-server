@@ -7,6 +7,7 @@ import {
   setClientStatus,
   getDmParticipantIds,
   broadcastToChannel,
+  broadcastToServer,
   getClient,
 } from './index.js';
 import { ensureDmChannel, notifyDmCreated } from './dmUtils.js';
@@ -113,6 +114,9 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
       break;
     case 'presence:setStatus':
       setClientStatus(user.userId, event.status);
+      break;
+    case 'presence:activity':
+      handlePresenceActivity(user, event.game, event.visibility, event.serverIds);
       break;
     case 'ws:ping':
       sendTo(user.userId, { type: 'ws:pong', timestamp: event.timestamp });
@@ -1447,4 +1451,29 @@ function handlePollVote(user: JwtPayload, pollId: string, optionIds: string[]) {
 function getServerMemberUserIds(serverId: string): string[] {
   return (db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(serverId) as { user_id: string }[])
     .map(r => r.user_id);
+}
+
+function handlePresenceActivity(user: JwtPayload, game: string | null, visibility: 'all' | 'selected', serverIds?: string[]) {
+  const client = getClient(user.userId);
+  if (!client) return;
+
+  client.activity = game;
+  client.activityVisibility = visibility;
+  client.activityServerIds = serverIds;
+
+  if (visibility === 'all') {
+    broadcast({
+      type: 'presence:activity',
+      userId: user.userId,
+      activity: game,
+    } as any);
+  } else if (serverIds && serverIds.length > 0) {
+    for (const serverId of serverIds) {
+      broadcastToServer(serverId, {
+        type: 'presence:activity',
+        userId: user.userId,
+        activity: game,
+      } as any);
+    }
+  }
 }

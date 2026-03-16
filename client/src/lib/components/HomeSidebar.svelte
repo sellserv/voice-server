@@ -262,7 +262,9 @@
               </div>
               <div class="item-info">
                 <span class="item-name">{getDmParticipantName(channel)}</span>
-                {#if isOnline}
+                {#if dmUser?.id && $onlineUsers.get(dmUser.id)?.activity}
+                  <span class="activity-text">Playing {$onlineUsers.get(dmUser.id)?.activity}</span>
+                {:else if isOnline}
                   <span class="status-text">{formatStatus(dmUser?.id)}</span>
                 {/if}
               </div>
@@ -278,7 +280,11 @@
               </div>
               <div class="item-info">
                 <span class="item-name">{friend.display_name}</span>
-                <span class="status-text">{formatStatus(friend.id)}</span>
+                {#if $onlineUsers.get(friend.id)?.activity}
+                  <span class="activity-text">Playing {$onlineUsers.get(friend.id)?.activity}</span>
+                {:else}
+                  <span class="status-text">{formatStatus(friend.id)}</span>
+                {/if}
               </div>
             </button>
           {/each}
@@ -446,7 +452,11 @@
                   </div>
                   <div class="item-info">
                     <span class="item-name">{friend.display_name}</span>
-                    <span class="status-text">{friend.status || 'Online'}</span>
+                    {#if $onlineUsers.get(friend.id)?.activity}
+                      <span class="activity-text">Playing {$onlineUsers.get(friend.id)?.activity}</span>
+                    {:else}
+                      <span class="status-text">{friend.status || 'Online'}</span>
+                    {/if}
                   </div>
                   <div class="action-buttons">
                     <button class="circle-btn" title="Message" onclick={() => handleDm(friend)}>
@@ -804,6 +814,16 @@
     color: var(--text-dim);
     font-weight: 600;
     opacity: 0.8;
+  }
+
+  .activity-text {
+    font-size: 0.7rem;
+    color: var(--accent);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0.9;
   }
 
   /* Friends view specific */

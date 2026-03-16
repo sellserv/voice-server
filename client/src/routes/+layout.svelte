@@ -3,7 +3,7 @@
   import { onMount } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { checkAuth, currentUser, authLoading, logout } from '$lib/stores/auth';
-  import { connectWs, disconnectWs, onWsEvent, wsConnected, wsKicked } from '$lib/ws';
+  import { connectWs, disconnectWs, onWsEvent, sendWs, wsConnected, wsKicked } from '$lib/ws';
   import {
     loadChannels,
     channels,
@@ -24,7 +24,7 @@
     addMissedCall,
   } from '$lib/stores/channels';
   import { addMessage, editMessage, removeMessage, pinMessage, unpinMessage } from '$lib/stores/messages';
-  import { setOnlineUsers, setUserOnline, setUserOffline, myStatus } from '$lib/stores/presence';
+  import { setOnlineUsers, setUserOnline, setUserOffline, updateUserActivity, myStatus } from '$lib/stores/presence';
   import { startIdleDetection, stopIdleDetection } from '$lib/idleDetector';
   import {
     setVoicePeers,
@@ -285,11 +285,14 @@
           break;
         case 'presence:update':
           if (event.online) {
-            setUserOnline(event.userId, event.username, event.display_name, event.status);
+            setUserOnline(event.userId, event.username, event.display_name, event.status, event.activity);
             refreshUsers();
           } else {
             setUserOffline(event.userId);
           }
+          break;
+        case 'presence:activity':
+          updateUserActivity(event.userId, event.activity);
           break;
         case 'voice:peers':
           setVoicePeers(
@@ -689,12 +692,28 @@
       }
     });
 
+    // Desktop game activity detection
+    let cleanupGameDetection: (() => void) | null = null;
+    if (window.electronAPI?.onGameActivityChanged) {
+      cleanupGameDetection = window.electronAPI.onGameActivityChanged(async (game) => {
+        const settings = await window.electronAPI!.getGameSettings();
+        if (!settings.enabled) return;
+        sendWs({
+          type: 'presence:activity',
+          game,
+          visibility: settings.visibility,
+          serverIds: settings.visibility === 'selected' ? settings.selectedServerIds : undefined,
+        });
+      });
+    }
+
     if (!needsServer) {
       initApp();
     }
 
     return () => {
       unsub();
+      cleanupGameDetection?.();
       stopIdleDetection();
       disconnectWs();
     };

@@ -35,6 +35,9 @@ interface ConnectedClient {
   avatar_url?: string | null;
   serverIds: string[];
   isAlive: boolean;
+  activity?: string | null;
+  activityVisibility?: 'all' | 'selected';
+  activityServerIds?: string[];
 }
 
 const clients = new Map<string, ConnectedClient>();
@@ -76,16 +79,23 @@ export function getOnlineUsers(serverId?: string): {
   username: string;
   display_name?: string;
   status: UserStatus;
+  activity?: string;
 }[] {
   const result = Array.from(clients.values())
     .filter((c) => c.status !== 'invisible')
     .filter((c) => !serverId || c.serverIds?.includes(serverId))
-    .map((c) => ({
-      userId: c.user.userId,
-      username: c.user.username,
-      display_name: c.display_name,
-      status: c.status,
-    }));
+    .map((c) => {
+      const showActivity = !serverId ||
+        c.activityVisibility === 'all' ||
+        (c.activityVisibility === 'selected' && c.activityServerIds?.includes(serverId));
+      return {
+        userId: c.user.userId,
+        username: c.user.username,
+        display_name: c.display_name,
+        status: c.status,
+        activity: showActivity && c.activity ? c.activity : undefined,
+      };
+    });
 
   // Add enabled bots as always-online
   if (serverId) {
@@ -99,6 +109,7 @@ export function getOnlineUsers(serverId?: string): {
         username: bot.name,
         display_name: bot.name,
         status: 'online' as UserStatus,
+        activity: undefined,
       });
     }
   } else {
@@ -112,6 +123,7 @@ export function getOnlineUsers(serverId?: string): {
         username: bot.name,
         display_name: bot.name,
         status: 'online' as UserStatus,
+        activity: undefined,
       });
     }
   }
