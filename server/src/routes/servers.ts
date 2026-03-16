@@ -4,7 +4,7 @@ import db from '../db/connection.js';
 import { requireAuth, isInstanceAdmin } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import { hasPermission } from '../auth/permissions.js';
-import { sendTo, sendToMany, getServerMemberUserIds } from '../ws/index.js';
+import { sendTo, sendToMany } from '../ws/index.js';
 import { ensureDmChannel, notifyDmCreated } from '../ws/dmUtils.js';
 import type { Server, ServerInvitation, Message } from '@voip-server/shared';
 
