@@ -438,7 +438,6 @@
     } finally {
       saving = false;
     }
-    onclose();
   }
 
   async function loadDevices() {
