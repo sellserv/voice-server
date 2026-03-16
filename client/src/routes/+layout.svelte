@@ -626,6 +626,7 @@
           break;
         case 'server:memberUpdated':
           if (event.serverId === get(activeServerId)) {
+            refreshUsers().catch(() => {});
             updateChannelMemberProfile(event.userId, {
               display_name: event.nickname,
               avatar_url: event.avatar_url,
