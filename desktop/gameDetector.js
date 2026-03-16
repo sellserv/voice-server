@@ -37,9 +37,22 @@ function getRunningProcesses() {
   });
 }
 
+// Build a lookup that works on both Windows (.exe keys) and Linux (no extension)
+function buildLookup(games) {
+  const lookup = {};
+  for (const [exe, name] of Object.entries(games)) {
+    lookup[exe] = name;
+    // Also add without .exe for Linux matching
+    if (exe.endsWith('.exe')) {
+      lookup[exe.slice(0, -4)] = name;
+    }
+  }
+  return lookup;
+}
+
 async function detectGame(customGames) {
   const processes = await getRunningProcesses();
-  const allGames = { ...builtinGames, ...customGames };
+  const allGames = buildLookup({ ...builtinGames, ...customGames });
 
   for (const proc of processes) {
     const gameName = allGames[proc];
