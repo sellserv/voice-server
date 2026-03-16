@@ -845,6 +845,14 @@ export type ServerEvent =
       server: Server;
     }
   | {
+      type: 'server:memberUpdated';
+      serverId: string;
+      userId: string;
+      nickname?: string | null;
+      avatar_url?: string | null;
+      banner_url?: string | null;
+    }
+  | {
       type: 'server:deleted';
       serverId: string;
     }

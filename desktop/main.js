@@ -313,7 +313,13 @@ ipcMain.handle('updater:install', () => {
 });
 
 // --- Global PTT (works even when app is not focused) ---
-const { uIOhook } = require('uiohook-napi');
+// Wrapped in try-catch: uiohook-napi may fail to load on some Linux systems
+let uIOhook = null;
+try {
+  uIOhook = require('uiohook-napi').uIOhook;
+} catch (err) {
+  console.warn('[InputHook] uiohook-napi not available — global PTT disabled:', err.message || err);
+}
 
 // Map web KeyboardEvent.code → uiohook keycode
 const WEB_TO_UIOHOOK = {
@@ -367,6 +373,7 @@ ipcMain.handle('game:removeCustomGame', (_e, exe) => {
 ipcMain.handle('game:getCustomGames', () => store.get('customGames', {}));
 
 ipcMain.handle('ptt:configure', (_e, pttKeyStr) => {
+  if (!uIOhook) return;
   if (!pttKeyStr) {
     pttMatch = null;
     return;
@@ -380,28 +387,38 @@ ipcMain.handle('ptt:configure', (_e, pttKeyStr) => {
   }
 });
 
-uIOhook.on('keydown', (e) => {
-  if (pttMatch?.type === 'key' && e.keycode === pttMatch.keycode) {
-    mainWindow?.webContents.send('ptt:down');
-  }
-});
-uIOhook.on('keyup', (e) => {
-  if (pttMatch?.type === 'key' && e.keycode === pttMatch.keycode) {
-    mainWindow?.webContents.send('ptt:up');
-  }
-});
-uIOhook.on('mousedown', (e) => {
-  if (pttMatch?.type === 'mouse' && e.button === pttMatch.button) {
-    mainWindow?.webContents.send('ptt:down');
-  }
-});
-uIOhook.on('mouseup', (e) => {
-  if (pttMatch?.type === 'mouse' && e.button === pttMatch.button) {
-    mainWindow?.webContents.send('ptt:up');
-  }
-});
+if (uIOhook) {
+  uIOhook.on('keydown', (e) => {
+    if (pttMatch?.type === 'key' && e.keycode === pttMatch.keycode) {
+      mainWindow?.webContents.send('ptt:down');
+    }
+  });
+  uIOhook.on('keyup', (e) => {
+    if (pttMatch?.type === 'key' && e.keycode === pttMatch.keycode) {
+      mainWindow?.webContents.send('ptt:up');
+    }
+  });
+  uIOhook.on('mousedown', (e) => {
+    if (pttMatch?.type === 'mouse' && e.button === pttMatch.button) {
+      mainWindow?.webContents.send('ptt:down');
+    }
+  });
+  uIOhook.on('mouseup', (e) => {
+    if (pttMatch?.type === 'mouse' && e.button === pttMatch.button) {
+      mainWindow?.webContents.send('ptt:up');
+    }
+  });
+}
 
-uIOhook.start();
+function startInputHook() {
+  if (!uIOhook) return;
+  try {
+    uIOhook.start();
+    console.log('[InputHook] Started successfully');
+  } catch (err) {
+    console.error('[InputHook] Failed to start:', err.message || err);
+  }
+}
 
 // --- App lifecycle ---
 
@@ -457,6 +474,9 @@ if (!gotTheLock) {
 
     createWindow(url);
     createTray();
+
+    // Start input hook for global PTT (gracefully handles failure)
+    startInputHook();
 
     // Start game detection
     gameDetector.start(store, (game) => {
