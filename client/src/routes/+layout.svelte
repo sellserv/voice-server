@@ -733,6 +733,12 @@
       });
     }
 
+    // Debug: allow testing game activity from browser console
+    // Usage: window.setGameActivity('Valorant') or window.setGameActivity(null)
+    (window as any).setGameActivity = (game: string | null) => {
+      sendWs({ type: 'presence:activity', game, visibility: 'all' });
+    };
+
     if (!needsServer) {
       initApp();
     }
