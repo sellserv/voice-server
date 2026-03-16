@@ -901,9 +901,11 @@
                     <div class="avatar-upload-row">
                       <div class="avatar-preview-small" onclick={handleServerAvatarClick}>
                         {#if serverAvatarPreview}
-                          <img src={serverAvatarFile ? serverAvatarPreview : resolveAsset(serverAvatarPreview)} alt="" onerror={(e) => { e.currentTarget.remove(); }} />
+                          <img src={serverAvatarFile ? serverAvatarPreview : resolveAsset(serverAvatarPreview)} alt="" onerror={() => { serverAvatarPreview = null; serverAvatarFile = null; }} />
+                        {:else if avatarPreview || $currentUser?.avatar_url}
+                          <img src={avatarFile ? avatarPreview : resolveAsset(avatarPreview || $currentUser?.avatar_url)} alt="" onerror={(e) => { e.currentTarget.remove(); }} />
                         {:else}
-                          <img src={resolveAsset(avatarPreview || $currentUser?.avatar_url)} alt="" />
+                          <span class="avatar-initial">{(displayName || $currentUser?.username || '?').charAt(0).toUpperCase()}</span>
                         {/if}
                         <div class="preview-overlay">Change</div>
                       </div>
