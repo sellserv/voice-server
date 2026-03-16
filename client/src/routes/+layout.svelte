@@ -120,11 +120,15 @@
     }
   });
 
-  // Close mobile drawers when channel changes
+  // Close mobile drawers when channel changes + persist last channel per server
   $effect(() => {
-    $activeChannelId;
+    const chId = $activeChannelId;
+    const sId = $activeServerId;
     showMobileSidebar = false;
     showMobileUserList = false;
+    if (chId && sId) {
+      localStorage.setItem('lastChannelId_' + sId, chId);
+    }
   });
 
   // Reactive tab title with unread count
@@ -267,19 +271,21 @@
           // initApp already loaded everything and firing duplicate requests
           // trips the nginx rate limit (503s)
           if (hasConnectedOnce) {
+            // Stagger re-sync to avoid nginx rate limit (503s)
             loadServers().catch(() => {});
-            Promise.all([
-              refreshUsers(),
-              loadChannels(),
-              loadServerSettings(),
-              loadRoles(),
-              loadDmChannels(),
-              loadChannelGroups(),
-              loadChannelOverrides(),
-              loadGroupOverrides(),
-              loadFriends(),
-              loadPendingRequests(),
-            ]).catch((e) => console.error('[App] Re-sync failed:', e));
+            loadChannels().catch(() => {});
+            loadDmChannels().catch(() => {});
+            refreshUsers().catch(() => {});
+            // Delay secondary loads to avoid burst
+            setTimeout(() => {
+              loadServerSettings().catch(() => {});
+              loadRoles().catch(() => {});
+              loadChannelGroups().catch(() => {});
+              loadChannelOverrides().catch(() => {});
+              loadGroupOverrides().catch(() => {});
+              loadFriends().catch(() => {});
+              loadPendingRequests().catch(() => {});
+            }, 500);
           }
           hasConnectedOnce = true;
           break;
@@ -779,21 +785,25 @@
       lastLoadedServerId = id;
       // Reset users store so fetchUsers re-fetches for the new server
       resetUsersStore();
-      Promise.all([
-        loadChannels(),
-        loadRoles(),
-        loadChannelOverrides(),
-        loadGroupOverrides(),
-        loadChannelGroups(),
-        fetchUsers(),
-        loadServerSettings(),
-      ]).then(() => {
+
+      // Load channels first (critical for UI), then the rest in parallel
+      loadChannels().then(() => {
         const channelList = get(channels);
-        const firstText = channelList.find((c: any) => c.type === 'text');
-        if (firstText) {
-          activeChannelId.set(firstText.id);
+        const lastChannel = localStorage.getItem('lastChannelId_' + id);
+        const target = channelList.find((c: any) => c.id === lastChannel && c.type === 'text')
+          || channelList.find((c: any) => c.type === 'text');
+        if (target) {
+          activeChannelId.set(target.id);
         }
-      }).catch((e) => console.error('[App] Failed to load server data:', e));
+      }).catch((e) => console.error('[App] Failed to load channels:', e));
+
+      // Load the rest in parallel — non-blocking
+      loadRoles().catch(() => {});
+      loadChannelOverrides().catch(() => {});
+      loadGroupOverrides().catch(() => {});
+      loadChannelGroups().catch(() => {});
+      fetchUsers().catch(() => {});
+      loadServerSettings().catch(() => {});
     }
   });
 
