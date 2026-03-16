@@ -934,7 +934,7 @@
                         {#if serverAvatarPreview}
                           <img src={serverAvatarFile ? serverAvatarPreview : resolveAsset(serverAvatarPreview)} alt="" onerror={() => { serverAvatarPreview = null; serverAvatarFile = null; }} />
                         {:else if avatarPreview || $currentUser?.avatar_url}
-                          <img src={avatarFile ? avatarPreview : resolveAsset(avatarPreview || $currentUser?.avatar_url)} alt="" onerror={(e) => { e.currentTarget.remove(); }} />
+                          <img src={avatarFile ? avatarPreview : resolveAsset(avatarPreview || $currentUser?.avatar_url)} alt="" />
                         {:else}
                           <span class="avatar-initial">{(displayName || $currentUser?.username || '?').charAt(0).toUpperCase()}</span>
                         {/if}
@@ -1954,6 +1954,18 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  .avatar-initial {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--accent);
+    background: var(--bg-light);
   }
 
   .preview-overlay {
