@@ -146,6 +146,8 @@
     viewingScreenUserId ? $activeScreenShares.get(viewingScreenUserId) : null,
   );
 
+  let appLoading = $state(true);
+
   async function initApp() {
     if (initialized) return;
     initialized = true;
@@ -154,29 +156,36 @@
 
     if ($currentUser) {
       appDataLoaded = true;
+      appLoading = true;
       try {
-        // Load servers first, then set active server
+        // Load everything sequentially to avoid nginx rate limit
         const serverList = await loadServers();
         await loadDmChannels();
+
         if (serverList.length > 0) {
           const lastServer = localStorage.getItem('lastServerId');
           const serverId = serverList.find(s => s.id === lastServer)?.id ?? serverList[0].id;
           activeServerId.set(serverId);
           isDmView.set(false);
-          // Server-scoped data will be loaded by the $effect reacting to activeServerId
         } else {
           isDmView.set(true);
         }
+
+        // Wait for server-scoped data to load (triggered by activeServerId $effect)
+        // Give it time to complete before removing loading screen
+        await new Promise(r => setTimeout(r, 300));
+
+        await loadInvitations().catch(() => {});
+        await loadFriends().catch(() => {});
+        await loadPendingRequests().catch(() => {});
       } catch (e) {
         console.error('[App] Failed to load app data:', e);
       }
+      appLoading = false;
       connectWs();
       startIdleDetection();
       checkForUpdates();
       initNotifications();
-      loadInvitations();
-      loadFriends().catch(() => {});
-      loadPendingRequests().catch(() => {});
 
       if ('serviceWorker' in navigator && !isDesktop) {
         navigator.serviceWorker.register('/sw.js').catch(() => {});
@@ -271,21 +280,20 @@
           // initApp already loaded everything and firing duplicate requests
           // trips the nginx rate limit (503s)
           if (hasConnectedOnce) {
-            // Stagger re-sync to avoid nginx rate limit (503s)
-            loadServers().catch(() => {});
-            loadChannels().catch(() => {});
-            loadDmChannels().catch(() => {});
-            refreshUsers().catch(() => {});
-            // Delay secondary loads to avoid burst
-            setTimeout(() => {
-              loadServerSettings().catch(() => {});
-              loadRoles().catch(() => {});
-              loadChannelGroups().catch(() => {});
-              loadChannelOverrides().catch(() => {});
-              loadGroupOverrides().catch(() => {});
-              loadFriends().catch(() => {});
-              loadPendingRequests().catch(() => {});
-            }, 500);
+            // Sequential re-sync to avoid nginx rate limit (503s)
+            (async () => {
+              await loadServers().catch(() => {});
+              await loadChannels().catch(() => {});
+              await loadDmChannels().catch(() => {});
+              await refreshUsers().catch(() => {});
+              await loadServerSettings().catch(() => {});
+              await loadRoles().catch(() => {});
+              await loadChannelGroups().catch(() => {});
+              await loadChannelOverrides().catch(() => {});
+              await loadGroupOverrides().catch(() => {});
+              await loadFriends().catch(() => {});
+              await loadPendingRequests().catch(() => {});
+            })();
           }
           hasConnectedOnce = true;
           break;
@@ -783,27 +791,29 @@
     const dmView = $isDmView;
     if (id && !dmView && id !== lastLoadedServerId) {
       lastLoadedServerId = id;
-      // Reset users store so fetchUsers re-fetches for the new server
       resetUsersStore();
 
-      // Load channels first (critical for UI), then the rest in parallel
-      loadChannels().then(() => {
-        const channelList = get(channels);
-        const lastChannel = localStorage.getItem('lastChannelId_' + id);
-        const target = channelList.find((c: any) => c.id === lastChannel && c.type === 'text')
-          || channelList.find((c: any) => c.type === 'text');
-        if (target) {
-          activeChannelId.set(target.id);
+      // Load server data sequentially to avoid rate limits
+      (async () => {
+        try {
+          await loadChannels();
+          const channelList = get(channels);
+          const lastChannel = localStorage.getItem('lastChannelId_' + id);
+          const target = channelList.find((c: any) => c.id === lastChannel && c.type === 'text')
+            || channelList.find((c: any) => c.type === 'text');
+          if (target) {
+            activeChannelId.set(target.id);
+          }
+          await loadChannelGroups();
+          await fetchUsers();
+          await loadRoles();
+          await loadServerSettings();
+          await loadChannelOverrides();
+          await loadGroupOverrides();
+        } catch (e) {
+          console.error('[App] Failed to load server data:', e);
         }
-      }).catch((e) => console.error('[App] Failed to load channels:', e));
-
-      // Load the rest in parallel — non-blocking
-      loadRoles().catch(() => {});
-      loadChannelOverrides().catch(() => {});
-      loadGroupOverrides().catch(() => {});
-      loadChannelGroups().catch(() => {});
-      fetchUsers().catch(() => {});
-      loadServerSettings().catch(() => {});
+      })();
     }
   });
 
@@ -925,7 +935,7 @@
 
 {#if needsServer}
   <ServerConnect />
-{:else if $authLoading}
+{:else if $authLoading || appLoading}
   <div class="loading-screen">
     <div class="loading-spinner"></div>
     <p>Loading...</p>
