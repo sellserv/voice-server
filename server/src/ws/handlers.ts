@@ -697,15 +697,6 @@ function handleSoundboardPlay(user: JwtPayload, soundId: string) {
     return;
   }
 
-  const channelId = userVoiceChannels.get(user.userId);
-  if (!channelId) {
-    sendTo(user.userId, {
-      type: 'error',
-      message: 'Must be in a voice channel or call to play sounds',
-    });
-    return;
-  }
-
   // Verify server membership for the voice channel
   const sbServerId = getChannelServerId(channelId);
   if (sbServerId && !isServerMember(user.userId, sbServerId)) {
