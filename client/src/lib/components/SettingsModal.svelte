@@ -813,9 +813,7 @@
                         {#if showAvatarMenu}
                           <div class="avatar-menu">
                             <button onclick={() => { handleAvatarClick(); showAvatarMenu = false; }}>Upload Image</button>
-                            {#if avatarPreview || $currentUser?.avatar_url}
-                              <button class="btn-danger-text" onclick={() => { avatarPreview = null; avatarFile = null; showAvatarMenu = false; }}>Remove Avatar</button>
-                            {/if}
+                            <button class="btn-danger-text" onclick={() => { avatarPreview = null; avatarFile = null; showAvatarMenu = false; }}>Remove Avatar</button>
                           </div>
                         {/if}
                       </div>
@@ -947,9 +945,7 @@
                         {#if showServerAvatarMenu}
                           <div class="avatar-menu">
                             <button onclick={() => { handleServerAvatarClick(); showServerAvatarMenu = false; }}>Upload Image</button>
-                            {#if serverAvatarPreview}
-                              <button onclick={() => { serverAvatarPreview = null; serverAvatarFile = null; showServerAvatarMenu = false; }}>Reset to Global</button>
-                            {/if}
+                            <button onclick={() => { serverAvatarPreview = null; serverAvatarFile = null; showServerAvatarMenu = false; }}>Reset to Global</button>
                           </div>
                         {/if}
                       </div>
