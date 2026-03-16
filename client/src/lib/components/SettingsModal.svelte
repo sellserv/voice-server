@@ -139,6 +139,8 @@
   let bannerPreview = $state<string | null>($currentUser?.banner_url || null);
   let bannerFile = $state<File | null>(null);
   let bannerGiphyUrl = $state<string | null>(null);
+  let showAvatarMenu = $state(false);
+  let showServerAvatarMenu = $state(false);
   let showBannerMenu = $state(false);
   let showBannerGifPicker = $state(false);
   let nameFont = $state($currentUser?.name_font ?? '');
@@ -775,7 +777,7 @@
                   <div class="form-group">
                     <label>Avatar</label>
                     <div class="avatar-upload-row">
-                      <div class="avatar-preview-small" onclick={handleAvatarClick}>
+                      <div class="avatar-preview-small" onclick={() => showAvatarMenu = !showAvatarMenu}>
                         {#if avatarPreview}
                           <img src={avatarFile ? avatarPreview : resolveAsset(avatarPreview)} alt="" onerror={() => { avatarPreview = null; avatarFile = null; }} />
                         {:else}
@@ -784,9 +786,14 @@
                         <div class="preview-overlay">Change</div>
                       </div>
                       <div class="upload-btns">
-                        <button class="btn-subtle" onclick={handleAvatarClick}>Change Avatar</button>
-                        {#if avatarPreview || $currentUser?.avatar_url}
-                          <button class="btn-danger-subtle" onclick={() => { avatarPreview = null; avatarFile = null; }}>Remove Avatar</button>
+                        <button class="btn-subtle" onclick={() => showAvatarMenu = !showAvatarMenu}>Change Avatar</button>
+                        {#if showAvatarMenu}
+                          <div class="avatar-menu">
+                            <button onclick={() => { handleAvatarClick(); showAvatarMenu = false; }}>Upload Image</button>
+                            {#if avatarPreview || $currentUser?.avatar_url}
+                              <button class="btn-danger-text" onclick={() => { avatarPreview = null; avatarFile = null; showAvatarMenu = false; }}>Remove Avatar</button>
+                            {/if}
+                          </div>
                         {/if}
                       </div>
                     </div>
@@ -902,7 +909,7 @@
                   <div class="form-group">
                     <label>Server Avatar</label>
                     <div class="avatar-upload-row">
-                      <div class="avatar-preview-small" onclick={handleServerAvatarClick}>
+                      <div class="avatar-preview-small" onclick={() => showServerAvatarMenu = !showServerAvatarMenu}>
                         {#if serverAvatarPreview}
                           <img src={serverAvatarFile ? serverAvatarPreview : resolveAsset(serverAvatarPreview)} alt="" onerror={() => { serverAvatarPreview = null; serverAvatarFile = null; }} />
                         {:else if avatarPreview || $currentUser?.avatar_url}
@@ -913,9 +920,14 @@
                         <div class="preview-overlay">Change</div>
                       </div>
                       <div class="upload-btns">
-                        <button class="btn-subtle" onclick={handleServerAvatarClick}>Change Avatar</button>
-                        {#if serverAvatarPreview}
-                          <button class="btn-danger-subtle" onclick={() => { serverAvatarPreview = null; serverAvatarFile = null; }}>Reset to Global</button>
+                        <button class="btn-subtle" onclick={() => showServerAvatarMenu = !showServerAvatarMenu}>Change Avatar</button>
+                        {#if showServerAvatarMenu}
+                          <div class="avatar-menu">
+                            <button onclick={() => { handleServerAvatarClick(); showServerAvatarMenu = false; }}>Upload Image</button>
+                            {#if serverAvatarPreview}
+                              <button class="btn-danger-text" onclick={() => { serverAvatarPreview = null; serverAvatarFile = null; showServerAvatarMenu = false; }}>Reset to Global</button>
+                            {/if}
+                          </div>
                         {/if}
                       </div>
                     </div>
@@ -1864,6 +1876,46 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    position: relative;
+  }
+
+  .avatar-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    background: var(--glass-bg-heavy);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border-bright);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--glass-shadow);
+  }
+
+  .avatar-menu button {
+    padding: 8px 14px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s;
+  }
+
+  .avatar-menu button:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: white;
+  }
+
+  .avatar-menu .btn-danger-text {
+    color: var(--danger);
+  }
+
+  .avatar-menu .btn-danger-text:hover {
+    background: rgba(248, 113, 113, 0.1);
+    color: var(--danger);
   }
 
   .avatar-preview-small {
