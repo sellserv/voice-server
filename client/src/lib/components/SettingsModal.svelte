@@ -489,6 +489,9 @@
   });
 
   function handleClose() {
+    if (hasChanges && !window.confirm('You have unsaved changes. Are you sure you want to close?')) {
+      return;
+    }
     stopVideoPreview();
     onclose();
   }
@@ -612,9 +615,11 @@
         return (
           displayName !== ($currentUser?.display_name || '') ||
           avatarFile !== null ||
+          avatarPreview !== ($currentUser?.avatar_url || null) ||
           bio !== ($currentUser?.bio || '') ||
           bannerFile !== null ||
           bannerGiphyUrl !== null ||
+          bannerPreview !== ($currentUser?.banner_url || null) ||
           nameFont !== ($currentUser?.name_font || '') ||
           (useGradient ? `gradient:${gradientStart},${gradientEnd}` : nameColor) !== ($currentUser?.name_color || '')
         );
@@ -622,13 +627,31 @@
         return (
           serverNickname !== '' ||
           serverAvatarFile !== null ||
+          serverAvatarPreview !== null ||
           serverBannerFile !== null ||
-          serverBannerGiphyUrl !== null
+          serverBannerGiphyUrl !== null ||
+          serverBannerPreview !== null
         );
       }
     }
     return false;
   });
+
+  function resetGlobalProfile() {
+    displayName = $currentUser?.display_name || '';
+    avatarPreview = $currentUser?.avatar_url || null;
+    avatarFile = null;
+    bio = $currentUser?.bio || '';
+    bannerPreview = $currentUser?.banner_url || null;
+    bannerFile = null;
+    bannerGiphyUrl = null;
+    nameFont = $currentUser?.name_font ?? '';
+    nameColor = $currentUser?.name_color ?? '';
+  }
+
+  function resetServerProfile() {
+    loadServerProfile();
+  }
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -996,7 +1019,7 @@
             <div class="sticky-footer" class:visible={hasChanges}>
               <p class="footer-hint">Careful — you have unsaved changes!</p>
               <div class="footer-btns">
-                <button class="btn-text" onclick={() => { activeProfileTab === 'global' ? activeTab = 'profiles' : loadServerProfile() }}>Reset</button>
+                <button class="btn-text" onclick={() => { activeProfileTab === 'global' ? resetGlobalProfile() : resetServerProfile() }}>Reset</button>
                 <button class="btn-success" onclick={handleSave} disabled={saving}>
                   {saving ? 'Saving...' : 'Save Changes'}
                 </button>
