@@ -401,7 +401,15 @@ uIOhook.on('mouseup', (e) => {
   }
 });
 
-uIOhook.start();
+function startInputHook() {
+  try {
+    uIOhook.start();
+    console.log('[InputHook] Started successfully');
+  } catch (err) {
+    console.error('[InputHook] Failed to start:', err.message || err);
+    // Continue app startup without global PTT support
+  }
+}
 
 // --- App lifecycle ---
 
@@ -457,6 +465,9 @@ if (!gotTheLock) {
 
     createWindow(url);
     createTray();
+
+    // Start input hook for global PTT (gracefully handles failure)
+    startInputHook();
 
     // Start game detection
     gameDetector.start(store, (game) => {
