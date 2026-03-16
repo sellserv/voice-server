@@ -34,9 +34,11 @@ export const groupedChannels = derived([channels, channelGroups], ([$channels, $
   }
 
   // Then each group sorted by sort_order
+  // Hide groups with permissions_enabled if the user has no visible channels in them
   const sortedGroups = [...$channelGroups].sort((a, b) => a.sort_order - b.sort_order);
   for (const group of sortedGroups) {
     const groupChannels = nonDm.filter((c) => c.group_id === group.id);
+    if (group.permissions_enabled && groupChannels.length === 0) continue;
     result.push({ group, channels: groupChannels.sort((a, b) => a.sort_order - b.sort_order) });
   }
 
