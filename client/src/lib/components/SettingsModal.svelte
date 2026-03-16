@@ -826,7 +826,7 @@
                     <div class="preview-banner" style:background={bannerPreview ? `url(${resolveAsset(bannerPreview)}) center/cover` : 'var(--accent)'}></div>
                     <div class="preview-avatar">
                       {#if avatarPreview}
-                        <img src={resolveAsset(avatarPreview)} alt="" />
+                        <img src={avatarFile ? avatarPreview : resolveAsset(avatarPreview)} alt="" onerror={() => { avatarPreview = null; avatarFile = null; }} />
                       {:else}
                         <span class="avatar-initial">{(displayName || $currentUser?.username || '?').charAt(0).toUpperCase()}</span>
                       {/if}
