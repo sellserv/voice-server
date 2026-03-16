@@ -925,7 +925,7 @@
                           <div class="avatar-menu">
                             <button onclick={() => { handleServerAvatarClick(); showServerAvatarMenu = false; }}>Upload Image</button>
                             {#if serverAvatarPreview}
-                              <button class="btn-danger-text" onclick={() => { serverAvatarPreview = null; serverAvatarFile = null; showServerAvatarMenu = false; }}>Reset to Global</button>
+                              <button class="btn-danger-text" onclick={() => { serverAvatarPreview = null; serverAvatarFile = null; showServerAvatarMenu = false; }}>Remove Server Avatar</button>
                             {/if}
                           </div>
                         {/if}
