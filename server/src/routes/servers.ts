@@ -4,7 +4,7 @@ import db from '../db/connection.js';
 import { requireAuth, isInstanceAdmin } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import { hasPermission } from '../auth/permissions.js';
-import { sendTo, sendToMany } from '../ws/index.js';
+import { sendTo, sendToMany, getServerMemberUserIds } from '../ws/index.js';
 import { ensureDmChannel, notifyDmCreated } from '../ws/dmUtils.js';
 import type { Server, ServerInvitation, Message } from '@voip-server/shared';
 
@@ -544,25 +544,29 @@ export default async function serverRoutes(app: FastifyInstance) {
     },
   );
 
-  // Update own server profile (nickname/avatar)
-  app.patch<{ Params: { serverId: string }; Body: { nickname?: string; avatar_url?: string } }>(
+  // Update own server profile (nickname/avatar/banner)
+  app.patch<{ Params: { serverId: string }; Body: { nickname?: string; avatar_url?: string; banner_url?: string } }>(
     '/api/servers/:serverId/members/me',
     { preHandler: [requireAuth, requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const userId = request.user.userId;
-      const { nickname, avatar_url } = request.body;
+      const { nickname, avatar_url, banner_url } = request.body;
 
       const updates: string[] = [];
       const values: any[] = [];
 
       if (nickname !== undefined) {
         updates.push('nickname = ?');
-        values.push(nickname || null);  // empty string = clear nickname
+        values.push(nickname || null);
       }
       if (avatar_url !== undefined) {
         updates.push('avatar_url = ?');
         values.push(avatar_url || null);
+      }
+      if (banner_url !== undefined) {
+        updates.push('banner_url = ?');
+        values.push(banner_url || null);
       }
 
       if (updates.length === 0) {
@@ -573,6 +577,17 @@ export default async function serverRoutes(app: FastifyInstance) {
       db.prepare(
         `UPDATE server_members SET ${updates.join(', ')} WHERE server_id = ? AND user_id = ?`
       ).run(...values);
+
+      // Broadcast update to all server members
+      const memberIds = getServerMemberUserIds(serverId);
+      sendToMany(memberIds, {
+        type: 'server:memberUpdated',
+        serverId,
+        userId,
+        nickname: nickname !== undefined ? (nickname || null) : undefined,
+        avatar_url: avatar_url !== undefined ? (avatar_url || null) : undefined,
+        banner_url: banner_url !== undefined ? (banner_url || null) : undefined,
+      });
 
       return { ok: true };
     }
@@ -587,7 +602,7 @@ export default async function serverRoutes(app: FastifyInstance) {
 
       const members = db
         .prepare(
-          `SELECT sm.server_id, sm.user_id, sm.nickname, sm.avatar_url as member_avatar_url, sm.joined_at,
+          `SELECT sm.server_id, sm.user_id, sm.nickname, sm.avatar_url as member_avatar_url, sm.banner_url as member_banner_url, sm.joined_at,
                   u.username, u.display_name, u.avatar_url, u.status_preference, u.is_bot
            FROM server_members sm
            JOIN users u ON u.id = sm.user_id
@@ -602,7 +617,9 @@ export default async function serverRoutes(app: FastifyInstance) {
         joined_at: m.joined_at,
         username: m.username,
         display_name: m.display_name,
-        avatar_url: m.member_avatar_url || m.avatar_url,
+        avatar_url: m.member_avatar_url || m.avatar_url, // for general use
+        member_avatar_url: m.member_avatar_url, // for settings
+        member_banner_url: m.member_banner_url, // for settings
         status_preference: m.status_preference,
         is_bot: !!m.is_bot,
       }));

@@ -6,6 +6,7 @@ interface OnlineUser {
   username: string;
   display_name?: string;
   status: UserStatus;
+  activity?: string;
 }
 
 export const onlineUsers = writable<Map<string, OnlineUser>>(new Map());
@@ -25,9 +26,20 @@ export function setUserOnline(
   username: string,
   display_name?: string,
   status: UserStatus = 'online',
+  activity?: string,
 ) {
   onlineUsers.update((map) => {
-    map.set(userId, { userId, username, display_name, status });
+    map.set(userId, { userId, username, display_name, status, activity });
+    return new Map(map);
+  });
+}
+
+export function updateUserActivity(userId: string, activity: string | null) {
+  onlineUsers.update((map) => {
+    const user = map.get(userId);
+    if (user) {
+      map.set(userId, { ...user, activity: activity || undefined });
+    }
     return new Map(map);
   });
 }

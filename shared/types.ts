@@ -440,6 +440,7 @@ export type ClientEvent =
       effect: string;
     }
   | { type: 'poll:vote'; pollId: string; optionIds: string[] }
+  | { type: 'presence:activity'; game: string | null; visibility: 'all' | 'selected'; serverIds?: string[] }
   | { type: 'server:switch'; serverId: string };
 export type ServerEvent =
   | {
@@ -469,6 +470,12 @@ export type ServerEvent =
       display_name?: string;
       online: boolean;
       status?: UserStatus;
+      activity?: string;
+    }
+  | {
+      type: 'presence:activity';
+      userId: string;
+      activity: string | null;
     }
   | {
       type: 'presence:list';

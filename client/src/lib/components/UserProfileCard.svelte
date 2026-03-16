@@ -106,7 +106,7 @@
         class="display-name"
         style={nameStyle(user.name_color, undefined, user.name_font)}
       >
-        {user.display_name || user.username}
+        {user.server_nickname || user.display_name || user.username}
       </h3>
       <p class="username-text">@{user.username}</p>
     </div>

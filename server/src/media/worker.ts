@@ -73,10 +73,11 @@ export const mediaCodecs: mediasoup.types.RtpCodecCapability[] = [
     channels: 2,
     parameters: {
       useinbandfec: 1,
-      usedtx: 0,
+      usedtx: 1,
       stereo: 0,
       'sprop-stereo': 0,
       minptime: 10,
+      ptime: 20,
     },
   } as unknown as mediasoup.types.RtpCodecCapability,
   {

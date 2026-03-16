@@ -3,7 +3,7 @@
   import { onMount } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { checkAuth, currentUser, authLoading, logout } from '$lib/stores/auth';
-  import { connectWs, disconnectWs, onWsEvent, wsConnected, wsKicked } from '$lib/ws';
+  import { connectWs, disconnectWs, onWsEvent, sendWs, wsConnected, wsKicked } from '$lib/ws';
   import {
     loadChannels,
     channels,
@@ -24,7 +24,7 @@
     addMissedCall,
   } from '$lib/stores/channels';
   import { addMessage, editMessage, removeMessage, pinMessage, unpinMessage } from '$lib/stores/messages';
-  import { setOnlineUsers, setUserOnline, setUserOffline, myStatus } from '$lib/stores/presence';
+  import { setOnlineUsers, setUserOnline, setUserOffline, updateUserActivity, myStatus } from '$lib/stores/presence';
   import { startIdleDetection, stopIdleDetection } from '$lib/idleDetector';
   import {
     setVoicePeers,
@@ -120,11 +120,15 @@
     }
   });
 
-  // Close mobile drawers when channel changes
+  // Close mobile drawers when channel changes + persist last channel per server
   $effect(() => {
-    $activeChannelId;
+    const chId = $activeChannelId;
+    const sId = $activeServerId;
     showMobileSidebar = false;
     showMobileUserList = false;
+    if (chId && sId) {
+      localStorage.setItem('lastChannelId_' + sId, chId);
+    }
   });
 
   // Reactive tab title with unread count
@@ -142,6 +146,8 @@
     viewingScreenUserId ? $activeScreenShares.get(viewingScreenUserId) : null,
   );
 
+  let appLoading = $state(true);
+
   async function initApp() {
     if (initialized) return;
     initialized = true;
@@ -150,29 +156,36 @@
 
     if ($currentUser) {
       appDataLoaded = true;
+      appLoading = true;
       try {
-        // Load servers first, then set active server
+        // Load everything sequentially to avoid nginx rate limit
         const serverList = await loadServers();
         await loadDmChannels();
+
         if (serverList.length > 0) {
           const lastServer = localStorage.getItem('lastServerId');
           const serverId = serverList.find(s => s.id === lastServer)?.id ?? serverList[0].id;
           activeServerId.set(serverId);
           isDmView.set(false);
-          // Server-scoped data will be loaded by the $effect reacting to activeServerId
         } else {
           isDmView.set(true);
         }
+
+        // Wait for server-scoped data to load (triggered by activeServerId $effect)
+        // Give it time to complete before removing loading screen
+        await new Promise(r => setTimeout(r, 300));
+
+        await loadInvitations().catch(() => {});
+        await loadFriends().catch(() => {});
+        await loadPendingRequests().catch(() => {});
       } catch (e) {
         console.error('[App] Failed to load app data:', e);
       }
+      appLoading = false;
       connectWs();
       startIdleDetection();
       checkForUpdates();
       initNotifications();
-      loadInvitations();
-      loadFriends().catch(() => {});
-      loadPendingRequests().catch(() => {});
 
       if ('serviceWorker' in navigator && !isDesktop) {
         navigator.serviceWorker.register('/sw.js').catch(() => {});
@@ -267,29 +280,33 @@
           // initApp already loaded everything and firing duplicate requests
           // trips the nginx rate limit (503s)
           if (hasConnectedOnce) {
-            loadServers().catch(() => {});
-            Promise.all([
-              refreshUsers(),
-              loadChannels(),
-              loadServerSettings(),
-              loadRoles(),
-              loadDmChannels(),
-              loadChannelGroups(),
-              loadChannelOverrides(),
-              loadGroupOverrides(),
-              loadFriends(),
-              loadPendingRequests(),
-            ]).catch((e) => console.error('[App] Re-sync failed:', e));
+            // Sequential re-sync to avoid nginx rate limit (503s)
+            (async () => {
+              await loadServers().catch(() => {});
+              await loadChannels().catch(() => {});
+              await loadDmChannels().catch(() => {});
+              await refreshUsers().catch(() => {});
+              await loadServerSettings().catch(() => {});
+              await loadRoles().catch(() => {});
+              await loadChannelGroups().catch(() => {});
+              await loadChannelOverrides().catch(() => {});
+              await loadGroupOverrides().catch(() => {});
+              await loadFriends().catch(() => {});
+              await loadPendingRequests().catch(() => {});
+            })();
           }
           hasConnectedOnce = true;
           break;
         case 'presence:update':
           if (event.online) {
-            setUserOnline(event.userId, event.username, event.display_name, event.status);
+            setUserOnline(event.userId, event.username, event.display_name, event.status, event.activity);
             refreshUsers();
           } else {
             setUserOffline(event.userId);
           }
+          break;
+        case 'presence:activity':
+          updateUserActivity(event.userId, event.activity);
           break;
         case 'voice:peers':
           setVoicePeers(
@@ -621,6 +638,18 @@
         case 'server:memberJoined':
           loadServers().catch(() => {});
           break;
+        case 'server:memberUpdated':
+          if (event.serverId === get(activeServerId)) {
+            refreshUsers().catch(() => {});
+            updateChannelMemberProfile(event.userId, {
+              display_name: event.nickname,
+              avatar_url: event.avatar_url,
+            });
+          }
+          if (event.userId === $currentUser?.id) {
+            loadServers().catch(() => {});
+          }
+          break;
         case 'server:invitation':
           addInvitation(event.invitation);
           break;
@@ -689,12 +718,28 @@
       }
     });
 
+    // Desktop game activity detection
+    let cleanupGameDetection: (() => void) | null = null;
+    if (window.electronAPI?.onGameActivityChanged) {
+      cleanupGameDetection = window.electronAPI.onGameActivityChanged(async (game) => {
+        const settings = await window.electronAPI!.getGameSettings();
+        if (!settings.enabled) return;
+        sendWs({
+          type: 'presence:activity',
+          game,
+          visibility: settings.visibility,
+          serverIds: settings.visibility === 'selected' ? settings.selectedServerIds : undefined,
+        });
+      });
+    }
+
     if (!needsServer) {
       initApp();
     }
 
     return () => {
       unsub();
+      cleanupGameDetection?.();
       stopIdleDetection();
       disconnectWs();
     };
@@ -746,23 +791,29 @@
     const dmView = $isDmView;
     if (id && !dmView && id !== lastLoadedServerId) {
       lastLoadedServerId = id;
-      // Reset users store so fetchUsers re-fetches for the new server
       resetUsersStore();
-      Promise.all([
-        loadChannels(),
-        loadRoles(),
-        loadChannelOverrides(),
-        loadGroupOverrides(),
-        loadChannelGroups(),
-        fetchUsers(),
-        loadServerSettings(),
-      ]).then(() => {
-        const channelList = get(channels);
-        const firstText = channelList.find((c: any) => c.type === 'text');
-        if (firstText) {
-          activeChannelId.set(firstText.id);
+
+      // Load server data sequentially to avoid rate limits
+      (async () => {
+        try {
+          await loadChannels();
+          const channelList = get(channels);
+          const lastChannel = localStorage.getItem('lastChannelId_' + id);
+          const target = channelList.find((c: any) => c.id === lastChannel && c.type === 'text')
+            || channelList.find((c: any) => c.type === 'text');
+          if (target) {
+            activeChannelId.set(target.id);
+          }
+          await loadChannelGroups();
+          await fetchUsers();
+          await loadRoles();
+          await loadServerSettings();
+          await loadChannelOverrides();
+          await loadGroupOverrides();
+        } catch (e) {
+          console.error('[App] Failed to load server data:', e);
         }
-      }).catch((e) => console.error('[App] Failed to load server data:', e));
+      })();
     }
   });
 
@@ -884,7 +935,7 @@
 
 {#if needsServer}
   <ServerConnect />
-{:else if $authLoading}
+{:else if $authLoading || appLoading}
   <div class="loading-screen">
     <div class="loading-spinner"></div>
     <p>Loading...</p>

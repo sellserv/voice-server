@@ -33,6 +33,57 @@
   let loadingDevices = $state(true);
   let capturingPttKey = $state(false);
 
+  // Game Activity settings
+  let gameEnabled = $state(true);
+  let gameVisibility = $state<'all' | 'selected'>('all');
+  let gameServerIds = $state<string[]>([]);
+  let customGames = $state<Record<string, string>>({});
+  let newGameExe = $state('');
+  let newGameName = $state('');
+
+  async function loadGameSettings() {
+    if (!window.electronAPI?.getGameSettings) return;
+    const s = await window.electronAPI.getGameSettings();
+    gameEnabled = s.enabled;
+    gameVisibility = s.visibility;
+    gameServerIds = s.selectedServerIds;
+    customGames = s.customGames;
+  }
+
+  async function saveGameEnabled(enabled: boolean) {
+    gameEnabled = enabled;
+    await window.electronAPI?.setGameEnabled(enabled);
+  }
+
+  async function saveGameVisibility(vis: 'all' | 'selected') {
+    gameVisibility = vis;
+    await window.electronAPI?.setGameVisibility(vis);
+  }
+
+  async function toggleGameServer(serverId: string) {
+    if (gameServerIds.includes(serverId)) {
+      gameServerIds = gameServerIds.filter(id => id !== serverId);
+    } else {
+      gameServerIds = [...gameServerIds, serverId];
+    }
+    await window.electronAPI?.setGameServerIds(gameServerIds);
+  }
+
+  async function addCustomGame() {
+    if (!newGameExe.trim() || !newGameName.trim()) return;
+    await window.electronAPI?.addCustomGame(newGameExe.trim(), newGameName.trim());
+    customGames = { ...customGames, [newGameExe.trim().toLowerCase()]: newGameName.trim() };
+    newGameExe = '';
+    newGameName = '';
+  }
+
+  async function removeCustomGame(exe: string) {
+    await window.electronAPI?.removeCustomGame(exe);
+    const updated = { ...customGames };
+    delete updated[exe];
+    customGames = updated;
+  }
+
   let videoPreviewStream = $state<MediaStream | null>(null);
   let videoPreviewEl = $state<HTMLVideoElement>();
 
@@ -88,6 +139,8 @@
   let bannerPreview = $state<string | null>($currentUser?.banner_url || null);
   let bannerFile = $state<File | null>(null);
   let bannerGiphyUrl = $state<string | null>(null);
+  let showAvatarMenu = $state(false);
+  let showServerAvatarMenu = $state(false);
   let showBannerMenu = $state(false);
   let showBannerGifPicker = $state(false);
   let nameFont = $state($currentUser?.name_font ?? '');
@@ -113,6 +166,11 @@
   let showServerBannerGifPicker = $state(false);
   let loadingServerProfile = $state(false);
 
+  // Track original server profile values for change detection
+  let origServerNickname = $state('');
+  let origServerAvatarPreview = $state<string | null>(null);
+  let origServerBannerPreview = $state<string | null>(null);
+
   async function loadServerProfile() {
     if (!selectedServerId) return;
     loadingServerProfile = true;
@@ -126,6 +184,10 @@
         serverBannerPreview = me.member_banner_url || null;
         serverBannerFile = null;
         serverBannerGiphyUrl = null;
+        // Store originals for change detection
+        origServerNickname = serverNickname;
+        origServerAvatarPreview = serverAvatarPreview;
+        origServerBannerPreview = serverBannerPreview;
       }
     } catch {
       // ignore
@@ -319,6 +381,10 @@
         if (avatarFile) {
           const result = await api.upload(avatarFile);
           data.avatar_url = `/uploads/${result.stored_name}`;
+          avatarPreview = data.avatar_url;
+          avatarFile = null;
+        } else if (!avatarPreview && $currentUser?.avatar_url) {
+          data.avatar_url = null;
         }
 
         if (bio !== ($currentUser?.bio || '')) {
@@ -327,9 +393,15 @@
 
         if (bannerGiphyUrl) {
           data.banner_url = bannerGiphyUrl;
+          bannerPreview = bannerGiphyUrl;
+          bannerGiphyUrl = null;
         } else if (bannerFile) {
           const result = await api.upload(bannerFile);
           data.banner_url = `/uploads/${result.stored_name}`;
+          bannerPreview = data.banner_url;
+          bannerFile = null;
+        } else if (!bannerPreview && $currentUser?.banner_url) {
+          data.banner_url = null;
         }
 
         const currentFont = $currentUser?.name_font ?? '';
@@ -349,32 +421,45 @@
       } else if (activeProfileTab === 'server' && selectedServerId) {
         const data: { nickname?: string | null; avatar_url?: string | null; banner_url?: string | null } = {};
         
-        if (serverNickname !== undefined) {
+        if (serverNickname !== origServerNickname) {
           data.nickname = serverNickname.trim() || null;
         }
 
         if (serverAvatarFile) {
           const result = await api.upload(serverAvatarFile);
           data.avatar_url = `/uploads/${result.stored_name}`;
-        } else if (serverAvatarPreview === null) {
-          data.avatar_url = null;
+          serverAvatarPreview = data.avatar_url;
+          serverAvatarFile = null;
+        } else if (serverAvatarPreview !== origServerAvatarPreview) {
+          data.avatar_url = serverAvatarPreview;
         }
 
         if (serverBannerGiphyUrl) {
           data.banner_url = serverBannerGiphyUrl;
+          serverBannerPreview = serverBannerGiphyUrl;
+          serverBannerGiphyUrl = null;
         } else if (serverBannerFile) {
           const result = await api.upload(serverBannerFile);
           data.banner_url = `/uploads/${result.stored_name}`;
-        } else if (serverBannerPreview === null) {
-          data.banner_url = null;
+          serverBannerPreview = data.banner_url;
+          serverBannerFile = null;
+        } else if (serverBannerPreview !== origServerBannerPreview) {
+          data.banner_url = serverBannerPreview;
         }
 
-        await updateServerMember(selectedServerId, data);
+        if (Object.keys(data).length > 0) {
+          await updateServerMember(selectedServerId, data);
+          // Sync original state so the bar hides
+          origServerNickname = serverNickname;
+          origServerAvatarPreview = serverAvatarPreview;
+          origServerBannerPreview = serverBannerPreview;
+        }
       }
+    } catch (err: any) {
+      console.error('Failed to save profile:', err);
     } finally {
       saving = false;
     }
-    onclose();
   }
 
   async function loadDevices() {
@@ -434,6 +519,9 @@
   });
 
   function handleClose() {
+    if (hasChanges && !window.confirm('You have unsaved changes. Are you sure you want to close?')) {
+      return;
+    }
     stopVideoPreview();
     onclose();
   }
@@ -557,23 +645,43 @@
         return (
           displayName !== ($currentUser?.display_name || '') ||
           avatarFile !== null ||
+          avatarPreview !== ($currentUser?.avatar_url || null) ||
           bio !== ($currentUser?.bio || '') ||
           bannerFile !== null ||
           bannerGiphyUrl !== null ||
+          bannerPreview !== ($currentUser?.banner_url || null) ||
           nameFont !== ($currentUser?.name_font || '') ||
           (useGradient ? `gradient:${gradientStart},${gradientEnd}` : nameColor) !== ($currentUser?.name_color || '')
         );
       } else {
         return (
-          serverNickname !== '' ||
+          serverNickname !== origServerNickname ||
           serverAvatarFile !== null ||
+          serverAvatarPreview !== origServerAvatarPreview ||
           serverBannerFile !== null ||
-          serverBannerGiphyUrl !== null
+          serverBannerGiphyUrl !== null ||
+          serverBannerPreview !== origServerBannerPreview
         );
       }
     }
     return false;
   });
+
+  function resetGlobalProfile() {
+    displayName = $currentUser?.display_name || '';
+    avatarPreview = $currentUser?.avatar_url || null;
+    avatarFile = null;
+    bio = $currentUser?.bio || '';
+    bannerPreview = $currentUser?.banner_url || null;
+    bannerFile = null;
+    bannerGiphyUrl = null;
+    nameFont = $currentUser?.name_font ?? '';
+    nameColor = $currentUser?.name_color ?? '';
+  }
+
+  function resetServerProfile() {
+    loadServerProfile();
+  }
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -592,6 +700,7 @@
         <button class="sidebar-item" class:active={activeTab === 'voice-video'} onclick={() => activeTab = 'voice-video'}>Voice & Video</button>
         <button class="sidebar-item" class:active={activeTab === 'notifications'} onclick={() => activeTab = 'notifications'}>Notifications</button>
         <button class="sidebar-item" class:active={activeTab === 'appearance'} onclick={() => activeTab = 'appearance'}>Appearance</button>
+        <button class="sidebar-item" class:active={activeTab === 'game-activity'} onclick={() => { activeTab = 'game-activity'; loadGameSettings(); }}>Game Activity</button>
         {#if isDesktop}
           <button class="sidebar-item" class:active={activeTab === 'desktop'} onclick={() => activeTab = 'desktop'}>Desktop</button>
         {/if}
@@ -620,8 +729,9 @@
                 <div class="account-avatar-wrapper">
                   <div class="account-avatar">
                     {#if $currentUser?.avatar_url}
-                      <img src={resolveAsset($currentUser.avatar_url)} alt="" />
-                    {:else}
+                      <img src={resolveAsset($currentUser.avatar_url)} alt="" onerror={(e) => { e.currentTarget.remove(); }} />
+                    {/if}
+                    {#if !$currentUser?.avatar_url}
                       <span class="avatar-initial">{$currentUser?.username.charAt(0).toUpperCase()}</span>
                     {/if}
                   </div>
@@ -720,18 +830,21 @@
                   <div class="form-group">
                     <label>Avatar</label>
                     <div class="avatar-upload-row">
-                      <div class="avatar-preview-small" onclick={handleAvatarClick}>
+                      <div class="avatar-preview-small" onclick={() => showAvatarMenu = !showAvatarMenu}>
                         {#if avatarPreview}
-                          <img src={resolveAsset(avatarPreview)} alt="" />
+                          <img src={avatarFile ? avatarPreview : resolveAsset(avatarPreview)} alt="" onerror={() => { avatarPreview = null; avatarFile = null; }} />
                         {:else}
                           <span class="avatar-initial">{(displayName || $currentUser?.username || '?').charAt(0).toUpperCase()}</span>
                         {/if}
                         <div class="preview-overlay">Change</div>
                       </div>
                       <div class="upload-btns">
-                        <button class="btn-subtle" onclick={handleAvatarClick}>Change Avatar</button>
-                        {#if avatarPreview && avatarPreview !== $currentUser?.avatar_url}
-                          <button class="btn-danger-subtle" onclick={() => { avatarPreview = $currentUser?.avatar_url || null; avatarFile = null; }}>Remove</button>
+                        <button class="btn-subtle" onclick={() => showAvatarMenu = !showAvatarMenu}>Change Avatar</button>
+                        {#if showAvatarMenu}
+                          <div class="avatar-menu">
+                            <button onclick={() => { handleAvatarClick(); showAvatarMenu = false; }}>Upload Image</button>
+                            <button class="btn-danger-text" onclick={() => { avatarPreview = null; avatarFile = null; showAvatarMenu = false; }}>Remove Avatar</button>
+                          </div>
                         {/if}
                       </div>
                     </div>
@@ -743,7 +856,7 @@
                     <div class="banner-upload-row">
                       <div class="banner-preview-small" onclick={handleBannerClick}>
                         {#if bannerPreview}
-                          <img src={resolveAsset(bannerPreview)} alt="" />
+                          <img src={bannerFile ? bannerPreview : resolveAsset(bannerPreview)} alt="" onerror={(e) => { e.currentTarget.remove(); }} />
                         {:else}
                           <div class="banner-placeholder">Click to choose banner</div>
                         {/if}
@@ -774,7 +887,7 @@
                     <div class="preview-banner" style:background={bannerPreview ? `url(${resolveAsset(bannerPreview)}) center/cover` : 'var(--accent)'}></div>
                     <div class="preview-avatar">
                       {#if avatarPreview}
-                        <img src={resolveAsset(avatarPreview)} alt="" />
+                        <img src={avatarFile ? avatarPreview : resolveAsset(avatarPreview)} alt="" onerror={() => { avatarPreview = null; avatarFile = null; }} />
                       {:else}
                         <span class="avatar-initial">{(displayName || $currentUser?.username || '?').charAt(0).toUpperCase()}</span>
                       {/if}
@@ -847,18 +960,23 @@
                   <div class="form-group">
                     <label>Server Avatar</label>
                     <div class="avatar-upload-row">
-                      <div class="avatar-preview-small" onclick={handleServerAvatarClick}>
+                      <div class="avatar-preview-small" onclick={() => showServerAvatarMenu = !showServerAvatarMenu}>
                         {#if serverAvatarPreview}
-                          <img src={resolveAsset(serverAvatarPreview)} alt="" />
+                          <img src={serverAvatarFile ? serverAvatarPreview : resolveAsset(serverAvatarPreview)} alt="" onerror={() => { serverAvatarPreview = null; serverAvatarFile = null; }} />
+                        {:else if avatarPreview || $currentUser?.avatar_url}
+                          <img src={avatarFile ? avatarPreview : resolveAsset(avatarPreview || $currentUser?.avatar_url)} alt="" />
                         {:else}
-                          <img src={resolveAsset(avatarPreview || $currentUser?.avatar_url)} alt="" />
+                          <span class="avatar-initial">{(displayName || $currentUser?.username || '?').charAt(0).toUpperCase()}</span>
                         {/if}
                         <div class="preview-overlay">Change</div>
                       </div>
                       <div class="upload-btns">
-                        <button class="btn-subtle" onclick={handleServerAvatarClick}>Change Avatar</button>
-                        {#if serverAvatarPreview}
-                          <button class="btn-danger-subtle" onclick={() => { serverAvatarPreview = null; serverAvatarFile = null; }}>Reset to Global</button>
+                        <button class="btn-subtle" onclick={() => showServerAvatarMenu = !showServerAvatarMenu}>Change Avatar</button>
+                        {#if showServerAvatarMenu}
+                          <div class="avatar-menu">
+                            <button onclick={() => { handleServerAvatarClick(); showServerAvatarMenu = false; }}>Upload Image</button>
+                            <button onclick={() => { serverAvatarPreview = null; serverAvatarFile = null; showServerAvatarMenu = false; }}>Reset to Global</button>
+                          </div>
                         {/if}
                       </div>
                     </div>
@@ -870,7 +988,7 @@
                     <div class="banner-upload-row">
                       <div class="banner-preview-small" onclick={() => showServerBannerMenu = !showServerBannerMenu}>
                         {#if serverBannerPreview}
-                          <img src={resolveAsset(serverBannerPreview)} alt="" />
+                          <img src={serverBannerFile ? serverBannerPreview : resolveAsset(serverBannerPreview)} alt="" onerror={(e) => { e.currentTarget.remove(); }} />
                         {:else}
                           <div class="banner-placeholder">Using global banner</div>
                         {/if}
@@ -901,9 +1019,11 @@
                     <div class="preview-banner" style:background={(serverBannerPreview || bannerPreview) ? `url(${resolveAsset(serverBannerPreview || bannerPreview)}) center/cover` : 'var(--accent)'}></div>
                     <div class="preview-avatar">
                       {#if serverAvatarPreview}
-                        <img src={resolveAsset(serverAvatarPreview)} alt="" />
+                        <img src={serverAvatarFile ? serverAvatarPreview : resolveAsset(serverAvatarPreview)} alt="" onerror={(e) => { e.currentTarget.remove(); }} />
+                      {:else if avatarPreview || $currentUser?.avatar_url}
+                        <img src={avatarFile ? avatarPreview : resolveAsset(avatarPreview || $currentUser?.avatar_url)} alt="" onerror={(e) => { e.currentTarget.remove(); }} />
                       {:else}
-                        <img src={resolveAsset(avatarPreview || $currentUser?.avatar_url)} alt="" />
+                        <span class="avatar-initial">{(displayName || $currentUser?.username || '?').charAt(0).toUpperCase()}</span>
                       {/if}
                     </div>
                     <div class="preview-content">
@@ -925,7 +1045,7 @@
             <div class="sticky-footer" class:visible={hasChanges}>
               <p class="footer-hint">Careful — you have unsaved changes!</p>
               <div class="footer-btns">
-                <button class="btn-text" onclick={() => { activeProfileTab === 'global' ? activeTab = 'profiles' : loadServerProfile() }}>Reset</button>
+                <button class="btn-text" onclick={() => { activeProfileTab === 'global' ? resetGlobalProfile() : resetServerProfile() }}>Reset</button>
                 <button class="btn-success" onclick={handleSave} disabled={saving}>
                   {saving ? 'Saving...' : 'Save Changes'}
                 </button>
@@ -1194,6 +1314,100 @@
                 </button>
               {/each}
             </div>
+          </section>
+
+        {:else if activeTab === 'game-activity'}
+          <section class="section">
+            <h3 class="content-title">Game Activity</h3>
+
+            {#if !window.electronAPI}
+              <div class="setting-toggle-row">
+                <div class="toggle-info">
+                  <div class="toggle-label">Desktop Only</div>
+                  <div class="toggle-desc">Game detection is only available in the desktop app. Download it from the <a href="https://info.sellserv.net/downloads.html" target="_blank" rel="noopener">downloads page</a>.</div>
+                </div>
+              </div>
+            {:else}
+              <div class="setting-toggle-row">
+                <div class="toggle-info">
+                  <div class="toggle-label">Display Current Activity</div>
+                  <div class="toggle-desc">Automatically detect and show what game you're playing.</div>
+                </div>
+                <button class="toggle-switch" class:active={gameEnabled} onclick={() => saveGameEnabled(!gameEnabled)}>
+                  <div class="toggle-knob"></div>
+                </button>
+              </div>
+
+              {#if gameEnabled}
+                <div class="section-divider"></div>
+
+                <h4 class="section-subtitle">Visibility</h4>
+                <div class="input-mode-selector">
+                  <button class="mode-btn" class:active={gameVisibility === 'all'} onclick={() => saveGameVisibility('all')}>
+                    <Icon name="users" size={18} />
+                    <span>All Servers</span>
+                  </button>
+                  <button class="mode-btn" class:active={gameVisibility === 'selected'} onclick={() => saveGameVisibility('selected')}>
+                    <Icon name="shield-check" size={18} />
+                    <span>Selected Servers</span>
+                  </button>
+                </div>
+
+                {#if gameVisibility === 'selected'}
+                  <div class="server-checkboxes">
+                    {#each $servers as server (server.id)}
+                      <label class="checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={gameServerIds.includes(server.id)}
+                          onchange={() => toggleGameServer(server.id)}
+                        />
+                        <span>{server.name}</span>
+                      </label>
+                    {/each}
+                  </div>
+                {/if}
+
+                <div class="section-divider"></div>
+
+                <h4 class="section-subtitle">Custom Games</h4>
+                <p class="toggle-desc" style="margin-bottom: 12px;">Add games that aren't automatically detected.</p>
+
+                {#if Object.keys(customGames).length > 0}
+                  <div class="custom-games-list">
+                    {#each Object.entries(customGames) as [exe, name] (exe)}
+                      <div class="custom-game-row">
+                        <div class="custom-game-info">
+                          <span class="custom-game-name">{name}</span>
+                          <span class="custom-game-exe">{exe}</span>
+                        </div>
+                        <button class="remove-game-btn" onclick={() => removeCustomGame(exe)}>
+                          <Icon name="x" size={14} />
+                        </button>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+
+                <div class="add-game-form">
+                  <input
+                    type="text"
+                    class="game-input"
+                    placeholder="Executable (e.g. mygame.exe)"
+                    bind:value={newGameExe}
+                  />
+                  <input
+                    type="text"
+                    class="game-input"
+                    placeholder="Display name (e.g. My Game)"
+                    bind:value={newGameName}
+                  />
+                  <button class="btn-accent" onclick={addCustomGame} disabled={!newGameExe.trim() || !newGameName.trim()}>
+                    Add Game
+                  </button>
+                </div>
+              {/if}
+            {/if}
           </section>
 
         {:else if activeTab === 'desktop' && isDesktop}
@@ -1711,6 +1925,46 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    position: relative;
+  }
+
+  .avatar-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    background: var(--glass-bg-heavy);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border-bright);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--glass-shadow);
+  }
+
+  .avatar-menu button {
+    padding: 8px 14px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s;
+  }
+
+  .avatar-menu button:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: white;
+  }
+
+  .avatar-menu .btn-danger-text {
+    color: var(--danger);
+  }
+
+  .avatar-menu .btn-danger-text:hover {
+    background: rgba(248, 113, 113, 0.1);
+    color: var(--danger);
   }
 
   .avatar-preview-small {
@@ -1730,6 +1984,18 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  .avatar-initial {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--accent);
+    background: var(--bg-light);
   }
 
   .preview-overlay {
@@ -2693,5 +2959,102 @@
   .preview-placeholder span {
     font-size: 0.9rem;
     font-weight: 600;
+  }
+
+  /* Game Activity */
+  .server-checkboxes {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 12px;
+    background: var(--bg-mid);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-light);
+  }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .custom-games-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+
+  .custom-game-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    background: var(--bg-mid);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-light);
+  }
+
+  .custom-game-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .custom-game-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: white;
+  }
+
+  .custom-game-exe {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+  }
+
+  .remove-game-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .remove-game-btn:hover {
+    background: var(--danger);
+    color: white;
+  }
+
+  .add-game-form {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .game-input {
+    flex: 1;
+    padding: 8px 12px;
+    background: var(--bg-mid);
+    color: var(--text);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-light);
+    font-size: 0.85rem;
+    outline: none;
+    transition: border-color 150ms;
+  }
+
+  .game-input:focus {
+    border-color: var(--accent);
   }
 </style>

@@ -77,6 +77,14 @@ import type { ... } from '@voip-server/shared';
 
 - Always check the latest GitHub release and tag before creating a new one (`gh release list --limit 1` and `git tag --sort=-v:refname | head -1`)
 
+## Branching & Deploys
+
+- **`staging` branch** → deploys to `staging.sellserv.net` (port 3001, separate DB/uploads)
+- **`main` branch** → deploys to `chat.sellserv.net` (production)
+- **Always commit to `staging` first by default.** Only merge to `main` when the user explicitly says to.
+- To merge staging to production: `git checkout main && git merge --squash staging && git commit && git push origin main`
+- Both branches auto-deploy via GitHub Actions on push.
+
 ## Commit Rules
 
 - Never add Co-Authored-By lines to commits

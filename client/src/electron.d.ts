@@ -29,6 +29,22 @@ interface ElectronAPI {
   checkForUpdates: () => Promise<{ available: boolean; version?: string }>;
   downloadUpdate: () => Promise<void>;
   installUpdate: () => Promise<void>;
+
+  // Game Activity
+  getGameSettings: () => Promise<{
+    enabled: boolean;
+    visibility: 'all' | 'selected';
+    selectedServerIds: string[];
+    customGames: Record<string, string>;
+  }>;
+  getCurrentGame: () => Promise<string | null>;
+  setGameEnabled: (enabled: boolean) => Promise<void>;
+  setGameVisibility: (visibility: 'all' | 'selected') => Promise<void>;
+  setGameServerIds: (ids: string[]) => Promise<void>;
+  addCustomGame: (exe: string, name: string) => Promise<void>;
+  removeCustomGame: (exe: string) => Promise<void>;
+  getCustomGames: () => Promise<Record<string, string>>;
+  onGameActivityChanged: (callback: (game: string | null) => void) => () => void;
 }
 
 interface Window {

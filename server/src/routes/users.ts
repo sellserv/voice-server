@@ -14,14 +14,14 @@ export default async function userRoutes(app: FastifyInstance) {
     async (request) => {
       const serverId = getServerId(request);
       const users = db
-        .prepare(
-          `SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.avatar_url, u.bio, u.banner_url, u.banned, u.created_at, u.is_bot,
-                u.name_font, u.name_color,
-                r.name as role_name, r.color as role_color,
-                sm.nickname as server_nickname
-         FROM users u
-         JOIN server_members sm ON sm.user_id = u.id AND sm.server_id = ?
-         LEFT JOIN roles r ON r.id = u.role_id
+       .prepare(
+         `SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.avatar_url, u.bio, u.banner_url, u.banned, u.created_at, u.is_bot,
+               u.name_font, u.name_color,
+               r.name as role_name, r.color as role_color,
+               sm.nickname as server_nickname, sm.avatar_url as member_avatar_url, sm.banner_url as member_banner_url
+        FROM users u
+        JOIN server_members sm ON sm.user_id = u.id AND sm.server_id = ?
+        LEFT JOIN roles r ON r.id = u.role_id
          WHERE u.is_bot = 0
             OR (u.is_bot = 1 AND EXISTS (SELECT 1 FROM bots b WHERE b.user_id = u.id AND b.enabled = 1))
          ORDER BY u.created_at`,
@@ -64,6 +64,14 @@ export default async function userRoutes(app: FastifyInstance) {
         user.role_ids = roles?.role_ids ?? (user.role_id ? [user.role_id] : []);
         user.role_names = roles?.role_names ?? (user.role_name ? [user.role_name] : []);
         user.role_colors = roles?.role_colors ?? (user.role_color ? [user.role_color] : []);
+        
+        // Prioritize server-specific profile fields
+        if (user.member_avatar_url) {
+          user.avatar_url = user.member_avatar_url;
+        }
+        if (user.member_banner_url) {
+          user.banner_url = user.member_banner_url;
+        }
       }
 
       return users;

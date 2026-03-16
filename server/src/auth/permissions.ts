@@ -22,7 +22,7 @@ const DEFAULT_PERMISSIONS: RolePermissions = {
   pin_messages: false,
   manage_channel_groups: false,
   view_channel: true,
-  use_apps: false,
+  use_apps: true,
   view_audit_log: false,
   manage_bots: false,
   manage_server: false,
@@ -503,8 +503,23 @@ export function getUsersWithChannelAccess(channelId: string): string[] {
   return result;
 }
 
-export function isAppEnabled(appId: string, _serverId?: string): boolean {
-  // TODO: enhance to check per-server app settings when available
+export function isAppEnabled(appId: string, serverId?: string): boolean {
+  // 1. Check per-server settings if serverId provided
+  if (serverId) {
+    const row = db.prepare('SELECT enabled_apps FROM servers WHERE id = ?').get(serverId) as
+      | { enabled_apps: string }
+      | undefined;
+    if (row) {
+      try {
+        const apps: string[] = JSON.parse(row.enabled_apps);
+        return apps.includes(appId);
+      } catch {
+        // Fall through to instance check
+      }
+    }
+  }
+
+  // 2. Fallback to instance-wide settings
   const row = db.prepare('SELECT enabled_apps FROM server_settings WHERE id = 1').get() as
     | { enabled_apps: string }
     | undefined;

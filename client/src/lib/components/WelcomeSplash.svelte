@@ -29,6 +29,7 @@
     "What's good", 'Sup', 'Hiya',
   ];
   const greeting = greetings[Math.floor(Math.random() * greetings.length)];
+  const isQuestion = ['What\'s up', "What's good", 'Sup'].includes(greeting);
 
   async function handleFriendClick(friend: FriendInfo) {
     await openOrCreateDm(friend.id);
@@ -40,7 +41,7 @@
     <a href="https://info.sellserv.net" target="_blank" rel="noopener" class="logo-link">
       <img src="/icon-512x512.png" alt="Logo" class="welcome-logo" />
     </a>
-    <h1 class="welcome-heading">{greeting}, {$currentUser?.display_name ?? 'User'}</h1>
+    <h1 class="welcome-heading">{greeting}, {$currentUser?.display_name ?? 'User'}{isQuestion ? '?' : ''}</h1>
 
     {#if isEmpty}
       <div class="empty-state">

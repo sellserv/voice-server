@@ -49,7 +49,7 @@ const MEMBER_PERMISSIONS = JSON.stringify({
   pin_messages: false,
   manage_channel_groups: false,
   view_channel: true,
-  use_apps: false,
+  use_apps: true,
   view_audit_log: false,
   manage_bots: false,
   manage_server: false,
@@ -527,7 +527,7 @@ export function initSchema() {
       try {
         const perms = JSON.parse(role.permissions);
         if (perms.use_apps === undefined) {
-          perms.use_apps = false;
+          perms.use_apps = true;
           db.prepare('UPDATE roles SET permissions = ? WHERE id = ?').run(
             JSON.stringify(perms),
             role.id,
@@ -1220,6 +1220,11 @@ export function initSchema() {
   // Migration: add invite_id to messages table
   try {
     db.exec('ALTER TABLE messages ADD COLUMN invite_id TEXT REFERENCES server_invitations(id) ON DELETE SET NULL');
+  } catch {}
+
+  // Migration: add banner_url to server_members
+  try {
+    db.exec('ALTER TABLE server_members ADD COLUMN banner_url TEXT');
   } catch {}
 
   // Migration: add allow_registration to instance_settings

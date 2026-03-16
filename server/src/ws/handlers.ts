@@ -7,6 +7,7 @@ import {
   setClientStatus,
   getDmParticipantIds,
   broadcastToChannel,
+  broadcastToServer,
   getClient,
 } from './index.js';
 import { ensureDmChannel, notifyDmCreated } from './dmUtils.js';
@@ -113,6 +114,9 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
       break;
     case 'presence:setStatus':
       setClientStatus(user.userId, event.status);
+      break;
+    case 'presence:activity':
+      handlePresenceActivity(user, event.game, event.visibility, event.serverIds);
       break;
     case 'ws:ping':
       sendTo(user.userId, { type: 'ws:pong', timestamp: event.timestamp });
@@ -674,7 +678,11 @@ function handleUnreact(user: JwtPayload, messageId: string, emoji: string) {
 }
 
 function handleSoundboardPlay(user: JwtPayload, soundId: string) {
-  if (!hasPermission(user.userId, 'use_apps') || !isAppEnabled('soundboard')) {
+  const channelId = userVoiceChannels.get(user.userId);
+  if (!channelId) return;
+
+  const serverId = getChannelServerId(channelId);
+  if (!hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !isAppEnabled('soundboard', serverId ?? undefined)) {
     sendTo(user.userId, { type: 'error', message: 'Soundboard is not available' });
     return;
   }
@@ -686,15 +694,6 @@ function handleSoundboardPlay(user: JwtPayload, soundId: string) {
     .get(soundId) as any;
   if (!sound) {
     sendTo(user.userId, { type: 'error', message: 'Sound not found' });
-    return;
-  }
-
-  const channelId = userVoiceChannels.get(user.userId);
-  if (!channelId) {
-    sendTo(user.userId, {
-      type: 'error',
-      message: 'Must be in a voice channel or call to play sounds',
-    });
     return;
   }
 
@@ -775,17 +774,18 @@ function extractYouTubeVideoId(url: string): string | null {
 }
 
 function handleWatchStart(user: JwtPayload, videoUrl?: string) {
-  if (!hasPermission(user.userId, 'use_apps') || !isAppEnabled('watch-party')) {
-    sendTo(user.userId, { type: 'error', message: 'Watch Party is not available' });
-    return;
-  }
-
   const channelId = userVoiceChannels.get(user.userId);
   if (!channelId) {
     sendTo(user.userId, {
       type: 'error',
       message: 'Must be in a voice channel or call to start Watch Party',
     });
+    return;
+  }
+
+  const serverId = getChannelServerId(channelId);
+  if (!hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !isAppEnabled('watch-party', serverId ?? undefined)) {
+    sendTo(user.userId, { type: 'error', message: 'Watch Party is not available' });
     return;
   }
 
@@ -889,13 +889,14 @@ async function fetchYouTubeTitle(videoId: string): Promise<string | undefined> {
 }
 
 async function handleWatchQueue(user: JwtPayload, videoUrl: string) {
-  if (!hasPermission(user.userId, 'use_apps') || !isAppEnabled('watch-party')) {
+  const channelId = userVoiceChannels.get(user.userId);
+  if (!channelId) return;
+
+  const serverId = getChannelServerId(channelId);
+  if (!hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !isAppEnabled('watch-party', serverId ?? undefined)) {
     sendTo(user.userId, { type: 'error', message: 'Watch Party is not available' });
     return;
   }
-
-  const channelId = userVoiceChannels.get(user.userId);
-  if (!channelId) return;
 
   const session = watchSessions.get(channelId);
   if (!session) return;
@@ -956,13 +957,14 @@ function advanceQueue(channelId: string) {
 }
 
 function handleWatchJoin(user: JwtPayload) {
-  if (!hasPermission(user.userId, 'use_apps') || !isAppEnabled('watch-party')) {
+  const channelId = userVoiceChannels.get(user.userId);
+  if (!channelId) return;
+
+  const serverId = getChannelServerId(channelId);
+  if (!hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !isAppEnabled('watch-party', serverId ?? undefined)) {
     sendTo(user.userId, { type: 'error', message: 'Watch Party is not available' });
     return;
   }
-
-  const channelId = userVoiceChannels.get(user.userId);
-  if (!channelId) return;
 
   const session = watchSessions.get(channelId);
   if (!session) return;
@@ -1120,7 +1122,8 @@ export function cleanupWatchSession(userId: string) {
 }
 
 function handleEffectSend(user: JwtPayload, channelId: string, effect: string) {
-  if (!hasPermission(user.userId, 'use_apps') || !isAppEnabled('effects')) {
+  const serverId = getChannelServerId(channelId);
+  if (!hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !isAppEnabled('effects', serverId ?? undefined)) {
     sendTo(user.userId, { type: 'error', message: 'Effects are not available' });
     return;
   }
@@ -1447,4 +1450,29 @@ function handlePollVote(user: JwtPayload, pollId: string, optionIds: string[]) {
 function getServerMemberUserIds(serverId: string): string[] {
   return (db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(serverId) as { user_id: string }[])
     .map(r => r.user_id);
+}
+
+function handlePresenceActivity(user: JwtPayload, game: string | null, visibility: 'all' | 'selected', serverIds?: string[]) {
+  const client = getClient(user.userId);
+  if (!client) return;
+
+  client.activity = game;
+  client.activityVisibility = visibility;
+  client.activityServerIds = serverIds;
+
+  if (visibility === 'all') {
+    broadcast({
+      type: 'presence:activity',
+      userId: user.userId,
+      activity: game,
+    } as any);
+  } else if (serverIds && serverIds.length > 0) {
+    for (const serverId of serverIds) {
+      broadcastToServer(serverId, {
+        type: 'presence:activity',
+        userId: user.userId,
+        activity: game,
+      } as any);
+    }
+  }
 }

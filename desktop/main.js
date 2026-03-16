@@ -14,6 +14,8 @@ const fs = require('fs');
 const Store = require('electron-store');
 const windowStateKeeper = require('electron-window-state');
 
+const gameDetector = require('./gameDetector');
+
 const isDev = !app.isPackaged;
 const store = new Store({ name: 'settings' });
 
@@ -341,6 +343,29 @@ const WEB_MOUSE_TO_UIOHOOK = { 0: 1, 1: 3, 2: 2, 3: 4, 4: 5 };
 
 let pttMatch = null; // { type: 'key', keycode } or { type: 'mouse', button }
 
+// Game Activity
+ipcMain.handle('game:getCurrent', () => gameDetector.getCurrentGame());
+ipcMain.handle('game:getSettings', () => ({
+  enabled: store.get('gameActivityEnabled', true),
+  visibility: store.get('gameActivityVisibility', 'all'),
+  selectedServerIds: store.get('gameActivityServerIds', []),
+  customGames: store.get('customGames', {}),
+}));
+ipcMain.handle('game:setEnabled', (_e, enabled) => store.set('gameActivityEnabled', enabled));
+ipcMain.handle('game:setVisibility', (_e, visibility) => store.set('gameActivityVisibility', visibility));
+ipcMain.handle('game:setServerIds', (_e, ids) => store.set('gameActivityServerIds', ids));
+ipcMain.handle('game:addCustomGame', (_e, exe, name) => {
+  const custom = store.get('customGames', {});
+  custom[exe.toLowerCase()] = name;
+  store.set('customGames', custom);
+});
+ipcMain.handle('game:removeCustomGame', (_e, exe) => {
+  const custom = store.get('customGames', {});
+  delete custom[exe.toLowerCase()];
+  store.set('customGames', custom);
+});
+ipcMain.handle('game:getCustomGames', () => store.get('customGames', {}));
+
 ipcMain.handle('ptt:configure', (_e, pttKeyStr) => {
   if (!pttKeyStr) {
     pttMatch = null;
@@ -432,6 +457,13 @@ if (!gotTheLock) {
 
     createWindow(url);
     createTray();
+
+    // Start game detection
+    gameDetector.start(store, (game) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('game:activity-changed', game);
+      }
+    });
   }).catch((err) => {
     console.error('[App] Failed to start:', err);
     app.quit();
@@ -447,6 +479,7 @@ if (!gotTheLock) {
 
   app.on('before-quit', () => {
     app.isQuitting = true;
+    gameDetector.stop();
     if (tray) {
       tray.destroy();
       tray = null;

@@ -69,7 +69,8 @@
     const newValue = !permissionsEnabled;
     togglingPermissions = true;
     try {
-      await api.patch(`/api/channel-groups/${groupId}`, { permissions_enabled: newValue });
+      const serverId = getActiveServerId();
+      await api.patch(`/api/servers/${serverId}/channel-groups/${groupId}`, { permissions_enabled: newValue });
       channelGroups.update((list) =>
         list.map((g) => (g.id === groupId ? { ...g, permissions_enabled: newValue } : g)),
       );
