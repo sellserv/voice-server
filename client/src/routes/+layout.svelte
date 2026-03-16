@@ -624,6 +624,17 @@
         case 'server:memberJoined':
           loadServers().catch(() => {});
           break;
+        case 'server:memberUpdated':
+          if (event.serverId === get(activeServerId)) {
+            updateChannelMemberProfile(event.userId, {
+              display_name: event.nickname,
+              avatar_url: event.avatar_url,
+            });
+          }
+          if (event.userId === $currentUser?.id) {
+            loadServers().catch(() => {});
+          }
+          break;
         case 'server:invitation':
           addInvitation(event.invitation);
           break;

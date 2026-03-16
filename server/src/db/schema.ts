@@ -1222,6 +1222,11 @@ export function initSchema() {
     db.exec('ALTER TABLE messages ADD COLUMN invite_id TEXT REFERENCES server_invitations(id) ON DELETE SET NULL');
   } catch {}
 
+  // Migration: add banner_url to server_members
+  try {
+    db.exec('ALTER TABLE server_members ADD COLUMN banner_url TEXT');
+  } catch {}
+
   // Migration: add allow_registration to instance_settings
   try {
     db.exec('ALTER TABLE instance_settings ADD COLUMN allow_registration INTEGER NOT NULL DEFAULT 1');
