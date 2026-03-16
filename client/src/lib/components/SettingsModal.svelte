@@ -370,6 +370,8 @@
         if (avatarFile) {
           const result = await api.upload(avatarFile);
           data.avatar_url = `/uploads/${result.stored_name}`;
+        } else if (!avatarPreview && $currentUser?.avatar_url) {
+          data.avatar_url = null;
         }
 
         if (bio !== ($currentUser?.bio || '')) {
@@ -672,8 +674,9 @@
                 <div class="account-avatar-wrapper">
                   <div class="account-avatar">
                     {#if $currentUser?.avatar_url}
-                      <img src={resolveAsset($currentUser.avatar_url)} alt="" />
-                    {:else}
+                      <img src={resolveAsset($currentUser.avatar_url)} alt="" onerror={(e) => { e.currentTarget.remove(); }} />
+                    {/if}
+                    {#if !$currentUser?.avatar_url}
                       <span class="avatar-initial">{$currentUser?.username.charAt(0).toUpperCase()}</span>
                     {/if}
                   </div>
@@ -782,8 +785,8 @@
                       </div>
                       <div class="upload-btns">
                         <button class="btn-subtle" onclick={handleAvatarClick}>Change Avatar</button>
-                        {#if avatarPreview && avatarPreview !== $currentUser?.avatar_url}
-                          <button class="btn-danger-subtle" onclick={() => { avatarPreview = $currentUser?.avatar_url || null; avatarFile = null; }}>Remove</button>
+                        {#if avatarPreview || $currentUser?.avatar_url}
+                          <button class="btn-danger-subtle" onclick={() => { avatarPreview = null; avatarFile = null; }}>Remove Avatar</button>
                         {/if}
                       </div>
                     </div>
@@ -924,7 +927,7 @@
                     <div class="banner-upload-row">
                       <div class="banner-preview-small" onclick={() => showServerBannerMenu = !showServerBannerMenu}>
                         {#if serverBannerPreview}
-                          <img src={resolveAsset(serverBannerPreview)} alt="" />
+                          <img src={serverBannerFile ? serverBannerPreview : resolveAsset(serverBannerPreview)} alt="" onerror={(e) => { e.currentTarget.remove(); }} />
                         {:else}
                           <div class="banner-placeholder">Using global banner</div>
                         {/if}
