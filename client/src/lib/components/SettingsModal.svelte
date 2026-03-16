@@ -774,8 +774,9 @@
                     <div class="avatar-upload-row">
                       <div class="avatar-preview-small" onclick={handleAvatarClick}>
                         {#if avatarPreview}
-                          <img src={resolveAsset(avatarPreview)} alt="" />
-                        {:else}
+                          <img src={avatarFile ? avatarPreview : resolveAsset(avatarPreview)} alt="" onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
+                        {/if}
+                        {#if !avatarPreview}
                           <span class="avatar-initial">{(displayName || $currentUser?.username || '?').charAt(0).toUpperCase()}</span>
                         {/if}
                         <div class="preview-overlay">Change</div>
@@ -795,7 +796,7 @@
                     <div class="banner-upload-row">
                       <div class="banner-preview-small" onclick={handleBannerClick}>
                         {#if bannerPreview}
-                          <img src={resolveAsset(bannerPreview)} alt="" />
+                          <img src={bannerFile ? bannerPreview : resolveAsset(bannerPreview)} alt="" onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
                         {:else}
                           <div class="banner-placeholder">Click to choose banner</div>
                         {/if}
@@ -901,7 +902,7 @@
                     <div class="avatar-upload-row">
                       <div class="avatar-preview-small" onclick={handleServerAvatarClick}>
                         {#if serverAvatarPreview}
-                          <img src={resolveAsset(serverAvatarPreview)} alt="" />
+                          <img src={serverAvatarFile ? serverAvatarPreview : resolveAsset(serverAvatarPreview)} alt="" onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
                         {:else}
                           <img src={resolveAsset(avatarPreview || $currentUser?.avatar_url)} alt="" />
                         {/if}
@@ -953,9 +954,11 @@
                     <div class="preview-banner" style:background={(serverBannerPreview || bannerPreview) ? `url(${resolveAsset(serverBannerPreview || bannerPreview)}) center/cover` : 'var(--accent)'}></div>
                     <div class="preview-avatar">
                       {#if serverAvatarPreview}
-                        <img src={resolveAsset(serverAvatarPreview)} alt="" />
+                        <img src={serverAvatarFile ? serverAvatarPreview : resolveAsset(serverAvatarPreview)} alt="" onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
+                      {:else if avatarPreview || $currentUser?.avatar_url}
+                        <img src={avatarFile ? avatarPreview : resolveAsset(avatarPreview || $currentUser?.avatar_url)} alt="" onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
                       {:else}
-                        <img src={resolveAsset(avatarPreview || $currentUser?.avatar_url)} alt="" />
+                        <span class="avatar-initial">{(displayName || $currentUser?.username || '?').charAt(0).toUpperCase()}</span>
                       {/if}
                     </div>
                     <div class="preview-content">
