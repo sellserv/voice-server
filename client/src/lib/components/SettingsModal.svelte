@@ -381,6 +381,8 @@
         if (avatarFile) {
           const result = await api.upload(avatarFile);
           data.avatar_url = `/uploads/${result.stored_name}`;
+          avatarPreview = data.avatar_url;
+          avatarFile = null;
         } else if (!avatarPreview && $currentUser?.avatar_url) {
           data.avatar_url = null;
         }
@@ -391,9 +393,15 @@
 
         if (bannerGiphyUrl) {
           data.banner_url = bannerGiphyUrl;
+          bannerPreview = bannerGiphyUrl;
+          bannerGiphyUrl = null;
         } else if (bannerFile) {
           const result = await api.upload(bannerFile);
           data.banner_url = `/uploads/${result.stored_name}`;
+          bannerPreview = data.banner_url;
+          bannerFile = null;
+        } else if (!bannerPreview && $currentUser?.banner_url) {
+          data.banner_url = null;
         }
 
         const currentFont = $currentUser?.name_font ?? '';
@@ -413,28 +421,42 @@
       } else if (activeProfileTab === 'server' && selectedServerId) {
         const data: { nickname?: string | null; avatar_url?: string | null; banner_url?: string | null } = {};
         
-        if (serverNickname !== undefined) {
+        if (serverNickname !== origServerNickname) {
           data.nickname = serverNickname.trim() || null;
         }
 
         if (serverAvatarFile) {
           const result = await api.upload(serverAvatarFile);
           data.avatar_url = `/uploads/${result.stored_name}`;
-        } else if (serverAvatarPreview === null) {
-          data.avatar_url = null;
+          serverAvatarPreview = data.avatar_url;
+          serverAvatarFile = null;
+        } else if (serverAvatarPreview !== origServerAvatarPreview) {
+          data.avatar_url = serverAvatarPreview;
         }
 
         if (serverBannerGiphyUrl) {
           data.banner_url = serverBannerGiphyUrl;
+          serverBannerPreview = serverBannerGiphyUrl;
+          serverBannerGiphyUrl = null;
         } else if (serverBannerFile) {
           const result = await api.upload(serverBannerFile);
           data.banner_url = `/uploads/${result.stored_name}`;
-        } else if (serverBannerPreview === null) {
-          data.banner_url = null;
+          serverBannerPreview = data.banner_url;
+          serverBannerFile = null;
+        } else if (serverBannerPreview !== origServerBannerPreview) {
+          data.banner_url = serverBannerPreview;
         }
 
-        await updateServerMember(selectedServerId, data);
+        if (Object.keys(data).length > 0) {
+          await updateServerMember(selectedServerId, data);
+          // Sync original state so the bar hides
+          origServerNickname = serverNickname;
+          origServerAvatarPreview = serverAvatarPreview;
+          origServerBannerPreview = serverBannerPreview;
+        }
       }
+    } catch (err: any) {
+      console.error('Failed to save profile:', err);
     } finally {
       saving = false;
     }
