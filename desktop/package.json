@@ -55,7 +55,8 @@
       "publisher": "CN=A6EC5758-5994-4311-928E-7C47085DB9B1",
       "publisherDisplayName": "SellServ",
       "applicationId": "SellServVoice",
-      "backgroundColor": "#141423"
+      "backgroundColor": "#141423",
+      "logo": "icons/256x256.png"
     },
     "nsis": {
       "oneClick": false,
