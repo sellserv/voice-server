@@ -37,8 +37,7 @@
       "update.html",
       "gameDetector.js",
       "games.json",
-      "icons/**/*",
-      "appx-assets/**/*"
+      "icons/**/*"
     ],
     "extraResources": [
       {
@@ -58,8 +57,7 @@
       "publisher": "CN=A6EC5758-5994-4311-928E-7C47085DB9B1",
       "publisherDisplayName": "SellServ",
       "applicationId": "SellServVoice",
-      "backgroundColor": "#08080f",
-      "assets": "appx-assets"
+      "backgroundColor": "#08080f"
     },
     "nsis": {
       "oneClick": false,
