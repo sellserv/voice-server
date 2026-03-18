@@ -75,7 +75,7 @@ await app.register(fastifyMultipart, {
 });
 
 // Security headers
-app.addHook('onSend', async (_request, reply, payload) => {
+app.addHook('onSend', async (request, reply, payload) => {
   reply.header('X-Content-Type-Options', 'nosniff');
   reply.header('X-Frame-Options', 'DENY');
   reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -83,20 +83,25 @@ app.addHook('onSend', async (_request, reply, payload) => {
   if (process.env.NODE_ENV === 'production') {
     reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
-  reply.header(
-    'Content-Security-Policy',
-    [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://www.youtube.com https://challenges.cloudflare.com https://static.cloudflareinsights.com",
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "font-src 'self' https://fonts.gstatic.com",
-      "img-src 'self' blob: data: https://*.giphy.com https://img.youtube.com",
-      "media-src 'self' blob:",
-      "connect-src 'self' wss: https://api.giphy.com https://challenges.cloudflare.com https://cloudflareinsights.com",
-      'frame-src https://www.youtube.com https://www.youtube-nocookie.com https://challenges.cloudflare.com',
-      "worker-src 'self' blob:",
-    ].join('; '),
-  );
+  // Skip CSP for desktop (Electron) clients — the app loads from localhost
+  // so 'self' restrictions break cross-origin asset loading
+  const ua = request.headers['user-agent'] || '';
+  if (!ua.includes('Electron')) {
+    reply.header(
+      'Content-Security-Policy',
+      [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://www.youtube.com https://challenges.cloudflare.com https://static.cloudflareinsights.com",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' blob: data: https://*.giphy.com https://img.youtube.com",
+        "media-src 'self' blob:",
+        "connect-src 'self' wss: https://api.giphy.com https://challenges.cloudflare.com https://cloudflareinsights.com",
+        'frame-src https://www.youtube.com https://www.youtube-nocookie.com https://challenges.cloudflare.com',
+        "worker-src 'self' blob:",
+      ].join('; '),
+    );
+  }
   return payload;
 });
 
