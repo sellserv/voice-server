@@ -33,6 +33,8 @@
     "files": [
       "main.js",
       "preload.js",
+      "updatePreload.js",
+      "update.html",
       "gameDetector.js",
       "games.json",
       "icons/**/*"
