@@ -284,15 +284,7 @@ ipcMain.handle('updater:checkForUpdates', async () => {
       const remote = result.updateInfo.version;
       const current = app.getVersion();
       console.log(`[Updater] Current: ${current}, Remote: ${remote}`);
-      // Only report update if remote version is actually newer
-      const r = remote.split('.').map(Number);
-      const c = current.split('.').map(Number);
-      let isNewer = false;
-      for (let i = 0; i < Math.max(r.length, c.length); i++) {
-        if ((r[i] || 0) > (c[i] || 0)) { isNewer = true; break; }
-        if ((r[i] || 0) < (c[i] || 0)) break;
-      }
-      if (isNewer) {
+      if (isNewerVersion(remote, current)) {
         return { available: true, version: remote, current };
       }
     }
@@ -311,6 +303,89 @@ ipcMain.handle('updater:install', () => {
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.quitAndInstall();
 });
+
+function isNewerVersion(remote, current) {
+  const r = remote.split('.').map(Number);
+  const c = current.split('.').map(Number);
+  for (let i = 0; i < Math.max(r.length, c.length); i++) {
+    if ((r[i] || 0) > (c[i] || 0)) return true;
+    if ((r[i] || 0) < (c[i] || 0)) return false;
+  }
+  return false;
+}
+
+/**
+ * Show a branded splash window, check for updates, download with progress, and install silently.
+ * Returns true if an update was found and the app is restarting.
+ */
+async function checkAndApplyUpdate() {
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    if (!result || !result.updateInfo) return false;
+
+    const remote = result.updateInfo.version;
+    const current = app.getVersion();
+    console.log(`[Updater] Current: ${current}, Remote: ${remote}`);
+
+    if (!isNewerVersion(remote, current)) return false;
+
+    // Update available — show the splash window
+    console.log(`[Updater] Auto-updating ${current} -> ${remote}`);
+
+    const splash = new BrowserWindow({
+      width: 320,
+      height: 240,
+      frame: false,
+      resizable: false,
+      alwaysOnTop: true,
+      center: true,
+      skipTaskbar: true,
+      icon: path.join(
+        __dirname, 'icons',
+        process.platform === 'win32' ? 'icon.ico'
+          : process.platform === 'darwin' ? 'icon.icns'
+          : '128x128.png',
+      ),
+      webPreferences: {
+        preload: path.join(__dirname, 'updatePreload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+
+    splash.loadFile(path.join(__dirname, 'update.html'));
+    await new Promise((resolve) => splash.webContents.once('did-finish-load', resolve));
+
+    splash.webContents.send('update:status', `Downloading update v${remote}...`);
+
+    // Track download progress
+    autoUpdater.on('download-progress', (info) => {
+      if (splash && !splash.isDestroyed()) {
+        splash.webContents.send('update:progress', info.percent);
+        const mb = (info.transferred / 1024 / 1024).toFixed(1);
+        const total = (info.total / 1024 / 1024).toFixed(1);
+        splash.webContents.send('update:status', `Downloading update... ${mb} / ${total} MB`);
+      }
+    });
+
+    await autoUpdater.downloadUpdate();
+
+    if (splash && !splash.isDestroyed()) {
+      splash.webContents.send('update:status', 'Installing update...');
+      splash.webContents.send('update:progress', 100);
+    }
+
+    // Brief pause so the user sees "Installing..."
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.quitAndInstall(true, true); // silent, force
+    return true;
+  } catch (e) {
+    console.error('[Updater] Auto-update check failed:', e?.message || e);
+    return false;
+  }
+}
 
 // --- Global PTT (works even when app is not focused) ---
 // Wrapped in try-catch: uiohook-napi may fail to load on some Linux systems
@@ -446,30 +521,10 @@ if (!gotTheLock) {
       url = `http://127.0.0.1:${port}`;
     }
 
-    // Auto-update on startup (production only)
+    // Auto-update on startup (production only) with splash UI
     if (!isDev) {
-      try {
-        const result = await autoUpdater.checkForUpdates();
-        if (result && result.updateInfo) {
-          const remote = result.updateInfo.version;
-          const current = app.getVersion();
-          const r = remote.split('.').map(Number);
-          const c = current.split('.').map(Number);
-          let isNewer = false;
-          for (let i = 0; i < Math.max(r.length, c.length); i++) {
-            if ((r[i] || 0) > (c[i] || 0)) { isNewer = true; break; }
-            if ((r[i] || 0) < (c[i] || 0)) break;
-          }
-          if (isNewer) {
-            console.log(`[Updater] Auto-updating ${current} -> ${remote}`);
-            await autoUpdater.downloadUpdate();
-            autoUpdater.quitAndInstall();
-            return;
-          }
-        }
-      } catch (e) {
-        console.error('[Updater] Auto-update check failed:', e?.message || e);
-      }
+      const updated = await checkAndApplyUpdate();
+      if (updated) return; // App is restarting with the new version
     }
 
     createWindow(url);
