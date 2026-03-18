@@ -30,7 +30,7 @@ import {
 } from '../auth/policy.js';
 import type { RegisterBody, LoginBody, UserRow, InviteCode } from '@voip-server/shared';
 import { logAuditEvent } from '../audit/log.js';
-import { verifyTurnstile, isTurnstileEnabled } from '../auth/turnstile.js';
+import { verifyTurnstile, isTurnstileEnabled, isDesktopClient } from '../auth/turnstile.js';
 
 const authRateLimit = {
   config: {
@@ -138,9 +138,12 @@ export default async function authRoutes(app: FastifyInstance) {
     }
 
     // Verify CAPTCHA before any DB lookups (prevents enumeration without CAPTCHA)
-    const captchaValid = await verifyTurnstile(request.body.captcha_token, request.ip);
-    if (!captchaValid) {
-      return reply.code(400).send({ error: 'CAPTCHA verification failed' });
+    // Skip for desktop (Electron) clients — Turnstile can't run on localhost origins
+    if (!isDesktopClient(request.headers['user-agent'])) {
+      const captchaValid = await verifyTurnstile(request.body.captcha_token, request.ip);
+      if (!captchaValid) {
+        return reply.code(400).send({ error: 'CAPTCHA verification failed' });
+      }
     }
 
     // Block registration of reserved admin usernames

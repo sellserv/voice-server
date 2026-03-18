@@ -42,3 +42,11 @@ export async function verifyTurnstile(token: string | undefined, ip: string): Pr
 export function isTurnstileEnabled(): boolean {
   return !!(config.turnstileSiteKey && config.turnstileSecretKey);
 }
+
+/**
+ * Check if a request comes from the desktop (Electron) app.
+ * Turnstile cannot run in Electron since it loads from localhost.
+ */
+export function isDesktopClient(userAgent: string | undefined): boolean {
+  return !!userAgent && userAgent.includes('Electron');
+}

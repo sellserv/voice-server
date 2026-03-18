@@ -61,6 +61,35 @@
   checkSetupStatus();
   loadPublicSettings();
 
+  let turnstileLoaded = $state(false);
+
+  function loadTurnstileScript(): Promise<void> {
+    if ((window as any).turnstile) {
+      turnstileLoaded = true;
+      return Promise.resolve();
+    }
+    if (document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')) {
+      return Promise.resolve(); // Already loading
+    }
+    return new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.onload = () => { turnstileLoaded = true; resolve(); };
+      script.onerror = () => { console.warn('Failed to load Turnstile script'); resolve(); };
+      document.head.appendChild(script);
+    });
+  }
+
+  const isDesktop = !!(window as any).electronAPI;
+
+  // Load turnstile script only when site key is available and not in desktop app
+  $effect(() => {
+    if (turnstileSiteKey && !isDesktop) {
+      loadTurnstileScript();
+    }
+  });
+
   function renderTurnstile(container: HTMLElement) {
     if (!turnstileSiteKey || !(window as any).turnstile) return;
     // Reset if already rendered
@@ -69,12 +98,17 @@
       captchaToken = null;
       return;
     }
-    turnstileWidgetId = (window as any).turnstile.render(container, {
-      sitekey: turnstileSiteKey,
-      callback: (token: string) => { captchaToken = token; },
-      'expired-callback': () => { captchaToken = null; },
-      theme: 'dark',
-    });
+    try {
+      turnstileWidgetId = (window as any).turnstile.render(container, {
+        sitekey: turnstileSiteKey,
+        callback: (token: string) => { captchaToken = token; },
+        'expired-callback': () => { captchaToken = null; },
+        'error-callback': () => { console.warn('Turnstile widget error'); captchaToken = null; },
+        theme: 'dark',
+      });
+    } catch (e) {
+      console.warn('Turnstile render failed:', e);
+    }
   }
 
   function resetTurnstile() {
@@ -841,7 +875,7 @@
             />
           </label>
 
-          {#if turnstileSiteKey}
+          {#if turnstileSiteKey && turnstileLoaded}
             <div class="turnstile-container" use:renderTurnstile></div>
           {/if}
         {/if}
