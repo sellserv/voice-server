@@ -14,7 +14,7 @@ export interface JwtPayload {
 }
 
 export function signToken(payload: JwtPayload): string {
-  return jwt.sign(payload, config.jwtSecret, { expiresIn: '7d' });
+  return jwt.sign(payload, config.jwtSecret, { expiresIn: '24h' });
 }
 
 export function verifyToken(token: string): JwtPayload {
@@ -25,9 +25,9 @@ export function setAuthCookie(reply: FastifyReply, token: string) {
   reply.setCookie('token', token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    sameSite: 'strict',
     path: '/',
-    maxAge: 7 * 24 * 60 * 60, // 7 days
+    maxAge: 24 * 60 * 60, // 24 hours
   });
 }
 
@@ -36,9 +36,9 @@ export function setCsrfCookie(reply: FastifyReply): string {
   reply.setCookie('csrf', token, {
     httpOnly: false, // client JS must be able to read this
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    sameSite: 'strict',
     path: '/',
-    maxAge: 7 * 24 * 60 * 60,
+    maxAge: 24 * 60 * 60,
   });
   return token;
 }

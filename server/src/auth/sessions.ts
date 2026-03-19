@@ -16,7 +16,7 @@ export interface Session {
 export function createSession(userId: string, ip: string | null, ua: string | null): string {
   const sessionId = randomUUID();
   const token = randomUUID();
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
 
   db.prepare(`
     INSERT INTO auth_sessions (id, user_id, token, ip_address, user_agent, expires_at)

@@ -1164,12 +1164,25 @@ export function initSchema() {
       "SELECT id FROM roles WHERE server_id IS NULL AND name = 'Admin' LIMIT 1",
     ).get() as { id: string } | undefined;
     if (globalAdminRole) {
-      db.exec(
+      db.prepare(
         `INSERT OR IGNORE INTO user_roles (user_id, role_id)
-         SELECT id, '${globalAdminRole.id}' FROM users WHERE role = 'admin'`,
-      );
+         SELECT id, ? FROM users WHERE role = 'admin'`,
+      ).run(globalAdminRole.id);
     }
   }
+
+  // Used reset tokens table (prevents token replay after server restart)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS used_reset_tokens (
+      jti TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  // Cleanup expired reset tokens
+  db.prepare("DELETE FROM used_reset_tokens WHERE expires_at < datetime('now')").run();
 
   // Reports table (message reports from users)
   db.exec(`

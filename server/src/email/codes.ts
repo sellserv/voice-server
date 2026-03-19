@@ -1,14 +1,15 @@
-import { randomUUID, randomInt, createHash } from 'crypto';
+import { randomUUID, randomInt, createHmac } from 'crypto';
 import db from '../db/connection.js';
+import { config } from '../config.js';
 
 type CodeType = 'verification' | 'mfa' | 'password_reset';
 
 function hashCode(code: string): string {
-  return createHash('sha256').update(code).digest('hex');
+  return createHmac('sha256', config.jwtSecret).update(code).digest('hex');
 }
 
 export function generateCode(): string {
-  return String(randomInt(100000, 999999));
+  return String(randomInt(10000000, 99999999));
 }
 
 export function createEmailCode(userId: string, type: CodeType): string {

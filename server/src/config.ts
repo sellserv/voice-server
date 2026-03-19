@@ -29,6 +29,20 @@ if (commonPlaceholders.includes(jwtSecret.toLowerCase())) {
 if (/^(.)\1+$/.test(jwtSecret)) {
   throw new Error('JWT_SECRET must not be a repeated character. Run: openssl rand -hex 32');
 }
+// Entropy validation: require at least 3 distinct character classes and sufficient unique chars
+{
+  const hasUpper = /[A-Z]/.test(jwtSecret);
+  const hasLower = /[a-z]/.test(jwtSecret);
+  const hasDigit = /[0-9]/.test(jwtSecret);
+  const hasSpecial = /[^A-Za-z0-9]/.test(jwtSecret);
+  const charClasses = [hasUpper, hasLower, hasDigit, hasSpecial].filter(Boolean).length;
+  const uniqueChars = new Set(jwtSecret).size;
+  if (charClasses < 3 || uniqueChars < 12) {
+    throw new Error(
+      'JWT_SECRET has insufficient entropy. Use at least 3 character classes and 12 unique characters. Run: openssl rand -hex 32',
+    );
+  }
+}
 
 export const config = {
   port: envInt('PORT', 3000),

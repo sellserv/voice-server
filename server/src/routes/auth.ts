@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import * as OTPAuth from 'otpauth';
 import db from '../db/connection.js';
 import { hashPassword, verifyPassword } from '../auth/passwords.js';
-import { createSession, revokeSession } from '../auth/sessions.js';
+import { createSession, revokeSession, revokeAllUserSessions } from '../auth/sessions.js';
 import {
   signToken,
   setAuthCookie,
@@ -22,11 +22,10 @@ import {
   passwordResetEmail,
   accountLockedEmail,
 } from '../email/templates.js';
-import { 
-  isPasswordStrong, 
-  getPasswordExpiryStatus, 
-  PASSWORD_MIN_LENGTH, 
-  PASSWORD_MAX_LENGTH 
+import {
+  isPasswordStrong,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_MAX_LENGTH
 } from '../auth/policy.js';
 import type { RegisterBody, LoginBody, UserRow, InviteCode } from '@voip-server/shared';
 import { logAuditEvent } from '../audit/log.js';
@@ -42,12 +41,12 @@ const authRateLimit = {
   },
 };
 
-// Track used password reset token JTIs with per-entry expiry to prevent reuse
-const usedResetTokens = new Map<string, number>(); // jti -> expiresAt (ms)
+// Track login attempt backoff per username (exponential backoff)
+const loginBackoff = new Map<string, { attempts: number; nextAllowedAt: number }>();
 setInterval(() => {
   const now = Date.now();
-  for (const [jti, expiresAt] of usedResetTokens) {
-    if (now > expiresAt) usedResetTokens.delete(jti);
+  for (const [key, state] of loginBackoff) {
+    if (now > state.nextAllowedAt + 60 * 60 * 1000) loginBackoff.delete(key);
   }
 }, 60 * 1000);
 
@@ -129,8 +128,8 @@ export default async function authRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'Username must be 2-24 characters' });
     }
     if (!isPasswordStrong(password)) {
-      return reply.code(400).send({ 
-        error: `Password must be ${PASSWORD_MIN_LENGTH}-${PASSWORD_MAX_LENGTH} characters and include at least one uppercase letter, one lowercase letter, and one number` 
+      return reply.code(400).send({
+        error: `Password must be ${PASSWORD_MIN_LENGTH}-${PASSWORD_MAX_LENGTH} characters and include at least one uppercase letter, one lowercase letter, one number, and one special character`
       });
     }
     if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
@@ -154,10 +153,15 @@ export default async function authRoutes(app: FastifyInstance) {
       }
     }
 
-    const existing = db.prepare('SELECT id, email_verified FROM users WHERE username = ? OR email = ?').get(username, email) as { id: string; email_verified: number } | undefined;
+    const existing = db.prepare('SELECT id, email_verified, created_at FROM users WHERE username = ? OR email = ?').get(username, email) as { id: string; email_verified: number; created_at: string } | undefined;
     if (existing) {
       if (!existing.email_verified) {
-        // Allow re-registration over unverified accounts
+        // Only allow re-registration over unverified accounts after a cooldown (30 minutes)
+        const createdAt = new Date(existing.created_at + 'Z').getTime();
+        const cooldownMs = 30 * 60 * 1000;
+        if (Date.now() - createdAt < cooldownMs) {
+          return reply.code(409).send({ error: 'Username or email already in use. Please try again later.' });
+        }
         db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(existing.id);
         db.prepare('DELETE FROM email_codes WHERE user_id = ?').run(existing.id);
         db.prepare('DELETE FROM server_members WHERE user_id = ?').run(existing.id);
@@ -267,6 +271,13 @@ export default async function authRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'Invalid credentials' });
     }
 
+    // Exponential backoff per username
+    const backoffState = loginBackoff.get(username.toLowerCase());
+    if (backoffState && Date.now() < backoffState.nextAllowedAt) {
+      const waitSecs = Math.ceil((backoffState.nextAllowedAt - Date.now()) / 1000);
+      return reply.code(429).send({ error: `Too many login attempts. Try again in ${waitSecs} seconds.` });
+    }
+
     const user = db
       .prepare(
         'SELECT id, username, display_name, password_hash, role, role_id, banned, ban_reason, totp_enabled, totp_secret, password_changed_at, created_at, avatar_url, email, email_verified, mfa_method, failed_login_attempts, locked_at FROM users WHERE username = ?',
@@ -289,8 +300,15 @@ export default async function authRoutes(app: FastifyInstance) {
 
     const valid = await verifyPassword(password, user.password_hash);
     if (!valid) {
-      const attempts = (user.failed_login_attempts || 0) + 1;
-      if (attempts >= 5) {
+      // Track exponential backoff
+      const key = username.toLowerCase();
+      const prev = loginBackoff.get(key);
+      const attempts = (prev?.attempts || 0) + 1;
+      const backoffMs = Math.min(1000 * Math.pow(2, attempts - 1), 15 * 60 * 1000); // max 15 min
+      loginBackoff.set(key, { attempts, nextAllowedAt: Date.now() + backoffMs });
+
+      const dbAttempts = (user.failed_login_attempts || 0) + 1;
+      if (dbAttempts >= 5) {
         db.prepare(
           "UPDATE users SET failed_login_attempts = ?, locked_at = datetime('now') WHERE id = ?",
         ).run(attempts, user.id);
@@ -303,15 +321,16 @@ export default async function authRoutes(app: FastifyInstance) {
         }
         return reply.send({ account_locked: true, user_id: user.id, mfa_method: mfaMethod });
       }
-      db.prepare('UPDATE users SET failed_login_attempts = ? WHERE id = ?').run(attempts, user.id);
+      db.prepare('UPDATE users SET failed_login_attempts = ? WHERE id = ?').run(dbAttempts, user.id);
       logAuditEvent('failed_login', null, null, request.ip, { username });
       return reply.code(401).send({ error: 'Invalid credentials' });
     }
 
-    // Successful password — reset counter
+    // Successful password — reset counter and backoff
     if (user.failed_login_attempts > 0) {
       db.prepare('UPDATE users SET failed_login_attempts = 0 WHERE id = ?').run(user.id);
     }
+    loginBackoff.delete(username.toLowerCase());
 
     // Existing user with no email — prompt them to add one
     if (!user.email) {
@@ -335,11 +354,6 @@ export default async function authRoutes(app: FastifyInstance) {
       const template = mfaEmail(code);
       await sendEmail(user.email, template.subject, template.html);
       return reply.send({ mfa_required: true, mfa_user_id: user.id, mfa_method: 'email' as const });
-    }
-
-    // Check password expiry
-    if (getPasswordExpiryStatus(user.password_changed_at).expired) {
-      return reply.send({ password_expired: true, user_id: user.id });
     }
 
     const jti = createSession(user.id, request.ip, request.headers['user-agent'] || null);
@@ -439,11 +453,6 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       clearMfaAttempts(user_id);
-
-      // Check password expiry after MFA
-      if (getPasswordExpiryStatus(user.password_changed_at).expired) {
-        return reply.send({ password_expired: true, user_id: user.id });
-      }
 
       const jti = createSession(user.id, request.ip, request.headers['user-agent'] || null);
       const token = signToken({
@@ -750,8 +759,14 @@ export default async function authRoutes(app: FastifyInstance) {
       const resetToken = jwt.sign(
         { userId: user.id, purpose: 'password_reset', jti },
         config.jwtSecret,
-        { expiresIn: '10m' },
+        { expiresIn: '5m' },
       );
+
+      // Store JTI in DB for replay prevention (survives server restarts)
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString().replace('T', ' ').replace('Z', '');
+      db.prepare(
+        'INSERT INTO used_reset_tokens (jti, user_id, expires_at) VALUES (?, ?, ?)',
+      ).run(jti, user.id, expiresAt);
 
       return reply.send({ reset_token: resetToken });
     },
@@ -769,8 +784,8 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       if (!isPasswordStrong(new_password)) {
-        return reply.code(400).send({ 
-          error: `Password must be ${PASSWORD_MIN_LENGTH}-${PASSWORD_MAX_LENGTH} characters and include at least one uppercase letter, one lowercase letter, and one number` 
+        return reply.code(400).send({
+          error: `Password must be ${PASSWORD_MIN_LENGTH}-${PASSWORD_MAX_LENGTH} characters and include at least one uppercase letter, one lowercase letter, one number, and one special character`
         });
       }
 
@@ -785,16 +800,28 @@ export default async function authRoutes(app: FastifyInstance) {
         return reply.code(401).send({ error: 'Invalid reset token' });
       }
 
-      // Prevent token reuse (track with 10min expiry matching JWT lifetime)
-      if (!payload.jti || usedResetTokens.has(payload.jti)) {
+      // Prevent token reuse via DB (survives server restarts)
+      if (!payload.jti) {
+        return reply.code(401).send({ error: 'Invalid reset token' });
+      }
+      const tokenRow = db.prepare(
+        'SELECT used FROM used_reset_tokens WHERE jti = ?',
+      ).get(payload.jti) as { used: number } | undefined;
+      if (!tokenRow) {
+        return reply.code(401).send({ error: 'Invalid reset token' });
+      }
+      if (tokenRow.used) {
         return reply.code(401).send({ error: 'Reset token has already been used' });
       }
-      usedResetTokens.set(payload.jti, Date.now() + 10 * 60 * 1000);
+      db.prepare('UPDATE used_reset_tokens SET used = 1 WHERE jti = ?').run(payload.jti);
 
       const newHash = await hashPassword(new_password);
       db.prepare(
         "UPDATE users SET password_hash = ?, password_changed_at = datetime('now') WHERE id = ?",
       ).run(newHash, payload.userId);
+
+      // Revoke all existing sessions after password reset
+      revokeAllUserSessions(payload.userId);
 
       return reply.send({ ok: true });
     },
@@ -816,8 +843,8 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       if (!isPasswordStrong(new_password)) {
-        return reply.code(400).send({ 
-          error: `Password must be ${PASSWORD_MIN_LENGTH}-${PASSWORD_MAX_LENGTH} characters and include at least one uppercase letter, one lowercase letter, and one number` 
+        return reply.code(400).send({
+          error: `Password must be ${PASSWORD_MIN_LENGTH}-${PASSWORD_MAX_LENGTH} characters and include at least one uppercase letter, one lowercase letter, one number, and one special character`
         });
       }
 
@@ -843,14 +870,19 @@ export default async function authRoutes(app: FastifyInstance) {
 
       logAuditEvent('password_change', userId, null, request.ip);
 
+      // Revoke all other sessions after password change
+      revokeAllUserSessions(userId);
+
       // Re-fetch to get the updated password_changed_at for the new JWT
       const freshUser = db
         .prepare('SELECT password_changed_at FROM users WHERE id = ?')
         .get(userId) as { password_changed_at: string };
+      const newJti = createSession(user.id, request.ip, request.headers['user-agent'] || null);
       const token = signToken({
         userId: user.id,
         username: user.username,
         role: user.role,
+        jti: newJti,
         pwc: freshUser.password_changed_at,
       });
       setAuthCookie(reply, token);

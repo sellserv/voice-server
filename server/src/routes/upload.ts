@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { createWriteStream } from 'fs';
 import { unlink } from 'fs/promises';
 import { pipeline } from 'stream/promises';
-import { extname, basename } from 'path';
+import { extname, basename, relative } from 'path';
 import { resolve } from 'path';
 import db from '../db/connection.js';
 import { config } from '../config.js';
@@ -99,8 +99,9 @@ export default async function uploadRoutes(app: FastifyInstance) {
     const storedName = `${id}${ext}`;
     const filePath = resolve(config.uploadDir, storedName);
 
-    // Verify the resolved path is within uploadDir (prevent path traversal)
-    if (!filePath.startsWith(resolve(config.uploadDir))) {
+    // Verify the resolved path is within uploadDir (prevent path traversal and symlink attacks)
+    const rel = relative(resolve(config.uploadDir), filePath);
+    if (rel.startsWith('..') || rel.startsWith('/') || rel.includes('..')) {
       return reply.code(400).send({ error: 'Invalid file path' });
     }
 
