@@ -22,18 +22,14 @@
   }
 
   const EVENT_TYPES = [
-    'failed_login',
-    'successful_login',
-    'password_change',
-    'mfa_enable',
-    'mfa_disable',
     'role_change',
+    'user_kick',
     'user_ban',
     'user_unban',
     'permission_change',
-    'admin_settings_change',
     'invite_create',
     'invite_delete',
+    'report_submitted',
   ];
 
   let entries = $state<AuditEntry[]>([]);
