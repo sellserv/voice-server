@@ -9,7 +9,7 @@ function hashCode(code: string): string {
 }
 
 export function generateCode(): string {
-  return String(randomInt(10000000, 99999999));
+  return String(randomInt(100000, 999999));
 }
 
 export function createEmailCode(userId: string, type: CodeType): string {
