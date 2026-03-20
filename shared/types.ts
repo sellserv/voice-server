@@ -938,7 +938,6 @@ export interface RegisterBody {
   password: string;
   email: string;
   display_name?: string;
-  invite_code?: string;
   captcha_token?: string;
 }
 export interface LoginBody {

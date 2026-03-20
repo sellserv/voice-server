@@ -439,8 +439,7 @@ export interface RegisterBody {
   password: string;
   email: string;
   display_name?: string;
-  invite_code?: string;
-  setup_token?: string;
+  captcha_token?: string;
 }
 export interface LoginBody {
   username: string;

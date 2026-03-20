@@ -27,9 +27,8 @@ import {
   PASSWORD_MIN_LENGTH,
   PASSWORD_MAX_LENGTH
 } from '../auth/policy.js';
-import type { RegisterBody, LoginBody, UserRow, InviteCode } from '@voip-server/shared';
+import type { RegisterBody, LoginBody, UserRow } from '@voip-server/shared';
 import { logAuditEvent } from '../audit/log.js';
-import { sendWelcomeMessages } from '../bots/welcomeBot.js';
 import { verifyTurnstile, isTurnstileEnabled, isDesktopClient } from '../auth/turnstile.js';
 
 const authRateLimit = {
@@ -114,7 +113,7 @@ export default async function authRoutes(app: FastifyInstance) {
       return reply.code(403).send({ error: 'Registration is currently closed' });
     }
 
-    const { username, password, email, display_name, invite_code } = request.body;
+    const { username, password, email, display_name } = request.body;
 
     if (!username || !password) {
       return reply.code(400).send({ error: 'Username and password required' });
@@ -189,74 +188,20 @@ export default async function authRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'Display name must be 1-32 characters' });
     }
 
-    // Atomic transaction: validate invite code AND insert user
-    const insertResult = db.transaction(() => {
-      // Validate invite code if provided (optional for open registration)
-      let inviteRow: InviteCode | undefined;
-      if (invite_code) {
-        inviteRow = db.prepare('SELECT * FROM invite_codes WHERE code = ?').get(invite_code) as
-          | InviteCode
-          | undefined;
-        if (!inviteRow) {
-          return { error: 'Invalid invite code' } as const;
-        }
-        if (inviteRow.expires_at && new Date(inviteRow.expires_at) < new Date()) {
-          return { error: 'Invite code has expired' } as const;
-        }
-        if (inviteRow.max_uses !== null && inviteRow.use_count >= inviteRow.max_uses) {
-          return { error: 'Invite code has reached maximum uses' } as const;
-        }
-      }
+    const defaultRole = db
+      .prepare('SELECT id FROM roles WHERE is_default = 1 LIMIT 1')
+      .get() as { id: string } | undefined;
+    const roleId = defaultRole?.id || null;
 
-      const defaultRole = db
-        .prepare('SELECT id FROM roles WHERE is_default = 1 LIMIT 1')
-        .get() as { id: string } | undefined;
-      const roleId = defaultRole?.id || null;
-
+    db.transaction(() => {
       db.prepare(
         "INSERT INTO users (id, username, display_name, password_hash, role, role_id, email, email_verified, mfa_method, password_changed_at) VALUES (?, ?, ?, ?, 'member', ?, ?, 0, 'email', datetime('now'))",
       ).run(id, username, sanitizedDisplayName, password_hash, roleId, email);
 
-      // Also insert into user_roles junction table
       if (roleId) {
         db.prepare('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)').run(id, roleId);
       }
-
-      // Join server if invite code provided
-      if (inviteRow?.server_id) {
-        // Member registering with invite code: add to the invite's server
-        db.prepare(
-          'INSERT OR IGNORE INTO server_members (server_id, user_id) VALUES (?, ?)'
-        ).run(inviteRow.server_id, id);
-
-        // Assign the server's default role to the user
-        const serverDefaultRole = db.prepare(
-          'SELECT id FROM roles WHERE server_id = ? AND is_default = 1'
-        ).get(inviteRow.server_id) as any;
-        if (serverDefaultRole) {
-          db.prepare(
-            'INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)'
-          ).run(id, serverDefaultRole.id);
-        }
-      }
-
-      if (inviteRow) {
-        db.prepare('UPDATE invite_codes SET use_count = use_count + 1 WHERE id = ?').run(
-          inviteRow.id,
-        );
-      }
-
-      return { ok: true, joinedServerId: inviteRow?.server_id || null } as const;
     })();
-
-    if ('error' in insertResult) {
-      return reply.code(400).send({ error: insertResult.error });
-    }
-
-    // Send welcome message if user joined a server during registration
-    if (insertResult.joinedServerId) {
-      sendWelcomeMessages(id, insertResult.joinedServerId);
-    }
 
     // Send verification email — no JWT until verified
     const code = createEmailCode(id, 'verification');
