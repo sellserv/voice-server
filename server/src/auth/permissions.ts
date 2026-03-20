@@ -4,6 +4,7 @@ import type { RolePermissions, ChannelOverridablePermission } from '@voip-server
 const DEFAULT_PERMISSIONS: RolePermissions = {
   manage_channels: false,
   manage_roles: false,
+  kick_members: false,
   ban_members: false,
   manage_messages: false,
   manage_invite_codes: false,

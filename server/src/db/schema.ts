@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 const ALL_PERMISSIONS = JSON.stringify({
   manage_channels: true,
   manage_roles: true,
+  kick_members: true,
   ban_members: true,
   manage_messages: true,
   manage_invite_codes: true,
@@ -31,6 +32,7 @@ const ALL_PERMISSIONS = JSON.stringify({
 const MEMBER_PERMISSIONS = JSON.stringify({
   manage_channels: false,
   manage_roles: false,
+  kick_members: false,
   ban_members: false,
   manage_messages: false,
   manage_invite_codes: false,
@@ -58,6 +60,7 @@ const MEMBER_PERMISSIONS = JSON.stringify({
 const BOT_PERMISSIONS = JSON.stringify({
   manage_channels: false,
   manage_roles: false,
+  kick_members: false,
   ban_members: false,
   manage_messages: false,
   manage_invite_codes: false,
@@ -588,6 +591,26 @@ export function initSchema() {
         const perms = JSON.parse(role.permissions);
         if (perms.manage_server === undefined) {
           perms.manage_server = false;
+          db.prepare('UPDATE roles SET permissions = ? WHERE id = ?').run(
+            JSON.stringify(perms),
+            role.id,
+          );
+        }
+      } catch {}
+    }
+  }
+
+  // Backfill kick_members into existing role permission blobs
+  {
+    const allRoles = db.prepare('SELECT id, permissions FROM roles').all() as {
+      id: string;
+      permissions: string;
+    }[];
+    for (const role of allRoles) {
+      try {
+        const perms = JSON.parse(role.permissions);
+        if (perms.kick_members === undefined) {
+          perms.kick_members = !!perms.ban_members;
           db.prepare('UPDATE roles SET permissions = ? WHERE id = ?').run(
             JSON.stringify(perms),
             role.id,

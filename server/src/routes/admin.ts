@@ -340,7 +340,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   // Kick user (remove from server, can rejoin)
   app.post<{ Params: { serverId: string; id: string } }>(
     '/api/servers/:serverId/admin/kick/:id',
-    { preHandler: [requirePermission('ban_members'), requireServerMember] },
+    { preHandler: [requirePermission('kick_members'), requireServerMember] },
     async (request, reply) => {
       const { id } = request.params;
       const serverId = getServerId(request);

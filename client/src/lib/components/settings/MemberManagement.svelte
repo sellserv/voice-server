@@ -30,6 +30,7 @@
   let inviteTimeout: ReturnType<typeof setTimeout> | null = null;
 
   const canManageRoles = hasPermissionStore('manage_roles');
+  const canKick = hasPermissionStore('kick_members');
   const canBan = hasPermissionStore('ban_members');
   const canInvite = hasPermissionStore('create_invites');
   const canManageInviteCodes = hasPermissionStore('manage_invite_codes');
@@ -375,24 +376,30 @@
                   {/if}
                 {/if}
 
-                {#if $canBan && member.id !== $currentUser?.id}
+                {#if ($canKick || $canBan) && member.id !== $currentUser?.id}
                   <div class="detail-section moderation-actions">
                     <h5 class="detail-title">Moderation</h5>
                     <div class="action-buttons">
                       {#if member.banned}
-                        <button class="btn-subtle" onclick={() => unbanUser(member.id)}>
-                          <Icon name="shield-check" size={16} />
-                          <span>Unban from Server</span>
-                        </button>
+                        {#if $canBan}
+                          <button class="btn-subtle" onclick={() => unbanUser(member.id)}>
+                            <Icon name="shield-check" size={16} />
+                            <span>Unban from Server</span>
+                          </button>
+                        {/if}
                       {:else}
-                        <button class="btn-warning-outline" onclick={() => kickUser(member.id)}>
-                          <Icon name="arrow-right" size={16} />
-                          <span>Kick</span>
-                        </button>
-                        <button class="btn-danger-outline" onclick={() => banUser(member.id)}>
-                          <Icon name="x" size={16} />
-                          <span>Ban</span>
-                        </button>
+                        {#if $canKick}
+                          <button class="btn-warning-outline" onclick={() => kickUser(member.id)}>
+                            <Icon name="arrow-right" size={16} />
+                            <span>Kick</span>
+                          </button>
+                        {/if}
+                        {#if $canBan}
+                          <button class="btn-danger-outline" onclick={() => banUser(member.id)}>
+                            <Icon name="x" size={16} />
+                            <span>Ban</span>
+                          </button>
+                        {/if}
                       {/if}
                     </div>
                   </div>

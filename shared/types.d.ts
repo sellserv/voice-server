@@ -3,6 +3,7 @@ export type MfaMethod = 'email' | 'totp';
 export interface RolePermissions {
   manage_channels: boolean;
   manage_roles: boolean;
+  kick_members: boolean;
   ban_members: boolean;
   manage_messages: boolean;
   manage_invite_codes: boolean;
