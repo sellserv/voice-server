@@ -947,7 +947,7 @@
 
   .brand-logo {
     display: block;
-    margin: 0 auto 16px;
+    margin: 0 auto 10px;
     width: 64px;
     height: 64px;
     border-radius: 14px;
