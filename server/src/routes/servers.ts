@@ -6,6 +6,7 @@ import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import { hasPermission } from '../auth/permissions.js';
 import { sendTo, sendToMany, getServerMemberUserIds } from '../ws/index.js';
 import { ensureDmChannel, notifyDmCreated } from '../ws/dmUtils.js';
+import { sendWelcomeMessages } from '../bots/welcomeBot.js';
 import type { Server, ServerInvitation, Message } from '@voip-server/shared';
 
 const ALL_PERMISSIONS = JSON.stringify({
@@ -480,6 +481,9 @@ export default async function serverRoutes(app: FastifyInstance) {
         userId,
         username: user.username,
       });
+
+      // Send welcome bot messages
+      sendWelcomeMessages(userId, serverId);
 
       // Return the server
       const row = db
