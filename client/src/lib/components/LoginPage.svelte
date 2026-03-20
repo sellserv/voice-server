@@ -398,7 +398,6 @@
   <div class="login-card">
     <img src="/icon-512x512.png" alt="SellServ Voice" class="brand-logo" />
     <h1 class="brand">{serverName}</h1>
-    <p class="tagline">Self-hosted voice &amp; text chat</p>
 
     {#if $forgotPasswordState}
       {#if $forgotPasswordState.step === 'username'}
