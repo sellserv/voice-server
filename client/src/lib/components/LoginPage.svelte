@@ -396,6 +396,7 @@
 
 <div class="login-container">
   <div class="login-card">
+    <img src="/icon-512x512.png" alt="SellServ Voice" class="brand-logo" />
     <h1 class="brand">{serverName}</h1>
     <p class="tagline">Self-hosted voice &amp; text chat</p>
 
@@ -945,12 +946,21 @@
     to { opacity: 1; transform: translateY(0); }
   }
 
+  .brand-logo {
+    display: block;
+    margin: 0 auto 16px;
+    width: 64px;
+    height: 64px;
+    border-radius: 14px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  }
+
   .brand {
     text-align: center;
     font-size: 2rem;
     font-weight: 800;
     color: white;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
     letter-spacing: -0.02em;
   }
 
