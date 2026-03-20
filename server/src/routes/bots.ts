@@ -3,7 +3,7 @@ import db from '../db/connection.js';
 import { requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import type { Bot } from '@voip-server/shared';
-import { broadcast, broadcastToServer } from '../ws/index.js';
+import { broadcastToServer } from '../ws/index.js';
 
 export default async function botRoutes(app: FastifyInstance) {
   // List all bots (admin only) — server-scoped
@@ -158,7 +158,7 @@ export default async function botRoutes(app: FastifyInstance) {
       dm_greeting: updated.dm_greeting,
       config: updated.config,
     };
-    broadcast({ type: 'bot:updated', bot });
+    broadcastToServer(serverId, { type: 'bot:updated', bot });
 
     // Update presence list when bot is enabled/disabled
     if (enabled !== undefined) {

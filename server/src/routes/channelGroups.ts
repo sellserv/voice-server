@@ -4,7 +4,7 @@ import db from '../db/connection.js';
 import { requireAuth, requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import type { ChannelGroup, GroupPermissionOverride } from '@voip-server/shared';
-import { broadcast, broadcastToServer, broadcastChannelAccessChange, invalidateChannelCache } from '../ws/index.js';
+import { broadcastToServer, broadcastChannelAccessChange, invalidateChannelCache } from '../ws/index.js';
 import {
   hasPermission,
   getUsersWithChannelAccess,
@@ -325,7 +325,7 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
 
       // Broadcast group overrides update
       const overrides = getGroupOverrides(id);
-      broadcast({ type: 'groupOverrides:updated', groupId: id, overrides });
+      broadcastToServer(serverId, { type: 'groupOverrides:updated', groupId: id, overrides });
 
       return overrides;
     },
@@ -379,7 +379,7 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
 
       // Broadcast group overrides update
       const overrides = getGroupOverrides(id);
-      broadcast({ type: 'groupOverrides:updated', groupId: id, overrides });
+      broadcastToServer(serverId, { type: 'groupOverrides:updated', groupId: id, overrides });
 
       return { ok: true };
     },

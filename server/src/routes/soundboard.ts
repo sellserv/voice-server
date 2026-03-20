@@ -7,7 +7,7 @@ import { config } from '../config.js';
 import { requireAuth, requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import { hasPermission, isAppEnabled } from '../auth/permissions.js';
-import { broadcast } from '../ws/index.js';
+import { broadcastToServer } from '../ws/index.js';
 
 export default async function soundboardRoutes(app: FastifyInstance) {
   // List sounds — server-scoped
@@ -119,7 +119,7 @@ export default async function soundboardRoutes(app: FastifyInstance) {
         )
         .get(id);
 
-      broadcast({ type: 'soundboard:created', sound });
+      broadcastToServer(serverId, { type: 'soundboard:created', sound });
       return reply.code(201).send(sound);
     },
   );
@@ -135,7 +135,7 @@ export default async function soundboardRoutes(app: FastifyInstance) {
       if (result.changes === 0) {
         return reply.code(404).send({ error: 'Sound not found' });
       }
-      broadcast({ type: 'soundboard:deleted', soundId });
+      broadcastToServer(serverId, { type: 'soundboard:deleted', soundId });
       return { ok: true };
     },
   );

@@ -5,7 +5,6 @@ import { requireAuth, requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import type { Channel, CreateChannelBody, ChannelPermissionOverride } from '@voip-server/shared';
 import {
-  broadcast,
   sendTo,
   broadcastToServer,
   broadcastToChannel,
@@ -505,7 +504,7 @@ export default async function channelRoutes(app: FastifyInstance) {
 
       // Broadcast overrides update
       const overrides = getChannelOverrides(id);
-      broadcast({ type: 'channelOverrides:updated', channelId: id, overrides });
+      broadcastToServer(serverId, { type: 'channelOverrides:updated', channelId: id, overrides });
 
       return overrides;
     },
@@ -559,7 +558,7 @@ export default async function channelRoutes(app: FastifyInstance) {
 
       // Broadcast overrides update
       const overrides = getChannelOverrides(id);
-      broadcast({ type: 'channelOverrides:updated', channelId: id, overrides });
+      broadcastToServer(serverId, { type: 'channelOverrides:updated', channelId: id, overrides });
 
       return { ok: true };
     },

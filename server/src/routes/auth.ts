@@ -189,7 +189,7 @@ export default async function authRoutes(app: FastifyInstance) {
     }
 
     const defaultRole = db
-      .prepare('SELECT id FROM roles WHERE is_default = 1 LIMIT 1')
+      .prepare('SELECT id FROM roles WHERE is_default = 1 AND server_id IS NULL LIMIT 1')
       .get() as { id: string } | undefined;
     const roleId = defaultRole?.id || null;
 
