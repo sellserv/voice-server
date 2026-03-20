@@ -337,6 +337,52 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // ─── Server-Scoped Admin ────────────────────────────────
 
+  // Kick user (remove from server, can rejoin)
+  app.post<{ Params: { serverId: string; id: string } }>(
+    '/api/servers/:serverId/admin/kick/:id',
+    { preHandler: [requirePermission('ban_members'), requireServerMember] },
+    async (request, reply) => {
+      const { id } = request.params;
+      const serverId = getServerId(request);
+
+      if (id === request.user.userId) {
+        return reply.code(400).send({ error: 'Cannot kick yourself' });
+      }
+
+      const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id) as
+        | { id: string }
+        | undefined;
+      if (!user) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+
+      // Can't kick someone with administrator permission
+      if (hasPermission(id, 'administrator', serverId)) {
+        return reply.code(400).send({ error: 'Cannot kick an administrator' });
+      }
+
+      // Check they're actually a member
+      const isMember = db.prepare(
+        'SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?'
+      ).get(serverId, id);
+      if (!isMember) {
+        return reply.code(400).send({ error: 'User is not a member of this server' });
+      }
+
+      // Remove from server (no ban record — they can rejoin)
+      db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(serverId, id);
+
+      logAuditEvent('user_kick', request.user.userId, id, request.ip, undefined, serverId);
+
+      const memberIds = getServerMemberUserIds(serverId);
+      sendToMany(memberIds, { type: 'server:memberLeft', serverId, userId: id });
+      // Also notify the kicked user so their client removes the server
+      sendToMany([id], { type: 'server:memberLeft', serverId, userId: id });
+
+      return { ok: true };
+    },
+  );
+
   // Ban user (remove from server)
   app.post<{ Params: { serverId: string; id: string }; Body: { reason?: string } }>(
     '/api/servers/:serverId/admin/ban/:id',

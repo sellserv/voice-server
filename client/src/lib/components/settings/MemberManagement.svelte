@@ -176,8 +176,20 @@
     }
   }
 
+  async function kickUser(userId: string) {
+    if (!(await confirm('Kick this member? They can rejoin with an invite.', { title: 'Kick Member', confirmLabel: 'Kick', dangerAction: true }))) return;
+    try {
+      const serverId = getActiveServerId();
+      await api.post(`/api/servers/${serverId}/admin/kick/${userId}`, {});
+      members = members.filter((m) => m.id !== userId);
+      toast.success('Member kicked');
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  }
+
   async function banUser(userId: string) {
-    if (!(await confirm('Ban this member?', { title: 'Ban Member', confirmLabel: 'Ban', dangerAction: true }))) return;
+    if (!(await confirm('Ban this member? They will not be able to rejoin.', { title: 'Ban Member', confirmLabel: 'Ban', dangerAction: true }))) return;
     try {
       const serverId = getActiveServerId();
       await api.post(`/api/servers/${serverId}/admin/ban/${userId}`, {});
@@ -373,9 +385,13 @@
                           <span>Unban from Server</span>
                         </button>
                       {:else}
+                        <button class="btn-warning-outline" onclick={() => kickUser(member.id)}>
+                          <Icon name="arrow-right" size={16} />
+                          <span>Kick</span>
+                        </button>
                         <button class="btn-danger-outline" onclick={() => banUser(member.id)}>
                           <Icon name="x" size={16} />
-                          <span>Ban {member.display_name || member.username}</span>
+                          <span>Ban</span>
                         </button>
                       {/if}
                     </div>
@@ -733,6 +749,14 @@
     padding: 6px 16px; background: var(--accent-success); color: white;
     border-radius: 4px; font-weight: 700; font-size: 0.8rem; border: none; cursor: pointer;
   }
+
+  .btn-warning-outline {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 16px; background: transparent; border: 1px solid #f59e0b;
+    color: #f59e0b; border-radius: 4px; font-weight: 600; font-size: 0.85rem; cursor: pointer;
+    transition: all 0.1s;
+  }
+  .btn-warning-outline:hover { background: #f59e0b; color: white; }
 
   .btn-danger-outline {
     display: flex; align-items: center; gap: 8px;
