@@ -1,11 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { randomUUID } from 'crypto';
 import db from '../db/connection.js';
 import { validateEmailCode, createEmailCode } from '../email/codes.js';
 import { sendEmail } from '../email/sender.js';
 import { verificationEmail, mfaEmail } from '../email/templates.js';
 import { broadcast } from '../ws/index.js';
-import { sendWelcomeMessages } from '../bots/welcomeBot.js';
 
 const emailRateLimit = {
   config: {
@@ -63,15 +61,6 @@ export default async function emailRoutes(app: FastifyInstance) {
       verifyAttempts.delete(user_id);
 
       db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(user_id);
-
-      // Post welcome message from bot if configured
-      const serverIds = (db
-        .prepare('SELECT server_id FROM server_members WHERE user_id = ?')
-        .all(user_id) as { server_id: string }[])
-        .map(r => r.server_id);
-      for (const sid of serverIds) {
-        sendWelcomeMessages(user_id, sid);
-      }
 
       return { ok: true };
     },

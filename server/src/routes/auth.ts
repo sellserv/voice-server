@@ -29,6 +29,7 @@ import {
 } from '../auth/policy.js';
 import type { RegisterBody, LoginBody, UserRow, InviteCode } from '@voip-server/shared';
 import { logAuditEvent } from '../audit/log.js';
+import { sendWelcomeMessages } from '../bots/welcomeBot.js';
 import { verifyTurnstile, isTurnstileEnabled, isDesktopClient } from '../auth/turnstile.js';
 
 const authRateLimit = {
@@ -245,11 +246,16 @@ export default async function authRoutes(app: FastifyInstance) {
         );
       }
 
-      return { ok: true } as const;
+      return { ok: true, joinedServerId: inviteRow?.server_id || null } as const;
     })();
 
     if ('error' in insertResult) {
       return reply.code(400).send({ error: insertResult.error });
+    }
+
+    // Send welcome message if user joined a server during registration
+    if (insertResult.joinedServerId) {
+      sendWelcomeMessages(id, insertResult.joinedServerId);
     }
 
     // Send verification email — no JWT until verified
