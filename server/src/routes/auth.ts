@@ -467,6 +467,7 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       clearMfaAttempts(user_id);
+      logAuditEvent('successful_login', user.id, null, request.ip);
 
       const jti = createSession(user.id, request.ip, request.headers['user-agent'] || null);
       const token = signToken({

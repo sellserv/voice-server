@@ -8,6 +8,7 @@ export type AuditEventType =
   | 'mfa_enable'
   | 'mfa_disable'
   | 'role_change'
+  | 'user_kick'
   | 'user_ban'
   | 'user_unban'
   | 'permission_change'
