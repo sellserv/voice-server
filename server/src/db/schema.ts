@@ -974,6 +974,9 @@ export function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_channel_groups_server ON channel_groups(server_id);
     CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(user_id);
     CREATE INDEX IF NOT EXISTS idx_server_members_server ON server_members(server_id);
+    CREATE INDEX IF NOT EXISTS idx_poll_votes_poll_user ON poll_votes(poll_id, user_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_pinned ON messages(channel_id, pinned) WHERE pinned = 1;
+    CREATE INDEX IF NOT EXISTS idx_files_created_at ON files(created_at);
   `);
 
   // Ensure every server has a welcome bot

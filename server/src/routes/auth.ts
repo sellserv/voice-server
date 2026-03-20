@@ -255,7 +255,12 @@ export default async function authRoutes(app: FastifyInstance) {
     // Send verification email — no JWT until verified
     const code = createEmailCode(id, 'verification');
     const template = verificationEmail(code);
-    await sendEmail(email, template.subject, template.html);
+    try {
+      await sendEmail(email, template.subject, template.html);
+    } catch (e) {
+      console.error('[Auth] Failed to send verification email:', (e as Error).message);
+      return reply.code(500).send({ error: 'Failed to send verification email' });
+    }
 
     return reply.send({ verification_required: true, user_id: id });
   });
@@ -289,7 +294,7 @@ export default async function authRoutes(app: FastifyInstance) {
     }
 
     if (user.banned) {
-      return reply.code(403).send({ error: 'Account banned', reason: user.ban_reason });
+      return reply.code(403).send({ error: 'Account banned' });
     }
 
     // Account locked — must unlock via 2FA
@@ -315,9 +320,13 @@ export default async function authRoutes(app: FastifyInstance) {
         const mfaMethod = user.mfa_method || 'email';
         // Send unlock code via email if that's their method
         if (mfaMethod === 'email' && user.email && user.email_verified) {
-          const code = createEmailCode(user.id, 'mfa');
-          const template = accountLockedEmail(code);
-          await sendEmail(user.email, template.subject, template.html);
+          try {
+            const code = createEmailCode(user.id, 'mfa');
+            const template = accountLockedEmail(code);
+            await sendEmail(user.email, template.subject, template.html);
+          } catch (e) {
+            console.error('[Auth] Failed to send account locked email:', (e as Error).message);
+          }
         }
         return reply.send({ account_locked: true, user_id: user.id, mfa_method: mfaMethod });
       }
@@ -352,7 +361,12 @@ export default async function authRoutes(app: FastifyInstance) {
     if (mfaMethod === 'email') {
       const code = createEmailCode(user.id, 'mfa');
       const template = mfaEmail(code);
-      await sendEmail(user.email, template.subject, template.html);
+      try {
+        await sendEmail(user.email, template.subject, template.html);
+      } catch (e) {
+        console.error('[Auth] Failed to send MFA email:', (e as Error).message);
+        return reply.code(500).send({ error: 'Failed to send verification email' });
+      }
       return reply.send({ mfa_required: true, mfa_user_id: user.id, mfa_method: 'email' as const });
     }
 
@@ -415,7 +429,7 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       if (user.banned) {
-        return reply.code(403).send({ error: 'Account banned', reason: user.ban_reason });
+        return reply.code(403).send({ error: 'Account banned' });
       }
 
       const method = mfaMethod || user.mfa_method || 'email';
@@ -598,7 +612,12 @@ export default async function authRoutes(app: FastifyInstance) {
 
       const code = createEmailCode(user_id, 'verification');
       const template = verificationEmail(code);
-      await sendEmail(email, template.subject, template.html);
+      try {
+        await sendEmail(email, template.subject, template.html);
+      } catch (e) {
+        console.error('[Auth] Failed to send verification email:', (e as Error).message);
+        return reply.code(500).send({ error: 'Failed to send verification email' });
+      }
 
       return reply.send({ verification_required: true, user_id });
     },
@@ -631,7 +650,12 @@ export default async function authRoutes(app: FastifyInstance) {
 
       const code = createEmailCode(userId, 'verification');
       const template = verificationEmail(code);
-      await sendEmail(email, template.subject, template.html);
+      try {
+        await sendEmail(email, template.subject, template.html);
+      } catch (e) {
+        console.error('[Auth] Failed to send verification email:', (e as Error).message);
+        return reply.code(500).send({ error: 'Failed to send verification email' });
+      }
 
       return reply.send({ ok: true, verification_required: true });
     },
@@ -686,9 +710,13 @@ export default async function authRoutes(app: FastifyInstance) {
       const mfaMethod = user.mfa_method || 'email';
 
       if (mfaMethod === 'email' && user.email && user.email_verified) {
-        const code = createEmailCode(user.id, 'password_reset');
-        const template = passwordResetEmail(code);
-        await sendEmail(user.email, template.subject, template.html);
+        try {
+          const code = createEmailCode(user.id, 'password_reset');
+          const template = passwordResetEmail(code);
+          await sendEmail(user.email, template.subject, template.html);
+        } catch (e) {
+          console.error('[Auth] Failed to send password reset email:', (e as Error).message);
+        }
       }
 
       return reply.send({ ok: true });

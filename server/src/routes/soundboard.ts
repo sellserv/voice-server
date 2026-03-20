@@ -80,12 +80,12 @@ export default async function soundboardRoutes(app: FastifyInstance) {
         file.mime_type === 'audio/wave' ||
         file.stored_name.endsWith('.wav')
       ) {
+        let fd: number | undefined;
         try {
           const filePath = resolve(config.uploadDir, file.stored_name);
-          const fd = openSync(filePath, 'r');
+          fd = openSync(filePath, 'r');
           const header = Buffer.alloc(44);
           readSync(fd, header, 0, 44, 0);
-          closeSync(fd);
 
           const byteRate = header.readUInt32LE(28);
           const dataSize = header.readUInt32LE(40);
@@ -97,6 +97,8 @@ export default async function soundboardRoutes(app: FastifyInstance) {
           }
         } catch {
           // If header parsing fails, allow the upload (non-standard format)
+        } finally {
+          if (fd !== undefined) closeSync(fd);
         }
       }
 

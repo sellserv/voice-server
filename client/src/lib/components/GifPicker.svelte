@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { api } from '$lib/api';
 
   let { onSelect }: { onSelect: (gifUrl: string) => void } = $props();
@@ -13,6 +13,10 @@
   onMount(() => {
     searchInput?.focus();
     fetchTrending();
+  });
+
+  onDestroy(() => {
+    if (debounceTimer) clearTimeout(debounceTimer);
   });
 
   async function fetchTrending() {

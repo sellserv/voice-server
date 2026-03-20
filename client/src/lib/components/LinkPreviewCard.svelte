@@ -10,8 +10,18 @@
     favicon: string | null;
   }
 
-  // Module-level cache shared across all instances
+  // Module-level cache shared across all instances (bounded to prevent memory leaks)
+  const MAX_CACHE_SIZE = 200;
   const previewCache = new Map<string, LinkPreviewData | null>();
+
+  function cacheSet(key: string, value: LinkPreviewData | null) {
+    if (previewCache.size >= MAX_CACHE_SIZE) {
+      // Evict oldest entry
+      const firstKey = previewCache.keys().next().value;
+      if (firstKey !== undefined) previewCache.delete(firstKey);
+    }
+    previewCache.set(key, value);
+  }
 
   let { url }: { url: string } = $props();
 
@@ -36,15 +46,15 @@
       .get<LinkPreviewData>(`/api/link-preview?url=${encodeURIComponent(targetUrl)}`)
       .then((data) => {
         if (data.title) {
-          previewCache.set(targetUrl, data);
+          cacheSet(targetUrl, data);
           preview = data;
         } else {
-          previewCache.set(targetUrl, null);
+          cacheSet(targetUrl, null);
           preview = null;
         }
       })
       .catch(() => {
-        previewCache.set(targetUrl, null);
+        cacheSet(targetUrl, null);
         preview = null;
       })
       .finally(() => {
