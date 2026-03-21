@@ -412,37 +412,36 @@ async function checkAndApplyUpdate() {
 }
 
 /**
- * For AppX/Store builds: check the latest GitHub release and prompt the user
- * to update via the Microsoft Store if a newer version is available.
+ * For AppX/Store builds: check the server's minimum required version and
+ * force the user to update via the Microsoft Store if their version is too old.
  */
 async function checkStoreUpdate() {
   try {
-    const https = require('https');
-    const latestVersion = await new Promise((resolve, reject) => {
-      const req = https.get(
-        'https://api.github.com/repos/sellserv/voice-server/releases/latest',
-        { headers: { 'User-Agent': 'SellServ-Voice' } },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk) => data += chunk);
-          res.on('end', () => {
-            try {
-              const tag = JSON.parse(data).tag_name || '';
-              resolve(tag.replace(/^v/, ''));
-            } catch {
-              reject(new Error('Failed to parse release info'));
-            }
-          });
-        },
-      );
+    const serverUrl = store.get('serverUrl');
+    if (!serverUrl) return; // Not configured yet
+
+    const { net } = require('electron');
+    const minVersion = await new Promise((resolve, reject) => {
+      const req = net.request(`${serverUrl}/api/server-settings/public`);
+      req.on('response', (res) => {
+        let data = '';
+        res.on('data', (chunk) => data += chunk);
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data).min_app_version || '0.0.0');
+          } catch {
+            reject(new Error('Failed to parse server response'));
+          }
+        });
+      });
       req.on('error', reject);
-      req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+      req.end();
     });
 
     const current = app.getVersion();
-    console.log(`[StoreUpdater] Current: ${current}, Latest: ${latestVersion}`);
+    console.log(`[StoreUpdater] Current: ${current}, Min required: ${minVersion}`);
 
-    if (!isNewerVersion(latestVersion, current)) return;
+    if (!isNewerVersion(minVersion, current)) return;
 
     const { dialog } = require('electron');
     // Loop until the user clicks Update — no way to dismiss
@@ -450,7 +449,7 @@ async function checkStoreUpdate() {
       await dialog.showMessageBox({
         type: 'warning',
         title: 'Update Required',
-        message: `A new version of SellServ Voice (v${latestVersion}) is available.`,
+        message: `SellServ Voice v${minVersion} or later is required.`,
         detail: 'You must update from the Microsoft Store to continue.',
         buttons: ['Update Now'],
         defaultId: 0,

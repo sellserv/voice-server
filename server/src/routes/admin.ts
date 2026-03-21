@@ -494,16 +494,16 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // Get instance settings
   app.get('/api/admin/instance-settings', { preHandler: requireAdmin }, async () => {
-    const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name FROM instance_settings WHERE id = 1').get() as any;
-    return settings || { allow_server_creation: 1, allow_registration: 1, instance_name: 'SellServ Voice' };
+    const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name, min_app_version FROM instance_settings WHERE id = 1').get() as any;
+    return settings || { allow_server_creation: 1, allow_registration: 1, instance_name: 'SellServ Voice', min_app_version: '0.0.0' };
   });
 
   // Update instance settings
-  app.patch<{ Body: { allow_registration?: boolean; instance_name?: string } }>(
+  app.patch<{ Body: { allow_registration?: boolean; instance_name?: string; min_app_version?: string } }>(
     '/api/admin/instance-settings',
     { preHandler: requireAdmin },
     async (request, reply) => {
-      const { allow_registration, instance_name } = request.body;
+      const { allow_registration, instance_name, min_app_version } = request.body;
       if (allow_registration !== undefined) {
         db.prepare('UPDATE instance_settings SET allow_registration = ? WHERE id = 1').run(allow_registration ? 1 : 0);
       }
@@ -514,7 +514,14 @@ export default async function adminRoutes(app: FastifyInstance) {
         }
         db.prepare('UPDATE instance_settings SET instance_name = ? WHERE id = 1').run(trimmed);
       }
-      const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name FROM instance_settings WHERE id = 1').get() as any;
+      if (min_app_version !== undefined) {
+        const trimmed = min_app_version.trim();
+        if (!/^\d+\.\d+\.\d+$/.test(trimmed)) {
+          return reply.code(400).send({ error: 'Version must be in format X.Y.Z' });
+        }
+        db.prepare('UPDATE instance_settings SET min_app_version = ? WHERE id = 1').run(trimmed);
+      }
+      const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name, min_app_version FROM instance_settings WHERE id = 1').get() as any;
       return settings;
     },
   );
