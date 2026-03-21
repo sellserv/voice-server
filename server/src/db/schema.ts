@@ -1276,10 +1276,6 @@ export function initSchema() {
     db.exec("ALTER TABLE instance_settings ADD COLUMN instance_name TEXT NOT NULL DEFAULT 'SellServ Voice'");
   } catch {}
 
-  // Migration: add min_app_version to instance_settings (for forced Store updates)
-  try {
-    db.exec("ALTER TABLE instance_settings ADD COLUMN min_app_version TEXT NOT NULL DEFAULT '0.0.0'");
-  } catch {}
 
   // Migration: add type and metadata columns to messages (for call system messages)
   try {

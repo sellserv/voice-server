@@ -19,8 +19,6 @@
   let registrationOpen = $state(true);
   let instanceName = $state('SellServ Voice');
   let instanceNameInput = $state('SellServ Voice');
-  let minAppVersion = $state('0.0.0');
-  let minAppVersionInput = $state('0.0.0');
   let reportFilter: 'open' | 'all' = $state('open');
 
   // User detail
@@ -51,8 +49,6 @@
       registrationOpen = !!is.allow_registration;
       instanceName = is.instance_name || 'SellServ Voice';
       instanceNameInput = instanceName;
-      minAppVersion = is.min_app_version || '0.0.0';
-      minAppVersionInput = minAppVersion;
     } catch (e: any) {
       error = e.message || 'Failed to load data';
     } finally {
@@ -87,22 +83,6 @@
       instanceNameInput = instanceName;
     } catch (e: any) {
       error = e?.message || 'Failed to update instance name';
-    }
-  }
-
-  async function saveMinAppVersion() {
-    const trimmed = minAppVersionInput.trim();
-    if (!trimmed || trimmed === minAppVersion) return;
-    if (!/^\d+\.\d+\.\d+$/.test(trimmed)) {
-      error = 'Version must be in format X.Y.Z';
-      return;
-    }
-    try {
-      const result = await api.patch<any>('/api/admin/instance-settings', { min_app_version: trimmed });
-      minAppVersion = result.min_app_version || '0.0.0';
-      minAppVersionInput = minAppVersion;
-    } catch (e: any) {
-      error = e?.message || 'Failed to update minimum app version';
     }
   }
 
@@ -337,25 +317,6 @@
                 />
                 {#if instanceNameInput.trim() !== instanceName}
                   <button class="save-btn" onclick={saveInstanceName}>Save</button>
-                {/if}
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="setting-info">
-                <span class="setting-name">Minimum App Version</span>
-                <span class="setting-desc">Microsoft Store (AppX) users below this version will be forced to update</span>
-              </div>
-              <div class="name-input-group">
-                <input
-                  type="text"
-                  class="name-input version-input"
-                  bind:value={minAppVersionInput}
-                  placeholder="0.0.0"
-                  maxlength="20"
-                  onkeydown={(e) => e.key === 'Enter' && saveMinAppVersion()}
-                />
-                {#if minAppVersionInput.trim() !== minAppVersion}
-                  <button class="save-btn" onclick={saveMinAppVersion}>Save</button>
                 {/if}
               </div>
             </div>
@@ -1016,10 +977,6 @@
 
   .name-input:focus {
     border-color: var(--accent);
-  }
-
-  .version-input {
-    width: 100px;
   }
 
   .save-btn {

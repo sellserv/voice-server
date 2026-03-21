@@ -35,12 +35,11 @@ export default async function serverSettingsRoutes(app: FastifyInstance) {
   // Public instance info (name only, no auth required) — used on login/register page
   app.get('/api/server-settings/public', async () => {
     const row = db
-      .prepare('SELECT instance_name, min_app_version FROM instance_settings WHERE id = 1')
+      .prepare('SELECT instance_name FROM instance_settings WHERE id = 1')
       .get() as any;
     return {
       name: row?.instance_name || 'SellServ Voice',
       icon_url: null,
-      min_app_version: row?.min_app_version || '0.0.0',
     };
   });
 

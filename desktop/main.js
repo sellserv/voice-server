@@ -411,56 +411,6 @@ async function checkAndApplyUpdate() {
   }
 }
 
-/**
- * For AppX/Store builds: check the server's minimum required version and
- * force the user to update via the Microsoft Store if their version is too old.
- */
-async function checkStoreUpdate() {
-  try {
-    const serverUrl = store.get('serverUrl');
-    if (!serverUrl) return; // Not configured yet
-
-    const { net } = require('electron');
-    const minVersion = await new Promise((resolve, reject) => {
-      const req = net.request(`${serverUrl}/api/server-settings/public`);
-      req.on('response', (res) => {
-        let data = '';
-        res.on('data', (chunk) => data += chunk);
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(data).min_app_version || '0.0.0');
-          } catch {
-            reject(new Error('Failed to parse server response'));
-          }
-        });
-      });
-      req.on('error', reject);
-      req.end();
-    });
-
-    const current = app.getVersion();
-    console.log(`[StoreUpdater] Current: ${current}, Min required: ${minVersion}`);
-
-    if (!isNewerVersion(minVersion, current)) return;
-
-    const { dialog } = require('electron');
-    // Loop until the user clicks Update — no way to dismiss
-    while (true) {
-      await dialog.showMessageBox({
-        type: 'warning',
-        title: 'Update Required',
-        message: `SellServ Voice v${minVersion} or later is required.`,
-        detail: 'You must update from the Microsoft Store to continue.',
-        buttons: ['Update Now'],
-        defaultId: 0,
-      });
-      shell.openExternal('ms-windows-store://pdp/?productid=9NTD3XLC0JRJ');
-    }
-  } catch (e) {
-    console.error('[StoreUpdater] Check failed:', e?.message || e);
-  }
-}
-
 // --- Global PTT (works even when app is not focused) ---
 // Wrapped in try-catch: uiohook-napi may fail to load on some Linux systems
 let uIOhook = null;
@@ -595,16 +545,10 @@ if (!gotTheLock) {
       url = `http://127.0.0.1:${port}`;
     }
 
-    // Auto-update on startup (production only)
-    if (!isDev) {
-      if (process.windowsStore) {
-        // AppX/Store build — electron-updater can't update Store packages,
-        // so check GitHub releases and prompt the user to update via the Store.
-        await checkStoreUpdate();
-      } else {
-        const updated = await checkAndApplyUpdate();
-        if (updated) return; // App is restarting with the new version
-      }
+    // Auto-update on startup (production only, exe/non-Store builds)
+    if (!isDev && !process.windowsStore) {
+      const updated = await checkAndApplyUpdate();
+      if (updated) return; // App is restarting with the new version
     }
 
     createWindow(url);
