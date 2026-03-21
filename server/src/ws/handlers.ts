@@ -74,8 +74,65 @@ interface CallSession {
   status: 'ringing' | 'active';
   timeout: ReturnType<typeof setTimeout>;
   video: boolean;
+  startedAt?: number;
 }
 const activeCalls = new Map<string, CallSession>();
+
+function insertCallMessage(
+  callerId: string,
+  recipientId: string,
+  callType: 'voice' | 'video',
+  callStatus: 'missed' | 'rejected' | 'completed',
+  duration?: number,
+) {
+  const channelId = ensureDmChannel(callerId, recipientId);
+  const id = randomUUID();
+  const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const metadata = JSON.stringify({
+    call_type: callType,
+    call_status: callStatus,
+    ...(duration != null ? { duration } : {}),
+  });
+
+  db.prepare(
+    "INSERT INTO messages (id, channel_id, user_id, content, type, metadata, created_at) VALUES (?, ?, ?, '', 'call', ?, ?)",
+  ).run(id, channelId, callerId, metadata, now);
+
+  const callerRow = db
+    .prepare('SELECT u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ?')
+    .get(callerId) as any;
+
+  const message: Message = {
+    id,
+    channel_id: channelId,
+    user_id: callerId,
+    content: '',
+    file_id: null,
+    created_at: now,
+    edited_at: null,
+    username: callerRow?.username,
+    display_name: callerRow?.display_name,
+    avatar_url: callerRow?.avatar_url,
+    role_color: callerRow?.role_color,
+    name_font: callerRow?.name_font,
+    name_color: callerRow?.name_color,
+    type: 'call',
+    metadata,
+  };
+
+  const participantIds = getDmParticipantIds(channelId);
+  sendToMany(participantIds, { type: 'chat:message', message });
+
+  // Notify dm:created if channel is new (no prior messages)
+  const msgCount = db
+    .prepare('SELECT COUNT(*) as cnt FROM messages WHERE channel_id = ?')
+    .get(channelId) as { cnt: number };
+  if (msgCount.cnt <= 1) {
+    for (const uid of participantIds) {
+      notifyDmCreated(uid, channelId);
+    }
+  }
+}
 
 // Per-user message queue to serialize async voice/RTC events
 const userQueues = new Map<string, Promise<void>>();
@@ -1290,6 +1347,7 @@ function handleCallInitiate(user: JwtPayload, targetUserId: string, video = fals
       activeCalls.delete(callId);
       sendTo(call.callerId, { type: 'call:ended', callId, reason: 'timeout' });
       sendTo(call.recipientId, { type: 'call:ended', callId, reason: 'timeout' });
+      insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'missed');
     }
   }, 30000);
 
@@ -1325,6 +1383,7 @@ function handleCallAccept(user: JwtPayload, callId: string) {
 
   clearTimeout(call.timeout);
   call.status = 'active';
+  call.startedAt = Date.now();
   const channelId = `call:${callId}`;
 
   sendTo(call.callerId, { type: 'call:accepted', callId, channelId });
@@ -1338,6 +1397,7 @@ function handleCallReject(user: JwtPayload, callId: string) {
   clearTimeout(call.timeout);
   activeCalls.delete(callId);
   sendTo(call.callerId, { type: 'call:ended', callId, reason: 'rejected' });
+  insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'rejected');
 }
 
 function handleCallEnd(user: JwtPayload, callId: string) {
@@ -1349,6 +1409,13 @@ function handleCallEnd(user: JwtPayload, callId: string) {
   activeCalls.delete(callId);
   const otherUserId = call.callerId === user.userId ? call.recipientId : call.callerId;
   sendTo(otherUserId, { type: 'call:ended', callId, reason: 'ended' });
+
+  if (call.status === 'active' && call.startedAt) {
+    const duration = Math.round((Date.now() - call.startedAt) / 1000);
+    insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'completed', duration);
+  } else {
+    insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'missed');
+  }
 }
 
 function cleanupCallsForUser(userId: string) {
@@ -1358,6 +1425,13 @@ function cleanupCallsForUser(userId: string) {
       activeCalls.delete(callId);
       const otherUserId = call.callerId === userId ? call.recipientId : call.callerId;
       sendTo(otherUserId, { type: 'call:ended', callId, reason: 'ended' });
+
+      if (call.status === 'active' && call.startedAt) {
+        const duration = Math.round((Date.now() - call.startedAt) / 1000);
+        insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'completed', duration);
+      } else {
+        insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'missed');
+      }
     }
   }
 }

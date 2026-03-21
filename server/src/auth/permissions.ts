@@ -4,6 +4,7 @@ import type { RolePermissions, ChannelOverridablePermission } from '@voip-server
 const DEFAULT_PERMISSIONS: RolePermissions = {
   manage_channels: false,
   manage_roles: false,
+  kick_members: false,
   ban_members: false,
   manage_messages: false,
   manage_invite_codes: false,
@@ -78,6 +79,7 @@ export function getUserPermissions(userId: string, serverId?: string): RolePermi
     for (const row of rows) {
       try {
         const perms = JSON.parse(row.permissions);
+        // Only merge known permission keys (prevent privilege escalation via unknown keys)
         for (const key of Object.keys(merged) as (keyof RolePermissions)[]) {
           if (perms[key] === true) {
             (merged as any)[key] = true;
@@ -113,7 +115,13 @@ export function getUserPermissions(userId: string, serverId?: string): RolePermi
 
     if (!row) return { ...DEFAULT_PERMISSIONS };
     try {
-      return { ...DEFAULT_PERMISSIONS, ...JSON.parse(row.permissions) };
+      const parsed = JSON.parse(row.permissions);
+      // Only apply known permission keys
+      const result = { ...DEFAULT_PERMISSIONS };
+      for (const key of Object.keys(result) as (keyof RolePermissions)[]) {
+        if (parsed[key] === true) (result as any)[key] = true;
+      }
+      return result;
     } catch {
       return { ...DEFAULT_PERMISSIONS };
     }
@@ -123,6 +131,7 @@ export function getUserPermissions(userId: string, serverId?: string): RolePermi
   for (const row of rows) {
     try {
       const perms = JSON.parse(row.permissions);
+      // Only merge known permission keys (prevent privilege escalation via unknown keys)
       for (const key of Object.keys(merged) as (keyof RolePermissions)[]) {
         if (perms[key] === true) {
           (merged as any)[key] = true;

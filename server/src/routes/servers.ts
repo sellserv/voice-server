@@ -6,6 +6,7 @@ import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import { hasPermission } from '../auth/permissions.js';
 import { sendTo, sendToMany, getServerMemberUserIds } from '../ws/index.js';
 import { ensureDmChannel, notifyDmCreated } from '../ws/dmUtils.js';
+import { sendWelcomeMessages } from '../bots/welcomeBot.js';
 import type { Server, ServerInvitation, Message } from '@voip-server/shared';
 
 const ALL_PERMISSIONS = JSON.stringify({
@@ -386,11 +387,6 @@ export default async function serverRoutes(app: FastifyInstance) {
         return reply.code(410).send({ error: 'Invite code has expired' });
       }
 
-      // Check uses remaining
-      if (invite.max_uses !== null && invite.use_count >= invite.max_uses) {
-        return reply.code(410).send({ error: 'Invite code has reached maximum uses' });
-      }
-
       const serverId = invite.server_id;
       if (!serverId) {
         return reply.code(400).send({ error: 'Invite code is not associated with a server' });
@@ -439,6 +435,14 @@ export default async function serverRoutes(app: FastifyInstance) {
         .get(userId) as { username: string };
 
       const joinServer = db.transaction(() => {
+        // Re-check max_uses inside transaction to prevent race condition
+        if (invite.max_uses !== null) {
+          const current = db.prepare('SELECT use_count FROM invite_codes WHERE id = ?').get(invite.id) as { use_count: number };
+          if (current.use_count >= invite.max_uses) {
+            throw new Error('Invite code has reached maximum uses');
+          }
+        }
+
         // Add user as server member
         db.prepare(
           'INSERT INTO server_members (server_id, user_id) VALUES (?, ?)',
@@ -459,7 +463,15 @@ export default async function serverRoutes(app: FastifyInstance) {
           ).run(userId, defaultRole.id);
         }
       });
-      joinServer();
+
+      try {
+        joinServer();
+      } catch (e: any) {
+        if (e.message === 'Invite code has reached maximum uses') {
+          return reply.code(410).send({ error: e.message });
+        }
+        throw e;
+      }
 
       // Broadcast to all server members
       const memberIds = getServerMemberUserIds(serverId);
@@ -469,6 +481,9 @@ export default async function serverRoutes(app: FastifyInstance) {
         userId,
         username: user.username,
       });
+
+      // Send welcome bot messages
+      sendWelcomeMessages(userId, serverId);
 
       // Return the server
       const row = db

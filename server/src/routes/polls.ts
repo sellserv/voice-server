@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import db from '../db/connection.js';
 import { requireAuth, requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
+import { hasPermission } from '../auth/permissions.js';
 import { sendToMany, broadcastToChannel } from '../ws/index.js';
 import type { Poll, PollOption } from '@voip-server/shared';
 
@@ -28,7 +29,7 @@ function getPollWithDetails(pollId: string, userId: string): Poll | null {
   }
 
   const options = db.prepare(`
-    SELECT o.*, 
+    SELECT o.*,
            (SELECT COUNT(*) FROM poll_votes WHERE option_id = o.id) as vote_count,
            (SELECT 1 FROM poll_votes WHERE option_id = o.id AND user_id = ?) as voted_by_me
     FROM poll_options o
@@ -43,8 +44,68 @@ function getPollWithDetails(pollId: string, userId: string): Poll | null {
       ...o,
       voted_by_me: !!o.voted_by_me
     })),
-    total_votes: db.prepare('SELECT COUNT(DISTINCT user_id) as c FROM poll_votes WHERE poll_id = ?').get(pollId).c
+    total_votes: (db.prepare('SELECT COUNT(DISTINCT user_id) as c FROM poll_votes WHERE poll_id = ?').get(pollId) as any).c
   };
+}
+
+function getPollsWithDetails(serverId: string, userId: string): Poll[] {
+  const polls = db.prepare(`
+    SELECT p.*, u.username as creator_username, u.display_name as creator_display_name, u.avatar_url as creator_avatar_url
+    FROM polls p
+    JOIN users u ON u.id = p.creator_id
+    WHERE p.server_id = ?
+    ORDER BY p.created_at DESC
+  `).all(serverId) as any[];
+
+  if (polls.length === 0) return [];
+
+  // Expire stale polls in one batch
+  const now = new Date();
+  const expiredIds = polls.filter(p => p.is_active && p.ends_at && new Date(p.ends_at) <= now).map(p => p.id);
+  if (expiredIds.length > 0) {
+    const placeholders = expiredIds.map(() => '?').join(',');
+    db.prepare(`UPDATE polls SET is_active = 0 WHERE id IN (${placeholders})`).run(...expiredIds);
+    for (const p of polls) {
+      if (expiredIds.includes(p.id)) p.is_active = 0;
+    }
+  }
+
+  const pollIds = polls.map(p => p.id);
+  const placeholders = pollIds.map(() => '?').join(',');
+
+  // Batch load all options
+  const allOptions = db.prepare(`
+    SELECT o.*,
+           (SELECT COUNT(*) FROM poll_votes WHERE option_id = o.id) as vote_count,
+           (SELECT 1 FROM poll_votes WHERE option_id = o.id AND user_id = ?) as voted_by_me
+    FROM poll_options o
+    WHERE o.poll_id IN (${placeholders})
+  `).all(userId, ...pollIds) as any[];
+
+  // Batch load total votes
+  const voteCounts = db.prepare(`
+    SELECT poll_id, COUNT(DISTINCT user_id) as c
+    FROM poll_votes
+    WHERE poll_id IN (${placeholders})
+    GROUP BY poll_id
+  `).all(...pollIds) as any[];
+
+  const optionsByPoll = new Map<string, any[]>();
+  for (const o of allOptions) {
+    if (!optionsByPoll.has(o.poll_id)) optionsByPoll.set(o.poll_id, []);
+    optionsByPoll.get(o.poll_id)!.push({ ...o, voted_by_me: !!o.voted_by_me });
+  }
+
+  const votesByPoll = new Map<string, number>();
+  for (const v of voteCounts) votesByPoll.set(v.poll_id, v.c);
+
+  return polls.map(p => ({
+    ...p,
+    is_active: !!p.is_active,
+    allow_multiple: !!p.allow_multiple,
+    options: optionsByPoll.get(p.id) || [],
+    total_votes: votesByPoll.get(p.id) || 0,
+  }));
 }
 
 export default async function pollRoutes(app: FastifyInstance) {
@@ -56,9 +117,7 @@ export default async function pollRoutes(app: FastifyInstance) {
       const serverId = getServerId(request);
       const userId = request.user.userId;
 
-      const polls = db.prepare('SELECT id FROM polls WHERE server_id = ? ORDER BY created_at DESC').all(serverId) as { id: string }[];
-      
-      return polls.map(p => getPollWithDetails(p.id, userId)).filter(Boolean);
+      return getPollsWithDetails(serverId, userId);
     }
   );
 
@@ -203,8 +262,7 @@ export default async function pollRoutes(app: FastifyInstance) {
       if (!poll) return reply.code(404).send({ error: 'Poll not found' });
       if (!poll.is_active) return reply.code(400).send({ error: 'Poll is already closed' });
 
-      const isAdmin = db.prepare('SELECT 1 FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ? AND r.server_id = ? AND r.permissions LIKE \'%"administrator":true%\'').get(userId, serverId);
-      if (poll.creator_id !== userId && !isAdmin) {
+      if (poll.creator_id !== userId && !hasPermission(userId, 'administrator', serverId)) {
         return reply.code(403).send({ error: 'Only the poll creator or an admin can close this poll' });
       }
 
@@ -239,9 +297,7 @@ export default async function pollRoutes(app: FastifyInstance) {
       if (!poll) return reply.code(404).send({ error: 'Poll not found' });
 
       // Only creator or admin can delete
-      const isAdmin = db.prepare('SELECT 1 FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ? AND r.server_id = ? AND r.permissions LIKE \'%"administrator":true%\'').get(request.user.userId, serverId);
-      
-      if (poll.creator_id !== request.user.userId && !isAdmin) {
+      if (poll.creator_id !== request.user.userId && !hasPermission(request.user.userId, 'administrator', serverId)) {
         return reply.code(403).send({ error: 'No permission to delete this poll' });
       }
 

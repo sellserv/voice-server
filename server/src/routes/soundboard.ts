@@ -7,7 +7,7 @@ import { config } from '../config.js';
 import { requireAuth, requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import { hasPermission, isAppEnabled } from '../auth/permissions.js';
-import { broadcast } from '../ws/index.js';
+import { broadcastToServer } from '../ws/index.js';
 
 export default async function soundboardRoutes(app: FastifyInstance) {
   // List sounds — server-scoped
@@ -80,12 +80,12 @@ export default async function soundboardRoutes(app: FastifyInstance) {
         file.mime_type === 'audio/wave' ||
         file.stored_name.endsWith('.wav')
       ) {
+        let fd: number | undefined;
         try {
           const filePath = resolve(config.uploadDir, file.stored_name);
-          const fd = openSync(filePath, 'r');
+          fd = openSync(filePath, 'r');
           const header = Buffer.alloc(44);
           readSync(fd, header, 0, 44, 0);
-          closeSync(fd);
 
           const byteRate = header.readUInt32LE(28);
           const dataSize = header.readUInt32LE(40);
@@ -97,6 +97,8 @@ export default async function soundboardRoutes(app: FastifyInstance) {
           }
         } catch {
           // If header parsing fails, allow the upload (non-standard format)
+        } finally {
+          if (fd !== undefined) closeSync(fd);
         }
       }
 
@@ -117,7 +119,7 @@ export default async function soundboardRoutes(app: FastifyInstance) {
         )
         .get(id);
 
-      broadcast({ type: 'soundboard:created', sound });
+      broadcastToServer(serverId, { type: 'soundboard:created', sound });
       return reply.code(201).send(sound);
     },
   );
@@ -133,7 +135,7 @@ export default async function soundboardRoutes(app: FastifyInstance) {
       if (result.changes === 0) {
         return reply.code(404).send({ error: 'Sound not found' });
       }
-      broadcast({ type: 'soundboard:deleted', soundId });
+      broadcastToServer(serverId, { type: 'soundboard:deleted', soundId });
       return { ok: true };
     },
   );

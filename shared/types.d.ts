@@ -3,6 +3,7 @@ export type MfaMethod = 'email' | 'totp';
 export interface RolePermissions {
   manage_channels: boolean;
   manage_roles: boolean;
+  kick_members: boolean;
   ban_members: boolean;
   manage_messages: boolean;
   manage_invite_codes: boolean;
@@ -438,8 +439,7 @@ export interface RegisterBody {
   password: string;
   email: string;
   display_name?: string;
-  invite_code?: string;
-  setup_token?: string;
+  captcha_token?: string;
 }
 export interface LoginBody {
   username: string;

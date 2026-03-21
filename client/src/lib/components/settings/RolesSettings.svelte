@@ -26,6 +26,7 @@
     { key: 'manage_channel_groups', label: 'Manage Groups', description: 'Allows creating and reordering channel categories.', section: 'General' },
     { key: 'view_audit_log', label: 'View Audit Log', description: 'Allows viewing records of server administrative actions.', section: 'General' },
     
+    { key: 'kick_members', label: 'Kick Members', description: 'Allows removing members from the server. They can rejoin with an invite.', section: 'Moderation' },
     { key: 'ban_members', label: 'Ban Members', description: 'Allows permanently removing members from the server.', section: 'Moderation' },
     { key: 'manage_messages', label: 'Manage Messages', description: 'Allows deleting messages sent by other members.', section: 'Moderation' },
     { key: 'pin_messages', label: 'Pin Messages', description: 'Allows pinning messages in channels.', section: 'Moderation' },

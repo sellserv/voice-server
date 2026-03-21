@@ -236,22 +236,6 @@ export function clearMentions(channelId: string) {
   });
 }
 
-export const missedCalls = writable<Map<string, { callerName: string; time: Date }>>(new Map());
-
-export function addMissedCall(channelId: string, callerName: string) {
-  missedCalls.update((m) => {
-    m.set(channelId, { callerName, time: new Date() });
-    return new Map(m);
-  });
-}
-
-export function clearMissedCall(channelId: string) {
-  missedCalls.update((m) => {
-    m.delete(channelId);
-    return new Map(m);
-  });
-}
-
 export function updateChannel(channel: Channel) {
   channels.update((list) => list.map((c) => (c.id === channel.id ? channel : c)));
 }

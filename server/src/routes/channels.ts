@@ -5,7 +5,6 @@ import { requireAuth, requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import type { Channel, CreateChannelBody, ChannelPermissionOverride } from '@voip-server/shared';
 import {
-  broadcast,
   sendTo,
   broadcastToServer,
   broadcastToChannel,
@@ -330,24 +329,26 @@ export default async function channelRoutes(app: FastifyInstance) {
       // Update restricted flag
       db.prepare('UPDATE channels SET restricted = ? WHERE id = ? AND server_id = ?').run(restricted ? 1 : 0, id, serverId);
 
-      // Rebuild junction tables
-      db.prepare('DELETE FROM channel_access_roles WHERE channel_id = ?').run(id);
-      db.prepare('DELETE FROM channel_access_users WHERE channel_id = ?').run(id);
+      // Rebuild junction tables atomically
+      db.transaction(() => {
+        db.prepare('DELETE FROM channel_access_roles WHERE channel_id = ?').run(id);
+        db.prepare('DELETE FROM channel_access_users WHERE channel_id = ?').run(id);
 
-      if (restricted) {
-        const insertRole = db.prepare(
-          'INSERT OR IGNORE INTO channel_access_roles (channel_id, role_id) VALUES (?, ?)',
-        );
-        for (const roleId of allowed_role_ids) {
-          insertRole.run(id, roleId);
+        if (restricted) {
+          const insertRole = db.prepare(
+            'INSERT OR IGNORE INTO channel_access_roles (channel_id, role_id) VALUES (?, ?)',
+          );
+          for (const roleId of allowed_role_ids) {
+            insertRole.run(id, roleId);
+          }
+          const insertUser = db.prepare(
+            'INSERT OR IGNORE INTO channel_access_users (channel_id, user_id) VALUES (?, ?)',
+          );
+          for (const userId of allowed_user_ids) {
+            insertUser.run(id, userId);
+          }
         }
-        const insertUser = db.prepare(
-          'INSERT OR IGNORE INTO channel_access_users (channel_id, user_id) VALUES (?, ?)',
-        );
-        for (const userId of allowed_user_ids) {
-          insertUser.run(id, userId);
-        }
-      }
+      })();
 
       // Invalidate cache after access change
       invalidateChannelCache(id);
@@ -503,7 +504,7 @@ export default async function channelRoutes(app: FastifyInstance) {
 
       // Broadcast overrides update
       const overrides = getChannelOverrides(id);
-      broadcast({ type: 'channelOverrides:updated', channelId: id, overrides });
+      broadcastToServer(serverId, { type: 'channelOverrides:updated', channelId: id, overrides });
 
       return overrides;
     },
@@ -557,7 +558,7 @@ export default async function channelRoutes(app: FastifyInstance) {
 
       // Broadcast overrides update
       const overrides = getChannelOverrides(id);
-      broadcast({ type: 'channelOverrides:updated', channelId: id, overrides });
+      broadcastToServer(serverId, { type: 'channelOverrides:updated', channelId: id, overrides });
 
       return { ok: true };
     },

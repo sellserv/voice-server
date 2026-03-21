@@ -26,7 +26,9 @@ function isPrivateIp(ip: string): boolean {
       (a === 172 && b >= 16 && b <= 31) || // 172.16-31.x.x
       (a === 192 && b === 168) || // 192.168.x.x
       a === 0 || // 0.x.x.x
-      (a === 169 && b === 254) // 169.254.x.x link-local / cloud metadata
+      (a === 169 && b === 254) || // 169.254.x.x link-local / cloud metadata
+      (a >= 224 && a <= 239) || // 224.0.0.0/4 multicast
+      a >= 240 // 240.0.0.0/4 reserved + 255.255.255.255 broadcast
     ) {
       return true;
     }
@@ -79,13 +81,18 @@ async function resolveAndValidate(urlStr: string): Promise<{ ip: string; family:
   // Quick check on hostname itself
   if (isPrivateHostname(hostname)) return null;
 
-  // Resolve DNS and check the actual IP
+  // Resolve DNS and check the actual IP (with timeout to prevent slow DNS attacks)
   try {
-    const result = await lookup(hostname);
+    const result = await Promise.race([
+      lookup(hostname),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('DNS timeout')), 3000),
+      ),
+    ]);
     if (isPrivateIp(result.address)) return null;
     return { ip: result.address, family: result.family };
   } catch {
-    return null; // DNS resolution failed
+    return null; // DNS resolution failed or timed out
   }
 }
 
@@ -181,6 +188,9 @@ export default async function linkPreviewRoutes(app: FastifyInstance) {
       const { url } = request.query;
       if (!url) {
         return reply.code(400).send({ error: 'Missing url parameter' });
+      }
+      if (url.length > 2048) {
+        return reply.code(400).send({ error: 'URL too long' });
       }
 
       // Validate URL format

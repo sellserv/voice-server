@@ -6,7 +6,7 @@ import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import { hasPermission, invalidateChannelAccessCache } from '../auth/permissions.js';
 import type { RolePermissions } from '@voip-server/shared';
 import { logAuditEvent } from '../audit/log.js';
-import { broadcast } from '../ws/index.js';
+import { broadcastToServer } from '../ws/index.js';
 
 let rolesCache: any[] | null = null;
 
@@ -108,7 +108,7 @@ export default async function roleRoutes(app: FastifyInstance) {
       invalidateChannelAccessCache();
       logAuditEvent('role_change', request.user.userId, id, request.ip, { action: 'create', name });
       const role = parsePermissions(row);
-      broadcast({ type: 'role:created', role });
+      broadcastToServer(serverId, { type: 'role:created', role });
       return reply.code(201).send(role);
     },
   );
@@ -133,7 +133,7 @@ export default async function roleRoutes(app: FastifyInstance) {
 
       const rows = db.prepare('SELECT * FROM roles WHERE server_id = ? ORDER BY position').all(serverId) as any[];
       const roles = rows.map(parsePermissions);
-      broadcast({ type: 'roles:reordered', roles });
+      broadcastToServer(serverId, { type: 'roles:reordered', roles });
 
       return { ok: true };
     },
@@ -163,7 +163,7 @@ export default async function roleRoutes(app: FastifyInstance) {
       const result = parsePermissions(updated);
       // Broadcast all roles since is_default changed on multiple
       const allRows = db.prepare('SELECT * FROM roles WHERE server_id = ? ORDER BY position').all(serverId) as any[];
-      broadcast({ type: 'roles:reordered', roles: allRows.map(parsePermissions) });
+      broadcastToServer(serverId, { type: 'roles:reordered', roles: allRows.map(parsePermissions) });
       return result;
     },
   );
@@ -228,7 +228,7 @@ export default async function roleRoutes(app: FastifyInstance) {
       invalidateChannelAccessCache();
       logAuditEvent('role_change', request.user.userId, id, request.ip, { action: 'update' });
       const updatedRole = parsePermissions(updated);
-      broadcast({ type: 'role:updated', role: updatedRole });
+      broadcastToServer(serverId, { type: 'role:updated', role: updatedRole });
       return updatedRole;
     },
   );
@@ -294,7 +294,7 @@ export default async function roleRoutes(app: FastifyInstance) {
       invalidateRolesCache();
       invalidateChannelAccessCache();
       logAuditEvent('role_change', request.user.userId, id, request.ip, { action: 'delete' });
-      broadcast({ type: 'role:deleted', roleId: id });
+      broadcastToServer(serverId, { type: 'role:deleted', roleId: id });
       return { ok: true };
     },
   );

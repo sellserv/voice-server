@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 const ALL_PERMISSIONS = JSON.stringify({
   manage_channels: true,
   manage_roles: true,
+  kick_members: true,
   ban_members: true,
   manage_messages: true,
   manage_invite_codes: true,
@@ -31,6 +32,7 @@ const ALL_PERMISSIONS = JSON.stringify({
 const MEMBER_PERMISSIONS = JSON.stringify({
   manage_channels: false,
   manage_roles: false,
+  kick_members: false,
   ban_members: false,
   manage_messages: false,
   manage_invite_codes: false,
@@ -58,6 +60,7 @@ const MEMBER_PERMISSIONS = JSON.stringify({
 const BOT_PERMISSIONS = JSON.stringify({
   manage_channels: false,
   manage_roles: false,
+  kick_members: false,
   ban_members: false,
   manage_messages: false,
   manage_invite_codes: false,
@@ -597,6 +600,26 @@ export function initSchema() {
     }
   }
 
+  // Backfill kick_members into existing role permission blobs
+  {
+    const allRoles = db.prepare('SELECT id, permissions FROM roles').all() as {
+      id: string;
+      permissions: string;
+    }[];
+    for (const role of allRoles) {
+      try {
+        const perms = JSON.parse(role.permissions);
+        if (perms.kick_members === undefined) {
+          perms.kick_members = !!perms.ban_members;
+          db.prepare('UPDATE roles SET permissions = ? WHERE id = ?').run(
+            JSON.stringify(perms),
+            role.id,
+          );
+        }
+      } catch {}
+    }
+  }
+
   // Seed server_settings singleton
   const settingsCount = db.prepare('SELECT COUNT(*) as c FROM server_settings').get() as {
     c: number;
@@ -974,6 +997,9 @@ export function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_channel_groups_server ON channel_groups(server_id);
     CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(user_id);
     CREATE INDEX IF NOT EXISTS idx_server_members_server ON server_members(server_id);
+    CREATE INDEX IF NOT EXISTS idx_poll_votes_poll_user ON poll_votes(poll_id, user_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_pinned ON messages(channel_id, pinned) WHERE pinned = 1;
+    CREATE INDEX IF NOT EXISTS idx_files_created_at ON files(created_at);
   `);
 
   // Ensure every server has a welcome bot
@@ -1164,12 +1190,25 @@ export function initSchema() {
       "SELECT id FROM roles WHERE server_id IS NULL AND name = 'Admin' LIMIT 1",
     ).get() as { id: string } | undefined;
     if (globalAdminRole) {
-      db.exec(
+      db.prepare(
         `INSERT OR IGNORE INTO user_roles (user_id, role_id)
-         SELECT id, '${globalAdminRole.id}' FROM users WHERE role = 'admin'`,
-      );
+         SELECT id, ? FROM users WHERE role = 'admin'`,
+      ).run(globalAdminRole.id);
     }
   }
+
+  // Used reset tokens table (prevents token replay after server restart)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS used_reset_tokens (
+      jti TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  // Cleanup expired reset tokens
+  db.prepare("DELETE FROM used_reset_tokens WHERE expires_at < datetime('now')").run();
 
   // Reports table (message reports from users)
   db.exec(`
@@ -1230,5 +1269,13 @@ export function initSchema() {
   // Migration: add allow_registration to instance_settings
   try {
     db.exec('ALTER TABLE instance_settings ADD COLUMN allow_registration INTEGER NOT NULL DEFAULT 1');
+  } catch {}
+
+  // Migration: add type and metadata columns to messages (for call system messages)
+  try {
+    db.exec("ALTER TABLE messages ADD COLUMN type TEXT NOT NULL DEFAULT 'user'");
+  } catch {}
+  try {
+    db.exec('ALTER TABLE messages ADD COLUMN metadata TEXT');
   } catch {}
 }

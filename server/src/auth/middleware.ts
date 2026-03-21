@@ -1,7 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { verifyToken, type JwtPayload } from './jwt.js';
 import { getSessionByToken } from './sessions.js';
-import { getPasswordExpiryStatus } from './policy.js';
 import { hasPermission, hasChannelPermission, getUserRoleIds } from './permissions.js';
 import db from '../db/connection.js';
 import { config } from '../config.js';
@@ -73,12 +72,6 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply) 
           return reply.code(403).send({ error: 'Invalid CSRF token' });
         }
       }
-    }
-
-    // Enforce password expiry mid-session
-    if (getPasswordExpiryStatus(dbUser.password_changed_at).expired) {
-      reply.code(401).send({ error: 'Password expired — please change your password' });
-      return;
     }
 
     // Use the current role from DB, not the stale JWT role

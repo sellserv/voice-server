@@ -107,3 +107,27 @@ jobs:
         with:
           files: artifacts/**/*
           generate_release_notes: true
+
+  publish-store:
+    needs: [release]
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sellserv-voice-windows
+          path: artifacts
+
+      - name: Install Microsoft Store CLI
+        run: dotnet tool install --global MSStore.CLI
+
+      - name: Submit to Microsoft Store
+        run: |
+          $appx = Get-ChildItem -Path artifacts -Filter *.appx -Recurse | Select-Object -First 1
+          Write-Host "Submitting $($appx.FullName) to Microsoft Store"
+          msstore publish -i "$($appx.FullName)"
+        env:
+          MICROSOFT_STORE_TENANT_ID: ${{ secrets.MICROSOFT_STORE_TENANT_ID }}
+          MICROSOFT_STORE_CLIENT_ID: ${{ secrets.MICROSOFT_STORE_CLIENT_ID }}
+          MICROSOFT_STORE_CLIENT_SECRET: ${{ secrets.MICROSOFT_STORE_CLIENT_SECRET }}

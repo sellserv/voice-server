@@ -21,7 +21,6 @@
     loadChannelGroups,
     unreadCounts,
     incrementMention,
-    addMissedCall,
   } from '$lib/stores/channels';
   import { addMessage, editMessage, removeMessage, pinMessage, unpinMessage } from '$lib/stores/messages';
   import { setOnlineUsers, setUserOnline, setUserOffline, updateUserActivity, myStatus } from '$lib/stores/presence';
@@ -175,9 +174,9 @@
         // Give it time to complete before removing loading screen
         await new Promise(r => setTimeout(r, 300));
 
-        await loadInvitations().catch(() => {});
-        await loadFriends().catch(() => {});
-        await loadPendingRequests().catch(() => {});
+        await loadInvitations().catch(e => console.warn('[App] Failed to load invitations:', e));
+        await loadFriends().catch(e => console.warn('[App] Failed to load friends:', e));
+        await loadPendingRequests().catch(e => console.warn('[App] Failed to load pending requests:', e));
       } catch (e) {
         console.error('[App] Failed to load app data:', e);
       }
@@ -282,17 +281,17 @@
           if (hasConnectedOnce) {
             // Sequential re-sync to avoid nginx rate limit (503s)
             (async () => {
-              await loadServers().catch(() => {});
-              await loadChannels().catch(() => {});
-              await loadDmChannels().catch(() => {});
-              await refreshUsers().catch(() => {});
-              await loadServerSettings().catch(() => {});
-              await loadRoles().catch(() => {});
-              await loadChannelGroups().catch(() => {});
-              await loadChannelOverrides().catch(() => {});
-              await loadGroupOverrides().catch(() => {});
-              await loadFriends().catch(() => {});
-              await loadPendingRequests().catch(() => {});
+              await loadServers().catch(e => console.warn('[App] Reconnect: loadServers failed:', e));
+              await loadChannels().catch(e => console.warn('[App] Reconnect: loadChannels failed:', e));
+              await loadDmChannels().catch(e => console.warn('[App] Reconnect: loadDmChannels failed:', e));
+              await refreshUsers().catch(e => console.warn('[App] Reconnect: refreshUsers failed:', e));
+              await loadServerSettings().catch(e => console.warn('[App] Reconnect: loadServerSettings failed:', e));
+              await loadRoles().catch(e => console.warn('[App] Reconnect: loadRoles failed:', e));
+              await loadChannelGroups().catch(e => console.warn('[App] Reconnect: loadChannelGroups failed:', e));
+              await loadChannelOverrides().catch(e => console.warn('[App] Reconnect: loadChannelOverrides failed:', e));
+              await loadGroupOverrides().catch(e => console.warn('[App] Reconnect: loadGroupOverrides failed:', e));
+              await loadFriends().catch(e => console.warn('[App] Reconnect: loadFriends failed:', e));
+              await loadPendingRequests().catch(e => console.warn('[App] Reconnect: loadPendingRequests failed:', e));
             })();
           }
           hasConnectedOnce = true;
@@ -698,7 +697,7 @@
             leaveVoice();
             $inVoiceChannel = null;
           }
-          // Track missed calls (we were the recipient and didn't answer)
+          // Mark DM as unread for missed calls (system message is inserted server-side)
           if (
             endedCall &&
             endedCall.status === 'incoming' &&
@@ -708,7 +707,6 @@
               dm.dm_participant_ids?.includes(endedCall.peerId),
             );
             if (dmChannel) {
-              addMissedCall(dmChannel.id, endedCall.peerName);
               markChannelUnread(dmChannel.id);
             }
           }

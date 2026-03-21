@@ -48,8 +48,10 @@
   // Message grouping: check if message should show compact (no avatar/name)
   function isGrouped(msg: Message, idx: number): boolean {
     if (idx === 0) return false;
+    if (msg.type === 'call') return false;
     const prev = messages[idx - 1];
     if (!prev) return false;
+    if (prev.type === 'call') return false;
     if (prev.user_id !== msg.user_id) return false;
     // Within 5 minutes
     const diff = new Date(msg.created_at).getTime() - new Date(prev.created_at).getTime();

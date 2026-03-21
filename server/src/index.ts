@@ -6,7 +6,8 @@ import fastifyWebSocket from '@fastify/websocket';
 import fastifyMultipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import { resolve } from 'path';
-import { mkdirSync } from 'fs';
+import { mkdirSync, readFileSync, existsSync } from 'fs';
+import { randomBytes } from 'crypto';
 import { config } from './config.js';
 import { initSchema } from './db/schema.js';
 import authRoutes from './routes/auth.js';
@@ -67,9 +68,20 @@ await app.register(fastifyCors, {
   credentials: true,
 });
 await app.register(fastifyRateLimit, {
-  global: false, // only apply where explicitly configured
+  global: true,
+  max: 120,
+  timeWindow: '1 minute',
+  keyGenerator: (request: any) => request.user?.userId || request.ip,
+  allowList: (request: any) => {
+    // Skip rate limiting for WebSocket upgrades and static assets
+    if (request.url === '/ws') return true;
+    if (!request.url.startsWith('/api/')) return true;
+    return false;
+  },
 });
-await app.register(fastifyWebSocket);
+await app.register(fastifyWebSocket, {
+  options: { maxPayload: 64 * 1024 }, // 64KB max WebSocket message size
+});
 await app.register(fastifyMultipart, {
   limits: { fileSize: config.maxFileSize },
 });
@@ -78,29 +90,33 @@ await app.register(fastifyMultipart, {
 app.addHook('onSend', async (request, reply, payload) => {
   reply.header('X-Content-Type-Options', 'nosniff');
   reply.header('X-Frame-Options', 'DENY');
+  reply.header('X-XSS-Protection', '1; mode=block');
   reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   reply.header('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
   if (process.env.NODE_ENV === 'production') {
     reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
-  // Skip CSP for desktop (Electron) clients — the app loads from localhost
-  // so 'self' restrictions break cross-origin asset loading
-  const ua = request.headers['user-agent'] || '';
-  if (!ua.includes('Electron')) {
-    reply.header(
-      'Content-Security-Policy',
-      [
-        "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://www.youtube.com https://challenges.cloudflare.com https://static.cloudflareinsights.com",
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-        "font-src 'self' https://fonts.gstatic.com",
-        "img-src 'self' blob: data: https://*.giphy.com https://img.youtube.com",
-        "media-src 'self' blob:",
-        "connect-src 'self' wss: https://api.giphy.com https://challenges.cloudflare.com https://cloudflareinsights.com",
-        'frame-src https://www.youtube.com https://www.youtube-nocookie.com https://challenges.cloudflare.com',
-        "worker-src 'self' blob:",
-      ].join('; '),
-    );
+  // CSP for non-HTML responses (HTML gets nonce-based CSP via serveHtmlWithNonce)
+  const contentType = reply.getHeader('content-type');
+  const isHtml = typeof contentType === 'string' && contentType.includes('text/html');
+  if (!isHtml) {
+    const ua = request.headers['user-agent'] || '';
+    if (!ua.includes('Electron')) {
+      reply.header(
+        'Content-Security-Policy',
+        [
+          "default-src 'self'",
+          "script-src 'self' 'wasm-unsafe-eval' https://www.youtube.com https://challenges.cloudflare.com https://static.cloudflareinsights.com",
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+          "font-src 'self' https://fonts.gstatic.com",
+          "img-src 'self' blob: data: https://*.giphy.com https://img.youtube.com",
+          "media-src 'self' blob:",
+          "connect-src 'self' wss: https://api.giphy.com https://challenges.cloudflare.com https://cloudflareinsights.com",
+          'frame-src https://www.youtube.com https://www.youtube-nocookie.com https://challenges.cloudflare.com',
+          "worker-src 'self' blob:",
+        ].join('; '),
+      );
+    }
   }
   return payload;
 });
@@ -129,7 +145,40 @@ await app.register(fastifyStatic, {
   prefix: '/',
   decorateReply: true,
   wildcard: false,
+  index: false, // Disable auto-serving index.html — we handle it with nonce injection
 });
+
+// Pre-load index.html for CSP nonce injection
+const indexHtmlPath = resolve(clientDist, 'index.html');
+const indexHtmlTemplate = existsSync(indexHtmlPath)
+  ? readFileSync(indexHtmlPath, 'utf-8')
+  : '';
+
+function serveHtmlWithNonce(request: any, reply: any) {
+  const nonce = randomBytes(16).toString('base64');
+  const html = indexHtmlTemplate.replace(/<script>/g, `<script nonce="${nonce}">`);
+
+  const ua = request.headers['user-agent'] || '';
+  if (!ua.includes('Electron')) {
+    reply.header(
+      'Content-Security-Policy',
+      [
+        "default-src 'self'",
+        `script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval' https://www.youtube.com https://challenges.cloudflare.com https://static.cloudflareinsights.com`,
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' blob: data: https://*.giphy.com https://img.youtube.com",
+        "media-src 'self' blob:",
+        "connect-src 'self' wss: https://api.giphy.com https://challenges.cloudflare.com https://cloudflareinsights.com",
+        'frame-src https://www.youtube.com https://www.youtube-nocookie.com https://challenges.cloudflare.com',
+        "worker-src 'self' blob:",
+      ].join('; '),
+    );
+  }
+
+  reply.header('Content-Type', 'text/html; charset=utf-8');
+  return reply.send(html);
+}
 
 // Warn if no instance admins configured
 if (config.adminUsers.length === 0) {
@@ -201,12 +250,12 @@ await app.register(friendRoutes);
 // WebSocket
 setupWebSocket(app);
 
-// SPA fallback — serve index.html for non-API routes
+// SPA fallback — serve index.html for non-API routes (with CSP nonce injection)
 app.setNotFoundHandler(async (request, reply) => {
   if (request.url.startsWith('/api/')) {
     return reply.code(404).send({ error: 'Not found' });
   }
-  return reply.sendFile('index.html');
+  return serveHtmlWithNonce(request, reply);
 });
 
 // Cleanup expired email codes every hour

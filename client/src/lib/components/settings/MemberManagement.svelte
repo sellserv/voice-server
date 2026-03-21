@@ -30,6 +30,7 @@
   let inviteTimeout: ReturnType<typeof setTimeout> | null = null;
 
   const canManageRoles = hasPermissionStore('manage_roles');
+  const canKick = hasPermissionStore('kick_members');
   const canBan = hasPermissionStore('ban_members');
   const canInvite = hasPermissionStore('create_invites');
   const canManageInviteCodes = hasPermissionStore('manage_invite_codes');
@@ -176,8 +177,20 @@
     }
   }
 
+  async function kickUser(userId: string) {
+    if (!(await confirm('Kick this member? They can rejoin with an invite.', { title: 'Kick Member', confirmLabel: 'Kick', dangerAction: true }))) return;
+    try {
+      const serverId = getActiveServerId();
+      await api.post(`/api/servers/${serverId}/admin/kick/${userId}`, {});
+      members = members.filter((m) => m.id !== userId);
+      toast.success('Member kicked');
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  }
+
   async function banUser(userId: string) {
-    if (!(await confirm('Ban this member?', { title: 'Ban Member', confirmLabel: 'Ban', dangerAction: true }))) return;
+    if (!(await confirm('Ban this member? They will not be able to rejoin.', { title: 'Ban Member', confirmLabel: 'Ban', dangerAction: true }))) return;
     try {
       const serverId = getActiveServerId();
       await api.post(`/api/servers/${serverId}/admin/ban/${userId}`, {});
@@ -363,20 +376,30 @@
                   {/if}
                 {/if}
 
-                {#if $canBan && member.id !== $currentUser?.id}
+                {#if ($canKick || $canBan) && member.id !== $currentUser?.id}
                   <div class="detail-section moderation-actions">
                     <h5 class="detail-title">Moderation</h5>
                     <div class="action-buttons">
                       {#if member.banned}
-                        <button class="btn-subtle" onclick={() => unbanUser(member.id)}>
-                          <Icon name="shield-check" size={16} />
-                          <span>Unban from Server</span>
-                        </button>
+                        {#if $canBan}
+                          <button class="btn-subtle" onclick={() => unbanUser(member.id)}>
+                            <Icon name="shield-check" size={16} />
+                            <span>Unban from Server</span>
+                          </button>
+                        {/if}
                       {:else}
-                        <button class="btn-danger-outline" onclick={() => banUser(member.id)}>
-                          <Icon name="x" size={16} />
-                          <span>Ban {member.display_name || member.username}</span>
-                        </button>
+                        {#if $canKick}
+                          <button class="btn-warning-outline" onclick={() => kickUser(member.id)}>
+                            <Icon name="arrow-right" size={16} />
+                            <span>Kick</span>
+                          </button>
+                        {/if}
+                        {#if $canBan}
+                          <button class="btn-danger-outline" onclick={() => banUser(member.id)}>
+                            <Icon name="x" size={16} />
+                            <span>Ban</span>
+                          </button>
+                        {/if}
                       {/if}
                     </div>
                   </div>
@@ -733,6 +756,14 @@
     padding: 6px 16px; background: var(--accent-success); color: white;
     border-radius: 4px; font-weight: 700; font-size: 0.8rem; border: none; cursor: pointer;
   }
+
+  .btn-warning-outline {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 16px; background: transparent; border: 1px solid #f59e0b;
+    color: #f59e0b; border-radius: 4px; font-weight: 600; font-size: 0.85rem; cursor: pointer;
+    transition: all 0.1s;
+  }
+  .btn-warning-outline:hover { background: #f59e0b; color: white; }
 
   .btn-danger-outline {
     display: flex; align-items: center; gap: 8px;
