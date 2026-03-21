@@ -494,20 +494,27 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // Get instance settings
   app.get('/api/admin/instance-settings', { preHandler: requireAdmin }, async () => {
-    const settings = db.prepare('SELECT allow_server_creation, allow_registration FROM instance_settings WHERE id = 1').get() as any;
-    return settings || { allow_server_creation: 1, allow_registration: 1 };
+    const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name FROM instance_settings WHERE id = 1').get() as any;
+    return settings || { allow_server_creation: 1, allow_registration: 1, instance_name: 'SellServ Voice' };
   });
 
   // Update instance settings
-  app.patch<{ Body: { allow_registration?: boolean } }>(
+  app.patch<{ Body: { allow_registration?: boolean; instance_name?: string } }>(
     '/api/admin/instance-settings',
     { preHandler: requireAdmin },
     async (request, reply) => {
-      const { allow_registration } = request.body;
+      const { allow_registration, instance_name } = request.body;
       if (allow_registration !== undefined) {
         db.prepare('UPDATE instance_settings SET allow_registration = ? WHERE id = 1').run(allow_registration ? 1 : 0);
       }
-      const settings = db.prepare('SELECT allow_server_creation, allow_registration FROM instance_settings WHERE id = 1').get() as any;
+      if (instance_name !== undefined) {
+        const trimmed = instance_name.trim().slice(0, 100);
+        if (!trimmed) {
+          return reply.code(400).send({ error: 'Instance name cannot be empty' });
+        }
+        db.prepare('UPDATE instance_settings SET instance_name = ? WHERE id = 1').run(trimmed);
+      }
+      const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name FROM instance_settings WHERE id = 1').get() as any;
       return settings;
     },
   );
