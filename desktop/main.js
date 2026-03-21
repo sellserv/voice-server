@@ -387,6 +387,58 @@ async function checkAndApplyUpdate() {
   }
 }
 
+/**
+ * For AppX/Store builds: check the latest GitHub release and prompt the user
+ * to update via the Microsoft Store if a newer version is available.
+ */
+async function checkStoreUpdate() {
+  try {
+    const https = require('https');
+    const latestVersion = await new Promise((resolve, reject) => {
+      const req = https.get(
+        'https://api.github.com/repos/sellserv/voice-server/releases/latest',
+        { headers: { 'User-Agent': 'SellServ-Voice' } },
+        (res) => {
+          let data = '';
+          res.on('data', (chunk) => data += chunk);
+          res.on('end', () => {
+            try {
+              const tag = JSON.parse(data).tag_name || '';
+              resolve(tag.replace(/^v/, ''));
+            } catch {
+              reject(new Error('Failed to parse release info'));
+            }
+          });
+        },
+      );
+      req.on('error', reject);
+      req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+    });
+
+    const current = app.getVersion();
+    console.log(`[StoreUpdater] Current: ${current}, Latest: ${latestVersion}`);
+
+    if (!isNewerVersion(latestVersion, current)) return;
+
+    const { dialog } = require('electron');
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Update Available',
+      message: `A new version of SellServ Voice (v${latestVersion}) is available.`,
+      detail: 'Please update from the Microsoft Store to get the latest features and fixes.',
+      buttons: ['Update Now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+
+    if (response === 0) {
+      shell.openExternal('ms-windows-store://pdp/?productid=9NTD3XLC0JRJ');
+    }
+  } catch (e) {
+    console.error('[StoreUpdater] Check failed:', e?.message || e);
+  }
+}
+
 // --- Global PTT (works even when app is not focused) ---
 // Wrapped in try-catch: uiohook-napi may fail to load on some Linux systems
 let uIOhook = null;
@@ -521,10 +573,16 @@ if (!gotTheLock) {
       url = `http://127.0.0.1:${port}`;
     }
 
-    // Auto-update on startup (production only) with splash UI
+    // Auto-update on startup (production only)
     if (!isDev) {
-      const updated = await checkAndApplyUpdate();
-      if (updated) return; // App is restarting with the new version
+      if (process.windowsStore) {
+        // AppX/Store build — electron-updater can't update Store packages,
+        // so check GitHub releases and prompt the user to update via the Store.
+        await checkStoreUpdate();
+      } else {
+        const updated = await checkAndApplyUpdate();
+        if (updated) return; // App is restarting with the new version
+      }
     }
 
     createWindow(url);
