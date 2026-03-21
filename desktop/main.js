@@ -156,6 +156,30 @@ function createWindow(url) {
 
   mainWindow.loadURL(url);
 
+  // Right-click context menu with copy/paste
+  mainWindow.webContents.on('context-menu', (_e, params) => {
+    const menuItems = [];
+
+    if (params.isEditable) {
+      menuItems.push(
+        { label: 'Cut', role: 'cut', enabled: params.editFlags.canCut },
+        { label: 'Paste', role: 'paste', enabled: params.editFlags.canPaste },
+      );
+    }
+
+    if (params.selectionText) {
+      menuItems.push({ label: 'Copy', role: 'copy' });
+    }
+
+    if (params.isEditable || params.selectionText) {
+      menuItems.push({ type: 'separator' });
+    }
+
+    menuItems.push({ label: 'Select All', role: 'selectAll' });
+
+    Menu.buildFromTemplate(menuItems).popup({ window: mainWindow });
+  });
+
   if (isDev) {
     mainWindow.webContents.openDevTools();
   }
