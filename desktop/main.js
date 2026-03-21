@@ -445,17 +445,16 @@ async function checkStoreUpdate() {
     if (!isNewerVersion(latestVersion, current)) return;
 
     const { dialog } = require('electron');
-    const { response } = await dialog.showMessageBox({
-      type: 'info',
-      title: 'Update Available',
-      message: `A new version of SellServ Voice (v${latestVersion}) is available.`,
-      detail: 'Please update from the Microsoft Store to get the latest features and fixes.',
-      buttons: ['Update Now', 'Later'],
-      defaultId: 0,
-      cancelId: 1,
-    });
-
-    if (response === 0) {
+    // Loop until the user clicks Update — no way to dismiss
+    while (true) {
+      await dialog.showMessageBox({
+        type: 'warning',
+        title: 'Update Required',
+        message: `A new version of SellServ Voice (v${latestVersion}) is available.`,
+        detail: 'You must update from the Microsoft Store to continue.',
+        buttons: ['Update Now'],
+        defaultId: 0,
+      });
       shell.openExternal('ms-windows-store://pdp/?productid=9NTD3XLC0JRJ');
     }
   } catch (e) {
