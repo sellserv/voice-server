@@ -21,7 +21,6 @@
     loadChannelGroups,
     unreadCounts,
     incrementMention,
-    addMissedCall,
   } from '$lib/stores/channels';
   import { addMessage, editMessage, removeMessage, pinMessage, unpinMessage } from '$lib/stores/messages';
   import { setOnlineUsers, setUserOnline, setUserOffline, updateUserActivity, myStatus } from '$lib/stores/presence';
@@ -698,7 +697,7 @@
             leaveVoice();
             $inVoiceChannel = null;
           }
-          // Track missed calls (we were the recipient and didn't answer)
+          // Mark DM as unread for missed calls (system message is inserted server-side)
           if (
             endedCall &&
             endedCall.status === 'incoming' &&
@@ -708,7 +707,6 @@
               dm.dm_participant_ids?.includes(endedCall.peerId),
             );
             if (dmChannel) {
-              addMissedCall(dmChannel.id, endedCall.peerName);
               markChannelUnread(dmChannel.id);
             }
           }

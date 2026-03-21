@@ -45,7 +45,7 @@ function fetchMessages(channelId: string, before: string | undefined, limit: num
     messages = db
       .prepare(
         `
-        SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by,
+        SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by, m.type, m.metadata,
                u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color,
                f.mime_type as file_mime_type,
                ru.username as reply_to_username, ru.display_name as reply_to_display_name,
@@ -66,7 +66,7 @@ function fetchMessages(channelId: string, before: string | undefined, limit: num
     messages = db
       .prepare(
         `
-        SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by,
+        SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by, m.type, m.metadata,
                u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color,
                f.mime_type as file_mime_type,
                ru.username as reply_to_username, ru.display_name as reply_to_display_name,
@@ -156,7 +156,7 @@ export default async function messageRoutes(app: FastifyInstance) {
     const messages = db
       .prepare(
         `
-      SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by,
+      SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by, m.type, m.metadata,
              u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color,
              f.mime_type as file_mime_type
       FROM messages m
@@ -209,7 +209,7 @@ export default async function messageRoutes(app: FastifyInstance) {
     const messages = db
       .prepare(
         `
-      SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by,
+      SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by, m.type, m.metadata,
              u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color,
              f.mime_type as file_mime_type
       FROM messages m
@@ -293,7 +293,7 @@ export default async function messageRoutes(app: FastifyInstance) {
     const messages = db
       .prepare(
         `
-      SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by,
+      SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by, m.type, m.metadata,
              u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color,
              f.mime_type as file_mime_type
       FROM messages m
@@ -343,7 +343,7 @@ export default async function messageRoutes(app: FastifyInstance) {
     const messages = db
       .prepare(
         `
-      SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by,
+      SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by, m.type, m.metadata,
              u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color,
              f.mime_type as file_mime_type
       FROM messages m

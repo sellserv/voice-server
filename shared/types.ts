@@ -241,6 +241,8 @@ export interface Message {
   poll_id?: string | null;
   pinned?: boolean;
   pinned_by?: string | null;
+  type?: 'user' | 'call';
+  metadata?: string | null;
 }
 export interface FileRecord {
   id: string;

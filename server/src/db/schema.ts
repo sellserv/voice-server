@@ -1270,4 +1270,12 @@ export function initSchema() {
   try {
     db.exec('ALTER TABLE instance_settings ADD COLUMN allow_registration INTEGER NOT NULL DEFAULT 1');
   } catch {}
+
+  // Migration: add type and metadata columns to messages (for call system messages)
+  try {
+    db.exec("ALTER TABLE messages ADD COLUMN type TEXT NOT NULL DEFAULT 'user'");
+  } catch {}
+  try {
+    db.exec('ALTER TABLE messages ADD COLUMN metadata TEXT');
+  } catch {}
 }

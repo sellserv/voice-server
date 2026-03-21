@@ -256,6 +256,24 @@
   }
   const timeStr = $derived(formatTime(message.created_at));
 
+  // Call message metadata
+  const callMeta = $derived(
+    message.type === 'call' && message.metadata
+      ? (JSON.parse(message.metadata) as { call_type: string; call_status: string; duration?: number })
+      : null,
+  );
+  const callDuration = $derived(() => {
+    if (!callMeta?.duration) return '';
+    const s = callMeta.duration;
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    if (m < 60) return rem ? `${m}m ${rem}s` : `${m}m`;
+    const h = Math.floor(m / 60);
+    const remM = m % 60;
+    return remM ? `${h}h ${remM}m` : `${h}h`;
+  });
+
   function formatTime(iso: string): string {
     const d = new Date(iso);
     const now = new Date();
@@ -347,6 +365,40 @@
   });
 </script>
 
+{#if message.type === 'call' && callMeta}
+<div class="call-system-message" data-message-id={message.id}>
+  <div class="call-system-icon">
+    {#if callMeta.call_status === 'missed'}
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--error, #ef4444)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
+        <line x1="23" y1="1" x2="17" y2="7" />
+        <line x1="17" y1="1" x2="23" y2="7" />
+      </svg>
+    {:else if callMeta.call_status === 'rejected'}
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted, #888)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
+        <line x1="1" y1="1" x2="23" y2="23" />
+      </svg>
+    {:else}
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success, #22c55e)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+      </svg>
+    {/if}
+  </div>
+  <div class="call-system-info">
+    <span class="call-system-text">
+      {#if callMeta.call_status === 'missed'}
+        Missed {callMeta.call_type} call
+      {:else if callMeta.call_status === 'rejected'}
+        Declined {callMeta.call_type} call
+      {:else}
+        {callMeta.call_type === 'video' ? 'Video' : 'Voice'} call — {callDuration()}
+      {/if}
+    </span>
+    <span class="call-system-time">{timeStr}</span>
+  </div>
+</div>
+{:else}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="message"
@@ -712,8 +764,46 @@
     </div>
   </div>
 {/if}
+{/if}
 
 <style>
+  .call-system-message {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 20px;
+    margin: 4px 0;
+  }
+
+  .call-system-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.05);
+    flex-shrink: 0;
+  }
+
+  .call-system-info {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .call-system-text {
+    color: var(--text-muted, #888);
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+
+  .call-system-time {
+    font-size: 0.7rem;
+    color: var(--text-dim, #555);
+    font-weight: 600;
+  }
+
   .message {
     display: flex;
     gap: 16px;
