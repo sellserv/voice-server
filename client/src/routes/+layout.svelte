@@ -87,6 +87,7 @@
   } from '$lib/stores/watchTogether';
   import { toast } from '$lib/stores/toast';
   import Toast from '$lib/components/Toast.svelte';
+  import StoreUpdateModal from '$lib/components/StoreUpdateModal.svelte';
   import InvitationNotification from '$lib/components/InvitationNotification.svelte';
   import { loadInvitations, addInvitation } from '$lib/stores/invitations';
   import { loadFriends, loadPendingRequests, addFriendFromWs, removeFriendFromWs, addPendingFromWs, removePendingByUser } from '$lib/stores/friends';
@@ -1061,6 +1062,7 @@
 
 <CallOverlay />
 <Toast />
+<StoreUpdateModal />
 <InvitationNotification />
 <AppPanels />
 
