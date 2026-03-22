@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App info
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
   getPlatform: () => ipcRenderer.invoke('app:getPlatform'),
+  isWindowsStore: () => ipcRenderer.invoke('app:isWindowsStore'),
 
   // Settings store
   storeGet: (key) => ipcRenderer.invoke('store:get', key),
