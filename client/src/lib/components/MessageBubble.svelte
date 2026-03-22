@@ -215,7 +215,8 @@
     );
 
     // URL linkification — decode HTML entities for href, keep escaped text for display
-    safe = safe.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?"')\]}>])/g, (url) => {
+    // Negative lookbehind: skip URLs inside HTML attributes (preceded by " or ')
+    safe = safe.replace(/(?<!["'])(https?:\/\/[^\s<]+[^\s<.,;:!?"')\]}>])/g, (url) => {
       // Reverse only known safe HTML entities to reconstruct the real URL for href
       const href = url
         .replace(/&amp;/g, '&')
