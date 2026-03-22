@@ -113,10 +113,8 @@ jobs:
 
             ## Release Checklist
             - [ ] Microsoft Store approved
-            - [ ] Apple App Store approved
-            - [ ] Google Play approved
 
-            > Publish this release once all stores are live.
+            > Publish this release once the Store submission is live.
 
   submit-store:
     needs: [build]
