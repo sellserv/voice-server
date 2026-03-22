@@ -141,6 +141,14 @@
   // Ring sound stop function
   let stopRing: (() => void) | null = null;
 
+  // Stop ring sound when call is cleared locally (e.g. user hangs up)
+  activeCall.subscribe((call) => {
+    if (!call && stopRing) {
+      stopRing();
+      stopRing = null;
+    }
+  });
+
   // Get the screen share data for the user we're viewing
   let viewingScreenShare = $derived(
     viewingScreenUserId ? $activeScreenShares.get(viewingScreenUserId) : null,
