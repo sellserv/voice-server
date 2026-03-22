@@ -54,7 +54,7 @@
   <div class="modal-content" onclick={(e) => e.stopPropagation()}>
     <div class="modal-header">
       <div class="header-title">
-        <Icon name="plus" size={20} />
+        <Icon name="check" size={20} />
         <h3>Invite Friends</h3>
       </div>
       <button class="close-btn" onclick={onclose} aria-label="Close">
