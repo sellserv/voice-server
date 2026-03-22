@@ -39,9 +39,10 @@
       data,
       theme: 'dark',
       onEmojiSelect: (emoji: any) => {
-        if (emoji.src) {
+        const emojiSrc = emoji.src || emoji.skins?.[0]?.src;
+        if (emojiSrc) {
           // Custom emoji — use raw /uploads/ path so the renderer regex can match
-          const src = rawSrcMap.get(emoji.id) || emoji.src;
+          const src = rawSrcMap.get(emoji.id) || emojiSrc;
           onSelect(`<:${emoji.id}:${src}>`);
         } else {
           onSelect(emoji.native);
