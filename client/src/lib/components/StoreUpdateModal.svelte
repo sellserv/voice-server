@@ -15,8 +15,8 @@
       <h3 class="title">Update Available</h3>
       <p class="message">A new version of SellServ Voice (v{$updateReady?.version}) is available in the Microsoft Store.</p>
       <div class="actions">
-        <button class="btn later" onclick={() => (dismissed = true)}>Later</button>
         <button class="btn update" onclick={openStoreUpdate}>Update</button>
+        <button class="btn later" onclick={() => (dismissed = true)}>Later</button>
       </div>
     </div>
   </div>
