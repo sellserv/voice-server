@@ -1319,6 +1319,13 @@ function handleCallInitiate(user: JwtPayload, targetUserId: string, video = fals
     }
   }
 
+  // Check if target is a bot
+  const targetUser = db.prepare('SELECT is_bot FROM users WHERE id = ?').get(targetUserId) as { is_bot: number } | undefined;
+  if (targetUser?.is_bot) {
+    sendTo(user.userId, { type: 'call:ended', callId: '', reason: 'busy' });
+    return;
+  }
+
   // Check if target is in DND mode
   const targetClient = getClient(targetUserId);
   if (targetClient?.status === 'dnd') {
