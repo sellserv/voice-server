@@ -102,8 +102,36 @@ jobs:
       - name: Debug artifacts
         run: find artifacts -type f | sort
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (draft)
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*
           generate_release_notes: true
+          draft: true
+
+  submit-store:
+    needs: [build]
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sellserv-voice-windows
+          path: artifacts
+
+      - name: Install Microsoft Store Developer CLI
+        run: dotnet tool install --global Microsoft.StoreDeveloperCLI
+
+      - name: Configure Store credentials
+        run: msstore reconfigure --tenantId ${{ secrets.AZURE_TENANT_ID }} --clientId ${{ secrets.AZURE_CLIENT_ID }} --clientSecret ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      - name: Find appx file
+        id: find-appx
+        shell: bash
+        run: |
+          APPX_FILE=$(find artifacts -name "*.appx" | head -1)
+          echo "file=$APPX_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Submit to Microsoft Store
+        run: msstore publish "${{ steps.find-appx.outputs.file }}" --appId 9NTD3XLC0JRJ
