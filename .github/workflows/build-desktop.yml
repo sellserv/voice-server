@@ -108,6 +108,15 @@ jobs:
           files: artifacts/**/*
           generate_release_notes: true
           draft: true
+          append_body: true
+          body: |
+
+            ## Release Checklist
+            - [ ] Microsoft Store approved
+            - [ ] Apple App Store approved
+            - [ ] Google Play approved
+
+            > Publish this release once all stores are live.
 
   submit-store:
     needs: [build]
