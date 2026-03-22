@@ -145,10 +145,7 @@ function createWindow(url) {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      // Required: renderer loads from local HTTP server (127.0.0.1) but
-      // makes API requests to the remote server — disabling webSecurity
-      // allows these cross-origin requests without CORS headers.
-      webSecurity: false,
+      webSecurity: true,
     },
   });
 
