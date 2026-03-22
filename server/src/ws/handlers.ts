@@ -1319,10 +1319,10 @@ function handleCallInitiate(user: JwtPayload, targetUserId: string, video = fals
     }
   }
 
-  // Check if target is online
+  // Check if target is in DND mode
   const targetClient = getClient(targetUserId);
-  if (!targetClient || targetClient.status === 'dnd') {
-    sendTo(user.userId, { type: 'call:ended', callId: '', reason: 'unavailable' });
+  if (targetClient?.status === 'dnd') {
+    sendTo(user.userId, { type: 'call:ended', callId: '', reason: 'busy' });
     return;
   }
 
@@ -1349,7 +1349,7 @@ function handleCallInitiate(user: JwtPayload, targetUserId: string, video = fals
       sendTo(call.recipientId, { type: 'call:ended', callId, reason: 'timeout' });
       insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'missed');
     }
-  }, 30000);
+  }, 15000);
 
   activeCalls.set(callId, {
     id: callId,

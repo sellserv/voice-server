@@ -711,6 +711,9 @@
               markChannelUnread(dmChannel.id);
             }
           }
+          if (event.reason === 'busy') {
+            toast.error('User is busy');
+          }
           activeCall.set(null);
           break;
         }
