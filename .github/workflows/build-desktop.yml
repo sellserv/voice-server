@@ -146,4 +146,4 @@ jobs:
           echo "file=$APPX_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Submit to Microsoft Store
-        run: msstore publish "${{ steps.find-appx.outputs.file }}" --appId 9NTD3XLC0JRJ
+        run: msstore publish "${{ steps.find-appx.outputs.file }}" --appId 9NTD3XLC0JRJ --verbose
