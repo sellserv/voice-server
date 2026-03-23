@@ -128,7 +128,7 @@ jobs:
           path: artifacts
 
       - name: Install Microsoft Store Developer CLI
-        run: dotnet tool install --global Microsoft.StoreDeveloperCLI
+        run: winget install "Microsoft Store Developer CLI" --accept-source-agreements --accept-package-agreements
 
       - name: Configure Store credentials
         run: msstore reconfigure --tenantId ${{ secrets.AZURE_TENANT_ID }} --clientId ${{ secrets.AZURE_CLIENT_ID }} --clientSecret ${{ secrets.AZURE_CLIENT_SECRET }}
