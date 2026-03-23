@@ -135,7 +135,7 @@ jobs:
         run: |
           $configDir = "$env:LOCALAPPDATA\Microsoft\MSStore.CLI"
           New-Item -Path $configDir -ItemType Directory -Force | Out-Null
-          @{ TenantId = "${{ secrets.AZURE_TENANT_ID }}"; ClientId = "${{ secrets.AZURE_CLIENT_ID }}" } | ConvertTo-Json | Set-Content "$configDir\settings.json"
+          @{ TenantId = "${{ secrets.AZURE_TENANT_ID }}"; ClientId = "${{ secrets.AZURE_CLIENT_ID }}"; SellerId = 93966700 } | ConvertTo-Json | Set-Content "$configDir\settings.json"
           cmdkey /generic:MicrosoftStoreCli:user=${{ secrets.AZURE_CLIENT_ID }} /user:${{ secrets.AZURE_CLIENT_ID }} /pass:${{ secrets.AZURE_CLIENT_SECRET }}
 
       - name: Find appx file
