@@ -4,13 +4,14 @@
 
 <h1 align="center">SellServ Voice</h1>
 
-<p align="center">A self-hosted, multi-server voice and text chat platform.</p>
+<p align="center">A multi-server voice and text chat platform — join the public instance or self-host your own.</p>
 
 <p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="AGPL-3.0"></a>
   <a href="https://ko-fi.com/sellserv"><img src="https://img.shields.io/badge/Ko--fi-Support%20this%20project-FF5E5B?logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
 </p>
 
-A self-hosted, multi-server voice and text chat platform. Features real-time messaging, WebRTC voice/video calls, screen sharing, synchronized YouTube watching, a soundboard, custom emojis, a voice changer, polls, automod, and a role-based permission system — all running on a single server.
+Features real-time messaging, WebRTC voice/video calls, screen sharing, synchronized YouTube watching, a soundboard, custom emojis, a voice changer, polls, automod, and a role-based permission system — all running on a single server.
 
 ## Features
 
@@ -444,3 +445,7 @@ Designed for a 1GB server serving 10-15 users:
 | **Total**        | **~300-350 MB** |
 
 Add 1GB swap as a safety net. The systemd service enforces a 512MB memory cap.
+
+## License
+
+This project is licensed under the [GNU Affero General Public License v3.0](LICENSE).
