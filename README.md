@@ -6,6 +6,10 @@
 
 <p align="center">A self-hosted, multi-server voice and text chat platform.</p>
 
+<p align="center">
+  <a href="https://ko-fi.com/sellserv"><img src="https://img.shields.io/badge/Ko--fi-Support%20this%20project-FF5E5B?logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
+</p>
+
 A self-hosted, multi-server voice and text chat platform. Features real-time messaging, WebRTC voice/video calls, screen sharing, synchronized YouTube watching, a soundboard, custom emojis, a voice changer, polls, automod, and a role-based permission system — all running on a single server.
 
 ## Features
