@@ -131,7 +131,12 @@ jobs:
         run: winget install "Microsoft Store Developer CLI" --accept-source-agreements --accept-package-agreements
 
       - name: Configure Store credentials
-        run: msstore reconfigure --reset --tenantId ${{ secrets.AZURE_TENANT_ID }} --clientId ${{ secrets.AZURE_CLIENT_ID }} --clientSecret ${{ secrets.AZURE_CLIENT_SECRET }}
+        shell: pwsh
+        run: |
+          $configDir = "$env:LOCALAPPDATA\Microsoft\MSStore.CLI"
+          New-Item -Path $configDir -ItemType Directory -Force | Out-Null
+          @{ TenantId = "${{ secrets.AZURE_TENANT_ID }}"; ClientId = "${{ secrets.AZURE_CLIENT_ID }}" } | ConvertTo-Json | Set-Content "$configDir\settings.json"
+          cmdkey /generic:MicrosoftStoreCli:user=${{ secrets.AZURE_CLIENT_ID }} /user:${{ secrets.AZURE_CLIENT_ID }} /pass:${{ secrets.AZURE_CLIENT_SECRET }}
 
       - name: Find appx file
         id: find-appx
