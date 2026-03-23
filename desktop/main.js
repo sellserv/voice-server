@@ -145,16 +145,37 @@ function createWindow(url) {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      // Required: renderer loads from local HTTP server (127.0.0.1) but
-      // makes API requests to the remote server — disabling webSecurity
-      // allows these cross-origin requests without CORS headers.
-      webSecurity: false,
+      webSecurity: true,
     },
   });
 
   mainWindowState.manage(mainWindow);
 
   mainWindow.loadURL(url);
+
+  // Right-click context menu with copy/paste
+  mainWindow.webContents.on('context-menu', (_e, params) => {
+    const menuItems = [];
+
+    if (params.isEditable) {
+      menuItems.push(
+        { label: 'Cut', role: 'cut', enabled: params.editFlags.canCut },
+        { label: 'Paste', role: 'paste', enabled: params.editFlags.canPaste },
+      );
+    }
+
+    if (params.selectionText) {
+      menuItems.push({ label: 'Copy', role: 'copy' });
+    }
+
+    if (params.isEditable || params.selectionText) {
+      menuItems.push({ type: 'separator' });
+    }
+
+    menuItems.push({ label: 'Select All', role: 'selectAll' });
+
+    Menu.buildFromTemplate(menuItems).popup({ window: mainWindow });
+  });
 
   if (isDev) {
     mainWindow.webContents.openDevTools();
@@ -185,7 +206,7 @@ function createTray() {
   const iconPath = path.join(
     __dirname,
     'icons',
-    process.platform === 'darwin' ? '32x32.png'
+    process.platform === 'darwin' ? '16x16Template.png'
       : process.platform === 'win32' ? 'icon.ico'
       : '32x32.png',
   );
@@ -233,6 +254,7 @@ ipcMain.handle('window:close', () => mainWindow?.close());
 // App info
 ipcMain.handle('app:getVersion', () => app.getVersion());
 ipcMain.handle('app:getPlatform', () => process.platform);
+ipcMain.handle('app:isWindowsStore', () => !!process.windowsStore);
 
 // Settings store
 ipcMain.handle('store:get', (_e, key) => store.get(key));
@@ -279,6 +301,37 @@ autoUpdater.on('error', (e) => console.error('[Updater]', e?.message || e));
 
 ipcMain.handle('updater:checkForUpdates', async () => {
   try {
+    if (process.windowsStore) {
+      // AppX: check GitHub releases since electron-updater can't update Store packages
+      const https = require('https');
+      const remote = await new Promise((resolve, reject) => {
+        const req = https.get(
+          'https://api.github.com/repos/sellserv/voice-server/releases/latest',
+          { headers: { 'User-Agent': 'SellServ-Voice' } },
+          (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+              try {
+                const tag = JSON.parse(data).tag_name || '';
+                resolve(tag.replace(/^v/, ''));
+              } catch {
+                reject(new Error('Failed to parse release info'));
+              }
+            });
+          },
+        );
+        req.on('error', reject);
+        req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+      });
+      const current = app.getVersion();
+      console.log(`[Updater] AppX — Current: ${current}, Latest: ${remote}`);
+      if (isNewerVersion(remote, current)) {
+        return { available: true, version: remote, current, store: true };
+      }
+      return { available: false };
+    }
+
     const result = await autoUpdater.checkForUpdates();
     if (result && result.updateInfo) {
       const remote = result.updateInfo.version;
@@ -521,8 +574,8 @@ if (!gotTheLock) {
       url = `http://127.0.0.1:${port}`;
     }
 
-    // Auto-update on startup (production only) with splash UI
-    if (!isDev) {
+    // Auto-update on startup (production only, exe/non-Store builds)
+    if (!isDev && !process.windowsStore) {
       const updated = await checkAndApplyUpdate();
       if (updated) return; // App is restarting with the new version
     }

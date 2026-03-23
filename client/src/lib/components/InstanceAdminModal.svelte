@@ -17,6 +17,8 @@
   let loading = $state(true);
   let error = $state('');
   let registrationOpen = $state(true);
+  let instanceName = $state('SellServ Voice');
+  let instanceNameInput = $state('SellServ Voice');
   let reportFilter: 'open' | 'all' = $state('open');
 
   // User detail
@@ -45,6 +47,8 @@
       auditEntries = a.entries;
       auditTotal = a.total;
       registrationOpen = !!is.allow_registration;
+      instanceName = is.instance_name || 'SellServ Voice';
+      instanceNameInput = instanceName;
     } catch (e: any) {
       error = e.message || 'Failed to load data';
     } finally {
@@ -68,6 +72,17 @@
       registrationOpen = !!result.allow_registration;
     } catch (e: any) {
       error = e?.message || 'Failed to update settings';
+    }
+  }
+
+  async function saveInstanceName() {
+    if (!instanceNameInput.trim() || instanceNameInput.trim() === instanceName) return;
+    try {
+      const result = await api.patch<any>('/api/admin/instance-settings', { instance_name: instanceNameInput.trim() });
+      instanceName = result.instance_name || 'SellServ Voice';
+      instanceNameInput = instanceName;
+    } catch (e: any) {
+      error = e?.message || 'Failed to update instance name';
     }
   }
 
@@ -287,6 +302,24 @@
 
           <div class="settings-section">
             <h4 class="section-title">Platform Settings</h4>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-name">Instance Name</span>
+                <span class="setting-desc">Shown on the login and registration page</span>
+              </div>
+              <div class="name-input-group">
+                <input
+                  type="text"
+                  class="name-input"
+                  bind:value={instanceNameInput}
+                  maxlength="100"
+                  onkeydown={(e) => e.key === 'Enter' && saveInstanceName()}
+                />
+                {#if instanceNameInput.trim() !== instanceName}
+                  <button class="save-btn" onclick={saveInstanceName}>Save</button>
+                {/if}
+              </div>
+            </div>
             <div class="setting-row">
               <div class="setting-info">
                 <span class="setting-name">User Registration</span>
@@ -923,6 +956,42 @@
   .setting-desc {
     font-size: 0.75rem;
     color: var(--text-dim);
+  }
+
+  .name-input-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .name-input {
+    background: var(--bg-darkest);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    padding: 6px 10px;
+    font-size: 0.85rem;
+    width: 200px;
+    outline: none;
+  }
+
+  .name-input:focus {
+    border-color: var(--accent);
+  }
+
+  .save-btn {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .save-btn:hover {
+    filter: brightness(1.1);
   }
 
   .toggle-btn {

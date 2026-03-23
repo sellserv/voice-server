@@ -294,8 +294,16 @@
   }
 
   .call-overlay.video-active {
-    top: 50%;
-    transform: translate(-50%, -50%);
+    top: 0;
+    left: auto;
+    right: 0;
+    bottom: 0;
+    transform: none;
+    width: calc(100vw - var(--nav-dock-width) - var(--sidebar-width));
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   @keyframes slideIn {
@@ -484,18 +492,18 @@
 
   /* Video Call View */
   .video-call-overlay {
-    width: 520px;
-    max-width: 90vw;
-    background: rgba(10, 10, 20, 0.9);
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    background: rgba(10, 10, 20, 0.95);
     backdrop-filter: blur(40px);
     -webkit-backdrop-filter: blur(40px);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 20px;
+    border: none;
+    border-radius: 0;
     overflow: hidden;
-    box-shadow:
-      0 40px 80px rgba(0, 0, 0, 0.7),
-      0 0 0 1px rgba(255, 255, 255, 0.05);
     position: relative;
+    display: flex;
+    flex-direction: column;
     animation: videoIn 0.3s var(--ease-out);
   }
 
@@ -505,7 +513,7 @@
   }
 
   .remote-video-container {
-    aspect-ratio: 16 / 9;
+    flex: 1;
     background: #0a0a14;
     display: flex;
     align-items: center;
@@ -545,8 +553,8 @@
   .local-pip {
     position: absolute;
     bottom: 80px;
-    right: 16px;
-    width: 160px;
+    right: 24px;
+    width: 240px;
     aspect-ratio: 16 / 9;
     border-radius: 12px;
     overflow: hidden;

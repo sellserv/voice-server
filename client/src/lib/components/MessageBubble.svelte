@@ -54,6 +54,9 @@
   let reportSubmitting = $state(false);
   let reportError = $state('');
 
+  // Live user data — prefer current profile over message snapshot
+  let liveUser = $derived($allUsersMap.get(message.user_id));
+
   // Invitation state
   let inviteData = $state<ServerInvitation | null>(null);
   let loadingInvite = $state(false);
@@ -212,7 +215,8 @@
     );
 
     // URL linkification — decode HTML entities for href, keep escaped text for display
-    safe = safe.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?"')\]}>])/g, (url) => {
+    // Negative lookbehind: skip URLs inside HTML attributes (preceded by " or ')
+    safe = safe.replace(/(?<!["'])(https?:\/\/[^\s<]+[^\s<.,;:!?"')\]}>])/g, (url) => {
       // Reverse only known safe HTML entities to reconstruct the real URL for href
       const href = url
         .replace(/&amp;/g, '&')
@@ -414,8 +418,8 @@
     <span class="grouped-time">{timeStr}</span>
   {:else}
     <Avatar
-      src={message.avatar_url}
-      alt={message.display_name || message.username || '?'}
+      src={liveUser?.member_avatar_url || liveUser?.avatar_url || message.avatar_url}
+      alt={liveUser?.server_nickname || liveUser?.display_name || message.display_name || message.username || '?'}
       size={40}
       class="msg-avatar"
     />
@@ -447,12 +451,11 @@
       </div>
     {/if}
     {#if !grouped}
-      {@const authorData = $allUsersMap.get(message.user_id)}
       <div class="header">
         <span
           class="author"
-          style={nameStyle(message.name_color, message.role_color, message.name_font)}
-          >{authorData?.server_nickname || message.display_name || message.username}</span
+          style={nameStyle(liveUser?.name_color || message.name_color, liveUser?.role_color || message.role_color, liveUser?.name_font || message.name_font)}
+          >{liveUser?.server_nickname || liveUser?.display_name || message.display_name || message.username}</span
         >
         <span class="time">{timeStr}</span>
         {#if message.pinned}

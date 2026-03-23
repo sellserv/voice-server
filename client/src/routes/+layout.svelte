@@ -87,6 +87,7 @@
   } from '$lib/stores/watchTogether';
   import { toast } from '$lib/stores/toast';
   import Toast from '$lib/components/Toast.svelte';
+  import StoreUpdateModal from '$lib/components/StoreUpdateModal.svelte';
   import InvitationNotification from '$lib/components/InvitationNotification.svelte';
   import { loadInvitations, addInvitation } from '$lib/stores/invitations';
   import { loadFriends, loadPendingRequests, addFriendFromWs, removeFriendFromWs, addPendingFromWs, removePendingByUser } from '$lib/stores/friends';
@@ -139,6 +140,14 @@
 
   // Ring sound stop function
   let stopRing: (() => void) | null = null;
+
+  // Stop ring sound when call is cleared locally (e.g. user hangs up)
+  activeCall.subscribe((call) => {
+    if (!call && stopRing) {
+      stopRing();
+      stopRing = null;
+    }
+  });
 
   // Get the screen share data for the user we're viewing
   let viewingScreenShare = $derived(
@@ -710,6 +719,9 @@
               markChannelUnread(dmChannel.id);
             }
           }
+          if (event.reason === 'busy') {
+            toast.error('User is busy');
+          }
           activeCall.set(null);
           break;
         }
@@ -1061,6 +1073,7 @@
 
 <CallOverlay />
 <Toast />
+<StoreUpdateModal />
 <InvitationNotification />
 <AppPanels />
 

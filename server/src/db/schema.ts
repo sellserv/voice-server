@@ -1271,6 +1271,11 @@ export function initSchema() {
     db.exec('ALTER TABLE instance_settings ADD COLUMN allow_registration INTEGER NOT NULL DEFAULT 1');
   } catch {}
 
+  // Migration: add instance_name to instance_settings
+  try {
+    db.exec("ALTER TABLE instance_settings ADD COLUMN instance_name TEXT NOT NULL DEFAULT 'SellServ Voice'");
+  } catch {}
+
   // Migration: add type and metadata columns to messages (for call system messages)
   try {
     db.exec("ALTER TABLE messages ADD COLUMN type TEXT NOT NULL DEFAULT 'user'");

@@ -1,10 +1,12 @@
 <script lang="ts">
   import { serverSettings } from '$lib/stores/serverSettings';
-  import { updateReady, installUpdate } from '$lib/updater';
+  import { updateReady, installUpdate, openStoreUpdate } from '$lib/updater';
   import { addToast } from '$lib/stores/toast';
 
   function handleUpdateClick() {
-    if (isWindows) {
+    if ($updateReady?.store) {
+      openStoreUpdate();
+    } else if (isWindows) {
       installUpdate();
     } else {
       addToast(

@@ -638,9 +638,12 @@ export default async function channelRoutes(app: FastifyInstance) {
       }
 
       // Check target user exists
-      const targetUser = db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId);
+      const targetUser = db.prepare('SELECT id, is_bot FROM users WHERE id = ?').get(targetUserId) as { id: string; is_bot: number } | undefined;
       if (!targetUser) {
         return reply.code(404).send({ error: 'User not found' });
+      }
+      if (targetUser.is_bot) {
+        return reply.code(400).send({ error: 'Cannot message bots' });
       }
 
       // Check if DM channel already exists between the two users

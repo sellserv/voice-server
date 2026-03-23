@@ -391,10 +391,10 @@
                     onclick={() => handleAcceptInvite(invite)}
                     disabled={inviteProcessing === invite.id}
                   >
-                    <Icon name="plus" size={16} />
+                    <Icon name="check" size={16} />
                   </button>
-                  <button 
-                    class="circle-btn danger" 
+                  <button
+                    class="circle-btn danger"
                     title="Decline" 
                     onclick={() => handleDeclineInvite(invite)}
                     disabled={inviteProcessing === invite.id}

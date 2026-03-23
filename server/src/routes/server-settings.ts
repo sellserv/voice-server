@@ -32,19 +32,14 @@ function getServerSettings(serverId: string): ServerSettings {
 }
 
 export default async function serverSettingsRoutes(app: FastifyInstance) {
-  // Public server info (name + icon only, no auth required) — stays global
+  // Public instance info (name only, no auth required) — used on login/register page
   app.get('/api/server-settings/public', async () => {
-    // Return info from the first server for backward compatibility
     const row = db
-      .prepare(
-        `SELECT s.name, f.stored_name AS icon_stored_name
-       FROM servers s LEFT JOIN files f ON f.id = s.icon_file_id
-       ORDER BY s.created_at ASC LIMIT 1`,
-      )
+      .prepare('SELECT instance_name FROM instance_settings WHERE id = 1')
       .get() as any;
     return {
-      name: row?.name || 'SellServ Voice',
-      icon_url: row?.icon_stored_name ? `/uploads/${row.icon_stored_name}` : null,
+      name: row?.instance_name || 'SellServ Voice',
+      icon_url: null,
     };
   });
 
