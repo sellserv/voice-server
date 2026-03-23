@@ -121,11 +121,13 @@ jobs:
     runs-on: windows-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
           name: sellserv-voice-windows
-          path: artifacts
+          path: desktop/dist
 
       - name: Install Microsoft Store Developer CLI
         run: winget install "Microsoft Store Developer CLI" --accept-source-agreements --accept-package-agreements
@@ -138,12 +140,6 @@ jobs:
           @{ TenantId = "${{ secrets.AZURE_TENANT_ID }}"; ClientId = "${{ secrets.AZURE_CLIENT_ID }}"; SellerId = 93966700; PublisherDisplayName = "SellServ" } | ConvertTo-Json | Set-Content "$configDir\settings.json"
           cmdkey /generic:MicrosoftStoreCli:user=${{ secrets.AZURE_CLIENT_ID }} /user:${{ secrets.AZURE_CLIENT_ID }} /pass:${{ secrets.AZURE_CLIENT_SECRET }}
 
-      - name: Find appx file
-        id: find-appx
-        shell: bash
-        run: |
-          APPX_FILE=$(find artifacts -name "*.appx" | head -1)
-          echo "file=$APPX_FILE" >> "$GITHUB_OUTPUT"
-
       - name: Submit to Microsoft Store
-        run: msstore publish "${{ steps.find-appx.outputs.file }}" --appId 9NTD3XLC0JRJ --verbose
+        working-directory: desktop
+        run: msstore publish --appId 9NTD3XLC0JRJ --verbose
