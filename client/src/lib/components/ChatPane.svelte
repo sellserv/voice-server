@@ -554,7 +554,7 @@
     backdrop-filter: blur(32px);
     -webkit-backdrop-filter: blur(32px);
     border: 1px solid var(--glass-border-bright);
-    border-radius: var(--radius);
+    border-radius: var(--radius-lg);
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
     z-index: 100;
     animation: pinsIn 0.3s var(--ease-elastic);
@@ -566,7 +566,7 @@
   }
 
   .pins-header {
-    padding: 16px 20px;
+    padding: var(--space-4) var(--space-5);
     display: flex;
     align-items: center;
     gap: 10px;
@@ -580,12 +580,12 @@
   .pins-content {
     flex: 1;
     overflow-y: auto;
-    padding: 12px;
+    padding: var(--space-3);
     scrollbar-width: thin;
   }
 
   .pins-status {
-    padding: 40px 20px;
+    padding: 40px var(--space-5);
     text-align: center;
     color: var(--text-dim);
     display: flex;
@@ -599,10 +599,10 @@
   }
 
   .pin-item {
-    padding: 12px 16px;
+    padding: var(--space-3) var(--space-4);
     background: rgba(255, 255, 255, 0.02);
     border: 1px solid var(--glass-border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     margin-bottom: 8px;
     cursor: pointer;
     transition: all 0.2s var(--ease-out);
@@ -685,7 +685,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 10px 20px;
+    padding: 10px var(--space-5);
     background: rgba(0, 0, 0, 0.2);
     backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--glass-border);
@@ -700,21 +700,7 @@
 
   .search-input {
     flex: 1;
-    padding: 8px 16px;
     background: rgba(0, 0, 0, 0.3);
-    color: white;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--glass-border);
-    font-size: 0.9rem;
-    font-weight: 600;
-    transition: all 0.2s;
-    outline: none;
-  }
-
-  .search-input:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 12px var(--accent-glow);
-    background: rgba(0, 0, 0, 0.4);
   }
 
   .search-spinner {
@@ -738,7 +724,7 @@
   }
 
   .search-results-header {
-    padding: 8px 24px;
+    padding: 8px var(--space-6);
     font-size: 0.8rem;
     color: var(--text-dim);
     font-weight: 800;
@@ -761,8 +747,8 @@
     flex-direction: column;
     align-items: flex-start;
     justify-content: flex-end;
-    padding: 60px 32px;
-    gap: 12px;
+    padding: 60px var(--space-8);
+    gap: var(--space-3);
   }
 
   .empty-channel h3 {
@@ -785,13 +771,13 @@
   .empty-icon {
     width: 80px;
     height: 80px;
-    border-radius: 24px;
+    border-radius: var(--radius-lg);
     background: var(--accent);
     display: flex;
     align-items: center;
     justify-content: center;
     color: white;
-    margin-bottom: 16px;
+    margin-bottom: var(--space-4);
     font-size: 2.5rem;
     font-weight: 800;
     box-shadow: 0 8px 32px var(--accent-glow);
@@ -799,7 +785,7 @@
   }
 
   .typing-indicator {
-    padding: 0 24px 12px;
+    padding: 0 var(--space-6) 12px;
     font-size: 0.75rem;
     color: var(--text-muted);
     font-weight: 700;

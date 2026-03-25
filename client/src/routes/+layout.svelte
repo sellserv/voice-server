@@ -2,7 +2,7 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
-  import { checkAuth, currentUser, authLoading, logout } from '$lib/stores/auth';
+  import { checkAuth, currentUser, authLoading, logout, rateLimited } from '$lib/stores/auth';
   import { connectWs, disconnectWs, onWsEvent, sendWs, wsConnected, wsKicked } from '$lib/ws';
   import {
     loadChannels,
@@ -351,20 +351,25 @@
             muted: event.muted ?? false,
             deafened: event.deafened ?? false,
           });
-          const voiceServerId = channelServerMap.get(event.channelId);
-          const voiceLevel = voiceServerId ? ($serverNotificationLevels.get(voiceServerId) || 'default') : 'default';
-          if (voiceLevel !== 'nothing') {
-            playJoinSound();
+          if ($inVoiceChannel === event.channelId) {
+            const voiceServerId = channelServerMap.get(event.channelId);
+            const voiceLevel = voiceServerId ? ($serverNotificationLevels.get(voiceServerId) || 'default') : 'default';
+            if (voiceLevel !== 'nothing') {
+              playJoinSound();
+            }
           }
           break;
         }
         case 'voice:left': {
           removeVoicePeer(event.userId);
+          setSpeaking(event.userId, false);
           removeChannelMember(event.channelId, event.userId);
-          const voiceServerId = channelServerMap.get(event.channelId);
-          const voiceLevel = voiceServerId ? ($serverNotificationLevels.get(voiceServerId) || 'default') : 'default';
-          if (voiceLevel !== 'nothing') {
-            playLeaveSound();
+          if ($inVoiceChannel === event.channelId) {
+            const voiceServerId = channelServerMap.get(event.channelId);
+            const voiceLevel = voiceServerId ? ($serverNotificationLevels.get(voiceServerId) || 'default') : 'default';
+            if (voiceLevel !== 'nothing') {
+              playLeaveSound();
+            }
           }
           break;
         }
@@ -956,6 +961,13 @@
     <div class="loading-spinner"></div>
     <p>Loading...</p>
   </div>
+{:else if $rateLimited}
+  <div class="loading-screen">
+    <svg class="rate-limit-icon" xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    <h2 class="rate-limit-title">Too Many Requests</h2>
+    <p class="rate-limit-message">You're refreshing too fast. Please wait a minute before trying again.</p>
+    <button class="rate-limit-btn" onclick={() => { rateLimited.set(false); location.reload(); }}>Try Again</button>
+  </div>
 {:else if !$currentUser}
   {@render children()}
 {:else}
@@ -1094,6 +1106,44 @@
 
   :global(.has-titlebar) .loading-screen {
     height: calc(100vh - 32px);
+  }
+
+  .rate-limit-icon {
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+
+  .rate-limit-title {
+    margin: 0;
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: white;
+  }
+
+  .rate-limit-message {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--text-muted);
+    text-align: center;
+    max-width: 320px;
+    line-height: 1.5;
+  }
+
+  .rate-limit-btn {
+    margin-top: 8px;
+    padding: 10px 24px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: filter 0.15s;
+  }
+
+  .rate-limit-btn:hover {
+    filter: brightness(1.15);
   }
 
   .loading-spinner {

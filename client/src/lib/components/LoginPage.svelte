@@ -22,6 +22,8 @@
   import { loadChannels } from '$lib/stores/channels';
   import { connectWs } from '$lib/ws';
   import { api } from '$lib/api';
+  import { fade } from 'svelte/transition';
+  import { onMount } from 'svelte';
 
   let mode = $state<'login' | 'register'>('login');
   let username = $state('');
@@ -58,8 +60,10 @@
   }
 
   // Check setup status and load server name on load
-  checkSetupStatus();
-  loadPublicSettings();
+  onMount(() => {
+    checkSetupStatus();
+    loadPublicSettings();
+  });
 
   let turnstileLoaded = $state(false);
 
@@ -146,6 +150,20 @@
   let fpCode = $state('');
   let fpNewPassword = $state('');
   let fpConfirmPassword = $state('');
+
+  // Mouse parallax state
+  let mouseX = $state(0);
+  let mouseY = $state(0);
+  let rafId = 0;
+
+  function handleMouseMove(e: MouseEvent) {
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => {
+      mouseX = (e.clientX / window.innerWidth - 0.5) * 20;
+      mouseY = (e.clientY / window.innerHeight - 0.5) * 20;
+      rafId = 0;
+    });
+  }
 
   async function handleSubmit() {
     error = '';
@@ -394,512 +412,567 @@
   }
 </script>
 
-<div class="login-container">
-  <div class="login-card">
-    <img src="/icon-512x512.png" alt="SellServ Voice" class="brand-logo" />
-    <h1 class="brand">{serverName}</h1>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="login-container" onmousemove={handleMouseMove} class:desktop={isDesktop}>
+  <div class="stellar-bg">
+    <div class="stars" style="transform: translate({mouseX * 0.5}px, {mouseY * 0.5}px)"></div>
+    <div class="grid-overlay" style="--mx: {mouseX * 5 + 50}%; --my: {mouseY * 5 + 50}%"></div>
+    <div class="aurora aurora-1" style="transform: translate({mouseX * -1}px, {mouseY * -1}px)"></div>
+    <div class="aurora aurora-2" style="transform: translate({mouseX * 1.5}px, {mouseY * 1.5}px)"></div>
+    <div class="mouse-glow" style="transform: translate(calc({mouseX * 5 + 50}vw - 50%), calc({mouseY * 5 + 50}vh - 50%))"></div>
+  </div>
 
-    {#if $forgotPasswordState}
-      {#if $forgotPasswordState.step === 'username'}
-        <form
-          onsubmit={(e) => {
-            e.preventDefault();
-            handleForgotPasswordStart();
-          }}
-        >
-          <p class="mfa-prompt">Enter your username to reset your password.</p>
+  <div class="login-stage" in:fade={{ duration: 800 }}>
+    <div class="brand-section">
+      <div class="logo-wrapper">
+        <a href="https://info.sellserv.net" target="_blank" rel="noopener" class="logo-link">
+          <img src="/icon-512x512.png" alt="" class="hero-logo" />
+        </a>
+      </div>
+      <h1 class="hero-brand">{serverName}</h1>
+      
+      <div class="brand-specs">
+        <div class="waveform">
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+        </div>
+      </div>
+    </div>
 
-          <label class="field">
-            <span>Username</span>
-            <input
-              type="text"
-              bind:value={fpUsername}
-              placeholder="Enter username"
-              required
-              autocomplete="username"
-            />
-          </label>
-
-          {#if error}<p class="error">{error}</p>{/if}
-
-          <button type="submit" class="submit-btn" disabled={loading}>
-            {loading ? 'Please wait...' : 'Continue'}
-          </button>
-
-          <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
-        </form>
-      {:else if $forgotPasswordState.step === 'code'}
-        <form
-          onsubmit={(e) => {
-            e.preventDefault();
-            handleForgotPasswordVerify();
-          }}
-        >
-          <p class="mfa-prompt">
-            Enter the 6-digit verification code from your email or authenticator app.
-          </p>
-
-          <label class="field">
-            <span>Verification Code</span>
-            <input
-              type="text"
-              bind:value={fpCode}
-              placeholder="000000"
-              required
-              autocomplete="one-time-code"
-              inputmode="numeric"
-              maxlength="6"
-            />
-          </label>
-
-          {#if error}<p class="error">{error}</p>{/if}
-
-          <button type="submit" class="submit-btn" disabled={loading}>
-            {loading ? 'Verifying...' : 'Verify'}
-          </button>
-
-          <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
-        </form>
-      {:else if $forgotPasswordState.step === 'reset'}
-        <form
-          onsubmit={(e) => {
-            e.preventDefault();
-            handleResetPassword();
-          }}
-        >
-          <p class="mfa-prompt">Set your new password.</p>
-
-          <label class="field">
-            <span>New Password <small>(min 15 characters)</small></span>
-            <input
-              type="password"
-              bind:value={fpNewPassword}
-              placeholder="Enter new password"
-              required
-              autocomplete="new-password"
-            />
-          </label>
-
-          <label class="field">
-            <span>Confirm New Password</span>
-            <input
-              type="password"
-              bind:value={fpConfirmPassword}
-              placeholder="Confirm new password"
-              required
-              autocomplete="new-password"
-            />
-          </label>
-
-          {#if error}<p class="error">{error}</p>{/if}
-
-          <button type="submit" class="submit-btn" disabled={loading}>
-            {loading ? 'Resetting...' : 'Reset Password'}
-          </button>
-
-          <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
-        </form>
-      {/if}
-    {:else if $emailRequired}
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          handleSetEmail();
-        }}
-      >
-        <p class="mfa-prompt">
-          An email address is now required for your account. Please add one to continue.
-        </p>
-
-        <label class="field">
-          <span>Email Address</span>
-          <input
-            type="email"
-            bind:value={setEmailValue}
-            placeholder="you@example.com"
-            required
-            autocomplete="email"
-          />
-        </label>
-
-        <label class="field">
-          <span>Password</span>
-          <input
-            type="password"
-            bind:value={setEmailPassword}
-            placeholder="Confirm your password"
-            required
-            autocomplete="current-password"
-          />
-        </label>
-
-        {#if error}<p class="error">{error}</p>{/if}
-
-        <button type="submit" class="submit-btn" disabled={loading}>
-          {loading ? 'Please wait...' : 'Add Email'}
-        </button>
-
-        <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
-      </form>
-    {:else if $emailVerificationPending}
-      {#if changingVerificationEmail}
-        <form
-          onsubmit={(e) => {
-            e.preventDefault();
-            handleChangeVerificationEmail();
-          }}
-        >
-          <p class="mfa-prompt">Enter a new email address to use instead.</p>
-
-          <label class="field">
-            <span>New Email Address</span>
-            <input
-              type="email"
-              bind:value={newVerificationEmail}
-              placeholder="you@example.com"
-              required
-              autocomplete="email"
-            />
-          </label>
-
-          <label class="field">
-            <span>Password</span>
-            <input
-              type="password"
-              bind:value={changeEmailPassword}
-              placeholder="Confirm your password"
-              required
-              autocomplete="current-password"
-            />
-          </label>
-
-          {#if error}<p class="error">{error}</p>{/if}
-
-          <button type="submit" class="submit-btn" disabled={loading || !newVerificationEmail}>
-            {loading ? 'Sending...' : 'Send Verification Code'}
-          </button>
-
-          <button
-            type="button"
-            class="back-btn"
-            onclick={() => {
-              changingVerificationEmail = false;
-              error = '';
-            }}>Back to verification</button
-          >
-        </form>
-      {:else}
-        <form
-          onsubmit={(e) => {
-            e.preventDefault();
-            handleVerifyEmail();
-          }}
-        >
-          <p class="mfa-prompt">Enter the 6-digit verification code sent to your email.</p>
-
-          {#if $emailVerificationPending?.canChangeEmail}
-            <p class="disclaimer">
-              Email aliases and relay addresses may not receive codes. Use a direct email address if
-              you don't see one.
-            </p>
-          {/if}
-
-          <label class="field">
-            <span>Verification Code</span>
-            <input
-              type="text"
-              bind:value={verifyCode}
-              placeholder="000000"
-              required
-              autocomplete="one-time-code"
-              inputmode="numeric"
-              maxlength="6"
-            />
-          </label>
-
-          {#if error}<p class="error">{error}</p>{/if}
-
-          <button type="submit" class="submit-btn" disabled={loading}>
-            {loading ? 'Verifying...' : 'Verify Email'}
-          </button>
-
-          <button
-            type="button"
-            class="link-btn"
-            onclick={handleResendVerification}
-            disabled={resendCooldown}
-          >
-            {resendCooldown ? 'Code sent' : 'Resend code'}
-          </button>
-
-          {#if $emailVerificationPending?.canChangeEmail}
-            <button
-              type="button"
-              class="link-btn"
-              onclick={() => {
-                changingVerificationEmail = true;
-                error = '';
+    <div class="crystal-card">
+      {#if $forgotPasswordState}
+        <div class="form-wrapper" in:fade={{ duration: 150 }}>
+          {#if $forgotPasswordState.step === 'username'}
+            <form
+              onsubmit={(e) => {
+                e.preventDefault();
+                handleForgotPasswordStart();
               }}
             >
-              Use a different email
-            </button>
+              <h2 class="form-title">Reset Password</h2>
+              <p class="mfa-prompt">Enter your username to reset your password.</p>
+
+              <div class="field-group">
+                <label class="field">
+                  <span>Username</span>
+                  <input
+                    type="text"
+                    bind:value={fpUsername}
+                    placeholder="Enter username"
+                    required
+                    autocomplete="username"
+                  />
+                </label>
+              </div>
+
+              {#if error}<p class="error">{error}</p>{/if}
+
+              <button type="submit" class="submit-btn crystal-btn" disabled={loading}>
+                {loading ? 'Please wait...' : 'Continue'}
+              </button>
+
+              <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
+            </form>
+          {:else if $forgotPasswordState.step === 'code'}
+            <form
+              onsubmit={(e) => {
+                e.preventDefault();
+                handleForgotPasswordVerify();
+              }}
+            >
+              <h2 class="form-title">Verification</h2>
+              <p class="mfa-prompt">
+                Enter the 6-digit verification code.
+              </p>
+
+              <div class="field-group">
+                <label class="field">
+                  <span>Verification Code</span>
+                  <input
+                    type="text"
+                    bind:value={fpCode}
+                    placeholder="000000"
+                    required
+                    autocomplete="one-time-code"
+                    inputmode="numeric"
+                    maxlength="6"
+                  />
+                </label>
+              </div>
+
+              {#if error}<p class="error">{error}</p>{/if}
+
+              <button type="submit" class="submit-btn crystal-btn" disabled={loading}>
+                {loading ? 'Verifying...' : 'Verify'}
+              </button>
+
+              <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
+            </form>
+          {:else if $forgotPasswordState.step === 'reset'}
+            <form
+              onsubmit={(e) => {
+                e.preventDefault();
+                handleResetPassword();
+              }}
+            >
+              <h2 class="form-title">New Password</h2>
+              <p class="mfa-prompt">Set your new password.</p>
+
+              <div class="field-group">
+                <label class="field">
+                  <span>New Password <small>(min 15 characters)</small></span>
+                  <input
+                    type="password"
+                    bind:value={fpNewPassword}
+                    placeholder="Enter new password"
+                    required
+                    autocomplete="new-password"
+                  />
+                </label>
+
+                <label class="field">
+                  <span>Confirm Password</span>
+                  <input
+                    type="password"
+                    bind:value={fpConfirmPassword}
+                    placeholder="Confirm new password"
+                    required
+                    autocomplete="new-password"
+                  />
+                </label>
+              </div>
+
+              {#if error}<p class="error">{error}</p>{/if}
+
+              <button type="submit" class="submit-btn crystal-btn" disabled={loading}>
+                {loading ? 'Resetting...' : 'Reset Password'}
+              </button>
+
+              <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
+            </form>
           {/if}
-
-          <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
-        </form>
-      {/if}
-    {:else if $passwordExpired}
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          handleChangePassword();
-        }}
-      >
-        <p class="mfa-prompt">Your password has expired. Please set a new password to continue.</p>
-
-        <label class="field">
-          <span>Current Password</span>
-          <input
-            type="password"
-            bind:value={cpCurrentPassword}
-            placeholder="Enter current password"
-            required
-            autocomplete="current-password"
-          />
-        </label>
-
-        <label class="field">
-          <span>New Password <small>(min 15 characters)</small></span>
-          <input
-            type="password"
-            bind:value={cpNewPassword}
-            placeholder="Enter new password"
-            required
-            autocomplete="new-password"
-          />
-        </label>
-
-        <label class="field">
-          <span>Confirm New Password</span>
-          <input
-            type="password"
-            bind:value={cpConfirmPassword}
-            placeholder="Confirm new password"
-            required
-            autocomplete="new-password"
-          />
-        </label>
-
-        {#if error}<p class="error">{error}</p>{/if}
-
-        <button type="submit" class="submit-btn" disabled={loading}>
-          {loading ? 'Changing...' : 'Change Password'}
-        </button>
-
-        <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
-      </form>
-    {:else if $accountLocked}
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          handleUnlockAccount();
-        }}
-      >
-        <p class="mfa-prompt">
-          Your account has been locked due to too many failed login attempts.
-          {#if $accountLocked.mfaMethod === 'totp'}
-            Enter the 6-digit code from your authenticator app to unlock it.
-          {:else}
-            Enter the 6-digit code sent to your email to unlock it.
-          {/if}
-        </p>
-
-        <label class="field">
-          <span>{$accountLocked.mfaMethod === 'totp' ? 'Authenticator Code' : 'Unlock Code'}</span>
-          <input
-            type="text"
-            bind:value={unlockCode}
-            placeholder="000000"
-            required
-            autocomplete="one-time-code"
-            inputmode="numeric"
-            maxlength="6"
-          />
-        </label>
-
-        {#if error}<p class="error">{error}</p>{/if}
-
-        <button type="submit" class="submit-btn" disabled={loading}>
-          {loading ? 'Unlocking...' : 'Unlock Account'}
-        </button>
-
-        {#if $accountLocked.mfaMethod === 'email'}
-          <button
-            type="button"
-            class="link-btn"
-            onclick={handleResendUnlockCode}
-            disabled={resendCooldown}
-          >
-            {resendCooldown ? 'Code sent' : 'Resend code'}
-          </button>
-        {/if}
-
-        <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
-      </form>
-    {:else if $mfaPending}
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          handleMfaSubmit();
-        }}
-      >
-        <p class="mfa-prompt">
-          {#if $mfaPending.mfaMethod === 'totp'}
-            Enter the 6-digit code from your authenticator app.
-          {:else}
-            Enter the 6-digit code sent to your email.
-          {/if}
-        </p>
-
-        <label class="field">
-          <span>Authentication Code</span>
-          <input
-            type="text"
-            bind:value={mfaCode}
-            placeholder="000000"
-            required
-            autocomplete="one-time-code"
-            inputmode="numeric"
-            maxlength="6"
-          />
-        </label>
-
-        {#if error}<p class="error">{error}</p>{/if}
-
-        <button type="submit" class="submit-btn" disabled={loading}>
-          {loading ? 'Verifying...' : 'Verify'}
-        </button>
-
-        {#if $mfaPending.mfaMethod === 'email'}
-          <button
-            type="button"
-            class="link-btn"
-            onclick={handleResendMfa}
-            disabled={resendCooldown}
-          >
-            {resendCooldown ? 'Code sent' : 'Resend code'}
-          </button>
-        {/if}
-
-        <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
-      </form>
-    {:else}
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          handleSubmit();
-        }}
-      >
-        <div class="tabs">
-          <button
-            type="button"
-            class="tab"
-            class:active={mode === 'login'}
-            onclick={() => {
-              mode = 'login';
-              error = '';
-            }}>Login</button
-          >
-          <button
-            type="button"
-            class="tab"
-            class:active={mode === 'register'}
-            onclick={() => {
-              mode = 'register';
-              error = registrationOpen ? '' : 'Registration is currently closed. Please contact an administrator.';
-            }}>Register</button
-          >
         </div>
-
-        <label class="field">
-          <span>Username</span>
-          <input
-            type="text"
-            bind:value={username}
-            placeholder="Enter username"
-            required
-            autocomplete="username"
-          />
-        </label>
-
-        {#if mode === 'register'}
-          <label class="field">
-            <span>Email</span>
-            <input
-              type="email"
-              bind:value={email}
-              placeholder="you@example.com"
-              required
-              autocomplete="email"
-            />
-          </label>
-
-          <label class="field">
-            <span>Display Name <small>(optional)</small></span>
-            <input type="text" bind:value={displayName} placeholder="What should we call you?" />
-          </label>
-        {/if}
-
-        <label class="field">
-          <span
-            >Password {#if mode === 'register'}<small>(min 15 characters)</small>{/if}</span
-          >
-          <input
-            type="password"
-            bind:value={password}
-            placeholder="Enter password"
-            required
-            autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
-          />
-        </label>
-
-        {#if mode === 'register'}
-          <label class="field">
-            <span>Confirm Password</span>
-            <input
-              type="password"
-              bind:value={confirmPassword}
-              placeholder="Confirm password"
-              required
-              autocomplete="new-password"
-            />
-          </label>
-
-          {#if turnstileSiteKey && turnstileLoaded}
-            <div class="turnstile-container" use:renderTurnstile></div>
-          {/if}
-        {/if}
-
-        {#if error}<p class="error">{error}</p>{/if}
-
-        <button type="submit" class="submit-btn" disabled={loading || (mode === 'register' && !registrationOpen)}>
-          {loading ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Account'}
-        </button>
-
-        {#if mode === 'login'}
-          <button
-            type="button"
-            class="link-btn"
-            onclick={() => {
-              forgotPasswordState.set({ step: 'username' });
-              error = '';
+      {:else if $emailRequired}
+        <div class="form-wrapper" in:fade={{ duration: 150 }}>
+          <form
+            onsubmit={(e) => {
+              e.preventDefault();
+              handleSetEmail();
             }}
           >
-            Forgot Password?
-          </button>
-        {/if}
-      </form>
-    {/if}
+            <h2 class="form-title">Account Update</h2>
+            <p class="mfa-prompt">
+              An email address is now required for your account.
+            </p>
+
+            <div class="field-group">
+              <label class="field">
+                <span>Email Address</span>
+                <input
+                  type="email"
+                  bind:value={setEmailValue}
+                  placeholder="you@example.com"
+                  required
+                  autocomplete="email"
+                />
+              </label>
+
+              <label class="field">
+                <span>Password</span>
+                <input
+                  type="password"
+                  bind:value={setEmailPassword}
+                  placeholder="Confirm your password"
+                  required
+                  autocomplete="current-password"
+                />
+              </label>
+            </div>
+
+            {#if error}<p class="error">{error}</p>{/if}
+
+            <button type="submit" class="submit-btn crystal-btn" disabled={loading}>
+              {loading ? 'Please wait...' : 'Add Email'}
+            </button>
+
+            <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
+          </form>
+        </div>
+      {:else if $emailVerificationPending}
+        <div class="form-wrapper" in:fade={{ duration: 150 }}>
+          {#if changingVerificationEmail}
+            <form
+              onsubmit={(e) => {
+                e.preventDefault();
+                handleChangeVerificationEmail();
+              }}
+            >
+              <h2 class="form-title">Change Email</h2>
+              <div class="field-group">
+                <label class="field">
+                  <span>New Email</span>
+                  <input
+                    type="email"
+                    bind:value={newVerificationEmail}
+                    placeholder="you@example.com"
+                    required
+                    autocomplete="email"
+                  />
+                </label>
+
+                <label class="field">
+                  <span>Password</span>
+                  <input
+                    type="password"
+                    bind:value={changeEmailPassword}
+                    placeholder="Confirm your password"
+                    required
+                    autocomplete="current-password"
+                  />
+                </label>
+              </div>
+
+              {#if error}<p class="error">{error}</p>{/if}
+
+              <button type="submit" class="submit-btn crystal-btn" disabled={loading || !newVerificationEmail}>
+                {loading ? 'Sending...' : 'Send Code'}
+              </button>
+
+              <button
+                type="button"
+                class="back-btn"
+                onclick={() => {
+                  changingVerificationEmail = false;
+                  error = '';
+                }}>Back</button
+              >
+            </form>
+          {:else}
+            <form
+              onsubmit={(e) => {
+                e.preventDefault();
+                handleVerifyEmail();
+              }}
+            >
+              <h2 class="form-title">Verify Email</h2>
+              <p class="mfa-prompt">Enter the verification code sent to your email.</p>
+
+              <div class="field-group">
+                <label class="field">
+                  <span>Verification Code</span>
+                  <input
+                    type="text"
+                    bind:value={verifyCode}
+                    placeholder="000000"
+                    required
+                    autocomplete="one-time-code"
+                    inputmode="numeric"
+                    maxlength="6"
+                  />
+                </label>
+              </div>
+
+              {#if error}<p class="error">{error}</p>{/if}
+
+              <button type="submit" class="submit-btn crystal-btn" disabled={loading}>
+                {loading ? 'Verifying...' : 'Verify Email'}
+              </button>
+
+              <button
+                type="button"
+                class="link-btn"
+                onclick={handleResendVerification}
+                disabled={resendCooldown}
+              >
+                {resendCooldown ? 'Code sent' : 'Resend code'}
+              </button>
+
+              {#if $emailVerificationPending?.canChangeEmail}
+                <button
+                  type="button"
+                  class="link-btn"
+                  onclick={() => {
+                    changingVerificationEmail = true;
+                    error = '';
+                  }}
+                >
+                  Change email
+                </button>
+              {/if}
+
+              <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
+            </form>
+          {/if}
+        </div>
+      {:else if $passwordExpired}
+        <div class="form-wrapper" in:fade={{ duration: 150 }}>
+          <form
+            onsubmit={(e) => {
+              e.preventDefault();
+              handleChangePassword();
+            }}
+          >
+            <h2 class="form-title">Password Expired</h2>
+            <div class="field-group">
+              <label class="field">
+                <span>Current Password</span>
+                <input
+                  type="password"
+                  bind:value={cpCurrentPassword}
+                  placeholder="Enter current password"
+                  required
+                  autocomplete="current-password"
+                />
+              </label>
+
+              <label class="field">
+                <span>New Password</span>
+                <input
+                  type="password"
+                  bind:value={cpNewPassword}
+                  placeholder="Enter new password"
+                  required
+                  autocomplete="new-password"
+                />
+              </label>
+
+              <label class="field">
+                <span>Confirm Password</span>
+                <input
+                  type="password"
+                  bind:value={cpConfirmPassword}
+                  placeholder="Confirm new password"
+                  required
+                  autocomplete="new-password"
+                />
+              </label>
+            </div>
+
+            {#if error}<p class="error">{error}</p>{/if}
+
+            <button type="submit" class="submit-btn crystal-btn" disabled={loading}>
+              {loading ? 'Changing...' : 'Change Password'}
+            </button>
+
+            <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
+          </form>
+        </div>
+      {:else if $accountLocked}
+        <div class="form-wrapper" in:fade={{ duration: 150 }}>
+          <form
+            onsubmit={(e) => {
+              e.preventDefault();
+              handleUnlockAccount();
+            }}
+          >
+            <h2 class="form-title">Account Locked</h2>
+            <p class="mfa-prompt">
+              {#if $accountLocked.mfaMethod === 'totp'}
+                Enter the authenticator code.
+              {:else}
+                Enter the code sent to your email.
+              {/if}
+            </p>
+
+            <div class="field-group">
+              <label class="field">
+                <span>Unlock Code</span>
+                <input
+                  type="text"
+                  bind:value={unlockCode}
+                  placeholder="000000"
+                  required
+                  autocomplete="one-time-code"
+                  inputmode="numeric"
+                  maxlength="6"
+                />
+              </label>
+            </div>
+
+            {#if error}<p class="error">{error}</p>{/if}
+
+            <button type="submit" class="submit-btn crystal-btn" disabled={loading}>
+              {loading ? 'Unlocking...' : 'Unlock Account'}
+            </button>
+
+            {#if $accountLocked.mfaMethod === 'email'}
+              <button
+                type="button"
+                class="link-btn"
+                onclick={handleResendUnlockCode}
+                disabled={resendCooldown}
+              >
+                {resendCooldown ? 'Code sent' : 'Resend code'}
+              </button>
+            {/if}
+
+            <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
+          </form>
+        </div>
+      {:else if $mfaPending}
+        <div class="form-wrapper" in:fade={{ duration: 150 }}>
+          <form
+            onsubmit={(e) => {
+              e.preventDefault();
+              handleMfaSubmit();
+            }}
+          >
+            <h2 class="form-title">Security Check</h2>
+            <p class="mfa-prompt">
+              Enter your 2FA code to continue.
+            </p>
+
+            <div class="field-group">
+              <label class="field">
+                <span>2FA Code</span>
+                <input
+                  type="text"
+                  bind:value={mfaCode}
+                  placeholder="000000"
+                  required
+                  autocomplete="one-time-code"
+                  inputmode="numeric"
+                  maxlength="6"
+                />
+              </label>
+            </div>
+
+            {#if error}<p class="error">{error}</p>{/if}
+
+            <button type="submit" class="submit-btn crystal-btn" disabled={loading}>
+              {loading ? 'Verifying...' : 'Verify'}
+            </button>
+
+            {#if $mfaPending.mfaMethod === 'email'}
+              <button
+                type="button"
+                class="link-btn"
+                onclick={handleResendMfa}
+                disabled={resendCooldown}
+              >
+                {resendCooldown ? 'Code sent' : 'Resend code'}
+              </button>
+            {/if}
+
+            <button type="button" class="back-btn" onclick={resetAll}>Back to login</button>
+          </form>
+        </div>
+      {:else}
+        <div class="form-wrapper">
+          <div class="tabs">
+            <button
+              type="button"
+              class="tab"
+              class:active={mode === 'login'}
+              onclick={() => {
+                mode = 'login';
+                error = '';
+              }}>Login</button
+            >
+            <button
+              type="button"
+              class="tab"
+              class:active={mode === 'register'}
+              onclick={() => {
+                mode = 'register';
+                error = registrationOpen ? '' : 'Registration is closed.';
+              }}>Register</button
+            >
+          </div>
+
+          <form
+            onsubmit={(e) => {
+              e.preventDefault();
+              handleSubmit();
+            }}
+          >
+            <div class="field-group">
+              <label class="field">
+                <span>Username</span>
+                <input
+                  type="text"
+                  bind:value={username}
+                  placeholder="Your username"
+                  required
+                  autocomplete="username"
+                />
+              </label>
+
+              {#if mode === 'register'}
+                <label class="field">
+                  <span>Email</span>
+                  <input
+                    type="email"
+                    bind:value={email}
+                    placeholder="you@example.com"
+                    required
+                    autocomplete="email"
+                  />
+                </label>
+
+                <label class="field">
+                  <span>Display Name <small>(optional)</small></span>
+                  <input type="text" bind:value={displayName} placeholder="Your name" />
+                </label>
+              {/if}
+
+              <label class="field">
+                <span
+                  >Password {#if mode === 'register'}<small>(min 15 characters)</small>{/if}</span
+                >
+                <input
+                  type="password"
+                  bind:value={password}
+                  placeholder="••••••••••••"
+                  required
+                  autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
+                />
+              </label>
+
+              {#if mode === 'register'}
+                <label class="field">
+                  <span>Confirm Password</span>
+                  <input
+                    type="password"
+                    bind:value={confirmPassword}
+                    placeholder="••••••••••••"
+                    required
+                    autocomplete="new-password"
+                  />
+                </label>
+
+                {#if turnstileSiteKey && turnstileLoaded}
+                  <div class="turnstile-container" use:renderTurnstile></div>
+                {/if}
+              {/if}
+            </div>
+
+            {#if error}<p class="error">{error}</p>{/if}
+
+            <button type="submit" class="submit-btn crystal-btn" disabled={loading || (mode === 'register' && !registrationOpen)}>
+              {loading ? 'Please wait...' : mode === 'login' ? 'Login' : 'Register'}
+            </button>
+
+            {#if mode === 'login'}
+              <button
+                type="button"
+                class="forgot-link"
+                onclick={() => {
+                  forgotPasswordState.set({ step: 'username' });
+                  error = '';
+                }}
+              >
+                Forgot Password?
+              </button>
+            {/if}
+          </form>
+        </div>
+      {/if}
+    </div>
   </div>
 </div>
 
@@ -909,228 +982,416 @@
     align-items: center;
     justify-content: center;
     min-height: 100vh;
-    background: #08080f;
-    background-image: 
-      radial-gradient(at 0% 0%, rgba(124, 92, 252, 0.15) 0px, transparent 50%),
-      radial-gradient(at 100% 100%, rgba(124, 92, 252, 0.1) 0px, transparent 50%);
-    padding: 24px;
+    background: #020205;
     position: relative;
     overflow: hidden;
+    color: white;
+    font-family: var(--font);
+    padding: 40px 20px;
   }
 
-  .login-container::before {
-    content: '';
+  .login-container.desktop {
+    -webkit-app-region: drag;
+    height: calc(100vh - 32px);
+    min-height: 0;
+  }
+
+  /* Interactive Stellar Background */
+  .stellar-bg {
     position: absolute;
     inset: 0;
-    background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-    opacity: 0.03;
+    z-index: 0;
     pointer-events: none;
+    background: radial-gradient(circle at 50% 50%, #050510 0%, #020205 100%);
   }
 
-  .login-card {
-    background: rgba(20, 20, 35, 0.65);
-    backdrop-filter: blur(32px);
-    -webkit-backdrop-filter: blur(32px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
-    padding: 40px;
+  .grid-overlay {
+    position: absolute;
+    inset: 0;
+    background-image: 
+      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    background-size: 100px 100px;
+    mask-image: radial-gradient(circle at var(--mx) var(--my), black 0%, transparent 50%);
+    -webkit-mask-image: radial-gradient(circle at var(--mx) var(--my), black 0%, transparent 50%);
+    opacity: 0.4;
+    z-index: 1;
+  }
+
+  .stars {
+    position: absolute;
+    inset: -100px;
+    background-image: 
+      radial-gradient(1px 1px at 20px 30px, #fff, rgba(0,0,0,0)),
+      radial-gradient(1.5px 1.5px at 40px 70px, #fff, rgba(0,0,0,0)),
+      radial-gradient(2px 2px at 150px 160px, #fff, rgba(0,0,0,0)),
+      radial-gradient(1px 1px at 290px 40px, #fff, rgba(0,0,0,0)),
+      radial-gradient(1px 1px at 430px 80px, #fff, rgba(0,0,0,0)),
+      radial-gradient(2px 2px at 560px 120px, #fff, rgba(0,0,0,0));
+    background-repeat: repeat;
+    background-size: 600px 600px;
+    opacity: 0.25;
+    transition: transform 0.1s ease-out;
+    will-change: transform;
+  }
+
+  .aurora {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(160px);
+    opacity: 0.2;
+    mix-blend-mode: screen;
+    transition: transform 0.2s ease-out;
+    will-change: transform;
+  }
+
+  .aurora-1 {
+    width: 1200px;
+    height: 1200px;
+    background: radial-gradient(circle, rgba(124, 92, 252, 0.4) 0%, transparent 70%);
+    top: -500px;
+    left: -400px;
+    animation: nebula-float 20s infinite alternate ease-in-out;
+  }
+
+  .aurora-2 {
+    width: 1000px;
+    height: 1000px;
+    background: radial-gradient(circle, rgba(45, 212, 168, 0.3) 0%, transparent 70%);
+    bottom: -400px;
+    right: -300px;
+    animation: nebula-float 25s infinite alternate-reverse ease-in-out;
+  }
+
+  @keyframes nebula-float {
+    from { transform: translate(0, 0) scale(1) rotate(0deg); }
+    to { transform: translate(100px, 50px) scale(1.1) rotate(10deg); }
+  }
+
+  .mouse-glow {
+    position: absolute;
+    width: 800px;
+    height: 800px;
+    background: radial-gradient(circle, rgba(124, 92, 252, 0.12) 0%, transparent 70%);
+    border-radius: 50%;
+    pointer-events: none;
+    left: 0;
+    top: 0;
+    z-index: 1;
+    mix-blend-mode: plus-lighter;
+    will-change: transform;
+    animation: glow-pulse 4s infinite alternate ease-in-out;
+  }
+
+  @keyframes glow-pulse {
+    from { opacity: 0.8; transform: scale(1); }
+    to { opacity: 1; transform: scale(1.05); }
+  }
+
+  /* Centered Stage Layout */
+  .login-stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     width: 100%;
-    max-width: 440px;
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-    animation: cardIn 0.4s var(--ease-out);
+    max-width: 460px;
+    z-index: 10;
+    gap: 24px;
   }
 
-  @keyframes cardIn {
-    from { opacity: 0; transform: translateY(20px); }
-    to { opacity: 1; transform: translateY(0); }
+  .brand-section {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
 
-  .brand-logo {
+  .logo-wrapper {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    margin-bottom: 24px;
+  }
+
+  .logo-link {
     display: block;
-    margin: 0 auto 10px;
-    width: 64px;
-    height: 64px;
-    border-radius: 14px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+    width: 100%;
+    height: 100%;
+    -webkit-app-region: no-drag;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
-  .brand {
-    text-align: center;
-    font-size: 2rem;
+  .logo-link:hover {
+    transform: scale(1.05);
+  }
+
+  .hero-logo {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    position: relative;
+    z-index: 2;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  }
+
+  .hero-brand {
+    font-size: 2.5rem;
+    font-weight: 900;
+    margin: 0 0 16px;
+    letter-spacing: -0.04em;
+    color: #fff;
+    line-height: 1;
+  }
+
+  .brand-specs {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .waveform {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 16px;
+    opacity: 0.6;
+  }
+
+  .waveform .bar {
+    width: 2px;
+    background: var(--accent);
+    border-radius: 1px;
+    animation: bar-pulse 1.5s ease-in-out infinite;
+  }
+
+  .waveform .bar:nth-child(1) { height: 40%; animation-delay: 0.1s; }
+  .waveform .bar:nth-child(2) { height: 80%; animation-delay: 0.3s; }
+  .waveform .bar:nth-child(3) { height: 60%; animation-delay: 0.5s; }
+  .waveform .bar:nth-child(4) { height: 100%; animation-delay: 0.2s; }
+  .waveform .bar:nth-child(5) { height: 50%; animation-delay: 0.4s; }
+  .waveform .bar:nth-child(6) { height: 70%; animation-delay: 0.6s; }
+
+  @keyframes bar-pulse {
+    0%, 100% { transform: scaleY(1); opacity: 0.5; }
+    50% { transform: scaleY(0.6); opacity: 1; }
+  }
+
+  /* Crystal Card */
+  .crystal-card {
+    width: 100%;
+    background: rgba(10, 10, 20, 0.3);
+    backdrop-filter: blur(60px) saturate(160%);
+    -webkit-backdrop-filter: blur(60px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 32px;
+    padding: 40px;
+    position: relative;
+    box-shadow: 
+      0 40px 100px -20px rgba(0, 0, 0, 0.8),
+      inset 0 1px 1px rgba(255, 255, 255, 0.1);
+    overflow: hidden;
+    -webkit-app-region: no-drag;
+  }
+
+  .form-title {
+    font-size: 1.5rem;
     font-weight: 800;
-    color: white;
-    margin-bottom: 4px;
+    margin: 0 0 8px;
     letter-spacing: -0.02em;
-  }
-
-  .tagline {
     text-align: center;
-    color: var(--text-dim);
-    font-size: 1rem;
-    margin-bottom: 32px;
   }
 
   .tabs {
     display: flex;
-    gap: 8px;
-    margin-bottom: 24px;
-    background: rgba(0, 0, 0, 0.2);
+    gap: 4px;
+    background: rgba(0, 0, 0, 0.4);
     padding: 4px;
-    border-radius: 8px;
+    border-radius: 14px;
+    margin-bottom: 32px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
   }
 
   .tab {
     flex: 1;
     padding: 10px;
-    border-radius: 6px;
+    border-radius: 11px;
     background: transparent;
-    color: var(--text-muted);
-    font-weight: 600;
-    font-size: var(--font-md);
-    transition: all 0.2s var(--ease-out);
+    color: var(--text-dim);
+    font-weight: 800;
+    font-size: 0.8rem;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     border: none;
     cursor: pointer;
-  }
-
-  .tab:hover:not(.active) {
-    color: var(--text);
-    background: rgba(255, 255, 255, 0.05);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
   }
 
   .tab.active {
-    background: var(--accent);
+    background: rgba(255, 255, 255, 0.08);
     color: white;
-    box-shadow: var(--shadow-glow);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
   }
 
-  .field {
+  .field-group {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    margin-bottom: 16px;
+    gap: 20px;
   }
 
   .field span {
-    font-size: 0.75rem;
-    font-weight: 700;
+    font-size: 0.65rem;
+    font-weight: 800;
     text-transform: uppercase;
     color: var(--text-dim);
-    letter-spacing: 0.05em;
+    letter-spacing: 0.12em;
+    margin-bottom: 8px;
+    display: block;
+    opacity: 0.6;
   }
 
   .field input {
-    padding: 12px 16px;
-    background: rgba(0, 0, 0, 0.3);
+    width: 100%;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 14px 18px;
+    border-radius: 12px;
     color: white;
-    border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    font-size: var(--font-md);
-    transition: all 0.2s var(--ease-out);
-    outline: none;
+    font-size: 1rem;
+    transition: all 0.3s;
   }
 
   .field input:focus {
+    background: rgba(255, 255, 255, 0.06);
     border-color: var(--accent);
-    background: rgba(0, 0, 0, 0.4);
-    box-shadow: 0 0 0 1px var(--accent);
-  }
-
-  .error {
-    color: #f87171;
-    background: rgba(248, 113, 113, 0.1);
-    padding: 10px;
-    border-radius: 4px;
-    font-size: var(--font-sm);
-    margin-bottom: 16px;
-    border: 1px solid rgba(248, 113, 113, 0.2);
+    box-shadow: 0 0 20px rgba(124, 92, 252, 0.15);
+    outline: none;
   }
 
   .submit-btn {
     width: 100%;
-    padding: 12px;
+    padding: 16px;
     background: var(--accent);
     color: white;
-    font-weight: 700;
+    font-weight: 900;
     font-size: 1rem;
-    border-radius: 4px;
-    transition: all 0.2s var(--ease-out);
-    margin-top: 8px;
+    border-radius: 14px;
+    margin-top: 24px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
     border: none;
     cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
-  .submit-btn:hover:not(:disabled) {
-    background: var(--accent-hover);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-glow);
-  }
-
-  .submit-btn:active:not(:disabled) {
-    transform: translateY(0);
-  }
-
-  .submit-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .link-btn {
+  .submit-btn::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
     width: 100%;
-    padding: 12px;
-    margin-top: 8px;
-    background: transparent;
-    color: var(--accent);
-    font-size: var(--font-sm);
-    font-weight: 600;
-    border: none;
-    cursor: pointer;
-    transition: all 0.2s;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    transition: 0.5s;
   }
 
-  .link-btn:hover {
-    text-decoration: underline;
+  .submit-btn:hover::after {
+    left: 100%;
+    transition: 0.5s;
+  }
+
+  .submit-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 30px var(--accent-glow);
+    filter: brightness(1.1);
+  }
+
+  .forgot-link {
+    display: block;
+    text-align: center;
+    margin-top: 20px;
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: color 0.2s;
+  }
+
+  .forgot-link:hover {
+    color: var(--accent);
   }
 
   .back-btn {
     width: 100%;
-    padding: 12px;
-    margin-top: 8px;
-    background: transparent;
-    color: var(--text-dim);
-    font-size: var(--font-sm);
-    font-weight: 600;
+    margin-top: 16px;
+    background: none;
     border: none;
+    color: var(--text-dim);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 0.75rem;
     cursor: pointer;
-  }
-
-  .back-btn:hover {
-    color: var(--text);
   }
 
   .mfa-prompt {
     text-align: center;
     color: var(--text-muted);
-    font-size: var(--font-md);
-    margin-bottom: 24px;
-    line-height: 1.5;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    margin: 0 0 12px;
   }
 
   .disclaimer {
     text-align: center;
     color: var(--text-dim);
-    font-size: var(--font-xs);
-    margin-bottom: 16px;
-    line-height: 1.4;
+    font-size: 0.65rem;
+    line-height: 1.5;
+    margin: 8px 0 0;
+    font-weight: 500;
+  }
+
+  .error {
+    background: rgba(248, 113, 113, 0.1);
+    color: #f87171;
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 0.85rem;
+    margin-top: 16px;
+    border: 1px solid rgba(248, 113, 113, 0.2);
+    font-weight: 600;
   }
 
   @media (max-width: 480px) {
-    .login-card {
-      padding: 32px 24px;
+    .login-container {
+      padding: 0;
+    }
+    .crystal-card {
+      max-width: 100%;
+      height: 100vh;
       border-radius: 0;
-      background: transparent;
-      backdrop-filter: none;
+      padding: 60px 24px;
+      justify-content: center;
       border: none;
       box-shadow: none;
+      background: transparent;
+      backdrop-filter: none;
+    }
+    .login-stage {
+      max-width: 100%;
+      gap: 20px;
+    }
+    .hero-brand {
+      font-size: 2rem;
+    }
+    .stellar-bg {
+      opacity: 0.5;
     }
   }
 </style>

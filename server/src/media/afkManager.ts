@@ -2,6 +2,7 @@ import db from '../db/connection.js';
 import { sendTo } from '../ws/index.js';
 import { leaveVoiceChannel, handleVoiceEvent } from './signaling.js';
 import { userVoiceChannels } from '../ws/handlers.js';
+import { hasChannelPermission } from '../auth/permissions.js';
 import type { JwtPayload } from '../auth/jwt.js';
 
 // Map of userId -> AFK timer
@@ -73,6 +74,10 @@ async function moveUserToAfk(userId: string, afkChannelId: string) {
 
   const afkChannel = db.prepare('SELECT id FROM channels WHERE id = ?').get(afkChannelId);
   if (!afkChannel) return;
+
+  // Skip if user can't see or connect to the AFK channel
+  if (!hasChannelPermission(userId, afkChannelId, 'view_channel') ||
+      !hasChannelPermission(userId, afkChannelId, 'connect_voice')) return;
 
   const userRow = db.prepare('SELECT username, role FROM users WHERE id = ?').get(userId) as { username: string; role: string } | undefined;
   if (!userRow) return;

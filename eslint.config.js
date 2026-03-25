@@ -8,7 +8,7 @@ export default [
   ...tseslint.configs.recommended,
   ...svelte.configs['flat/recommended'],
   {
-    files: ['client/**/*.ts', 'client/**/*.svelte', 'shared/**/*.ts'],
+    files: ['client/**/*.ts', 'client/**/*.svelte.ts', 'client/**/*.svelte', 'shared/**/*.ts'],
     languageOptions: {
       globals: {
         ...globals.browser,
@@ -29,6 +29,12 @@ export default [
       parserOptions: {
         parser: tseslint.parser,
       },
+    },
+  },
+  {
+    files: ['client/**/*.svelte.ts'],
+    languageOptions: {
+      parser: tseslint.parser,
     },
   },
   {

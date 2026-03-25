@@ -23,6 +23,7 @@ export const emailVerificationPending = writable<{
 } | null>(null);
 export const emailRequired = writable<{ userId: string } | null>(null);
 export const accountLocked = writable<{ userId: string; mfaMethod: MfaMethod } | null>(null);
+export const rateLimited = writable(false);
 export const forgotPasswordState = writable<{
   step: 'username' | 'code' | 'reset';
   username?: string;
@@ -41,8 +42,12 @@ export async function checkAuth() {
       setDesktopCsrf(user.csrf);
     }
     currentUser.set(user);
-  } catch {
-    currentUser.set(null);
+  } catch (e: any) {
+    if (e?.message?.includes('too many requests')) {
+      rateLimited.set(true);
+    } else {
+      currentUser.set(null);
+    }
   } finally {
     authLoading.set(false);
   }

@@ -1,6 +1,6 @@
 import type { JwtPayload } from '../auth/jwt.js';
 import type { ClientEvent } from '@voip-server/shared';
-import { broadcast, sendTo, getDisplayName, getAvatarUrl } from '../ws/index.js';
+import { broadcastToChannel, sendTo, getDisplayName, getAvatarUrl } from '../ws/index.js';
 import { hasChannelPermission } from '../auth/permissions.js';
 import { VoiceRoom } from './room.js';
 import { isAfkChannel } from './afkManager.js';
@@ -14,7 +14,7 @@ async function getOrCreateRoom(channelId: string): Promise<VoiceRoom> {
     room = new VoiceRoom(channelId);
     await room.init();
     room.setSpeakingCallback((userId, speaking) => {
-      broadcast({ type: 'voice:speaking', userId, speaking });
+      broadcastToChannel(channelId, { type: 'voice:speaking', userId, speaking });
     });
     rooms.set(channelId, room);
   }
@@ -33,7 +33,7 @@ export function leaveVoiceChannel(userId: string) {
     room.removePeer(userId);
 
     // Get username from peer list before removal or use a fallback
-    broadcast({ type: 'voice:left', channelId, userId, username: '' });
+    broadcastToChannel(channelId, { type: 'voice:left', channelId, userId, username: '' });
 
     if (room.isEmpty()) {
       room.close();
@@ -93,7 +93,7 @@ export function clearAllRooms() {
   for (const [channelId, room] of rooms) {
     for (const userId of room.peers.keys()) {
       userVoiceChannels.delete(userId);
-      broadcast({ type: 'voice:left', channelId, userId, username: '' });
+      broadcastToChannel(channelId, { type: 'voice:left', channelId, userId, username: '' });
     }
     room.close();
   }
@@ -112,7 +112,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         userVoiceChannels.set(user.userId, event.channelId);
 
         const avatarUrl = getAvatarUrl(user.userId);
-        broadcast({
+        broadcastToChannel(event.channelId, {
           type: 'voice:joined',
           channelId: event.channelId,
           userId: user.userId,
@@ -137,7 +137,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         if (isAfkChannel(event.channelId)) {
           const afkPeer = room.peers.get(user.userId);
           if (afkPeer) afkPeer.muted = true;
-          broadcast({
+          broadcastToChannel(event.channelId, {
             type: 'voice:muteUpdate',
             channelId: event.channelId,
             userId: user.userId,
@@ -151,7 +151,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         const channelId = userVoiceChannels.get(user.userId);
         if (channelId) {
           leaveVoiceChannel(user.userId);
-          broadcast({
+          broadcastToChannel(channelId, {
             type: 'voice:left',
             channelId,
             userId: user.userId,
@@ -166,7 +166,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         if (channelId) {
           // Prevent unmuting in AFK channel
           if (!event.muted && isAfkChannel(channelId)) {
-            broadcast({
+            broadcastToChannel(channelId, {
               type: 'voice:muteUpdate',
               channelId,
               userId: user.userId,
@@ -177,7 +177,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
           const room = rooms.get(channelId);
           const peer = room?.peers.get(user.userId);
           if (peer) peer.muted = event.muted;
-          broadcast({
+          broadcastToChannel(channelId, {
             type: 'voice:muteUpdate',
             channelId,
             userId: user.userId,
@@ -193,7 +193,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
           const room = rooms.get(channelId);
           const peer = room?.peers.get(user.userId);
           if (peer) peer.deafened = event.deafened;
-          broadcast({
+          broadcastToChannel(channelId, {
             type: 'voice:deafenUpdate',
             channelId,
             userId: user.userId,
@@ -284,19 +284,21 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
 
         if (kind === 'video') {
           // Screen share started — notify UI and trigger consumption
-          broadcast({
+          broadcastToChannel(channelId, {
             type: 'screen:started',
             userId: user.userId,
             username: user.username,
             producerId,
           });
-          broadcast(
+          broadcastToChannel(
+            channelId,
             { type: 'rtc:newProducer', producerId, userId: user.userId, username: user.username },
             user.userId,
           );
         } else {
           // Notify other peers about the new audio producer
-          broadcast(
+          broadcastToChannel(
+            channelId,
             { type: 'rtc:newProducer', producerId, userId: user.userId, username: user.username },
             user.userId,
           );
@@ -311,7 +313,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         if (room) {
           room.closeVideoProducer(user.userId);
         }
-        broadcast({ type: 'screen:stopped', userId: user.userId });
+        broadcastToChannel(channelId, { type: 'screen:stopped', userId: user.userId });
         break;
       }
 

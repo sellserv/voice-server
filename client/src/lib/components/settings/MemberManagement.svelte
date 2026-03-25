@@ -178,6 +178,8 @@
   }
 
   async function kickUser(userId: string) {
+    const member = members.find((m) => m.id === userId);
+    if (member?.is_bot) { toast.error('Bots cannot be kicked. Disable them in Bot Settings.'); return; }
     if (!(await confirm('Kick this member? They can rejoin with an invite.', { title: 'Kick Member', confirmLabel: 'Kick', dangerAction: true }))) return;
     try {
       const serverId = getActiveServerId();
@@ -190,6 +192,8 @@
   }
 
   async function banUser(userId: string) {
+    const member = members.find((m) => m.id === userId);
+    if (member?.is_bot) { toast.error('Bots cannot be banned. Disable them in Bot Settings.'); return; }
     if (!(await confirm('Ban this member? They will not be able to rejoin.', { title: 'Ban Member', confirmLabel: 'Ban', dangerAction: true }))) return;
     try {
       const serverId = getActiveServerId();

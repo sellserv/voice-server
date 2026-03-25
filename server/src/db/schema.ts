@@ -2,7 +2,7 @@ import db from './connection.js';
 import { randomUUID } from 'crypto';
 
 const ALL_PERMISSIONS = JSON.stringify({
-  manage_channels: true,
+  manage_channels_groups: true,
   manage_roles: true,
   kick_members: true,
   ban_members: true,
@@ -21,7 +21,6 @@ const ALL_PERMISSIONS = JSON.stringify({
   use_custom_emoji: true,
   change_nickname: true,
   pin_messages: true,
-  manage_channel_groups: true,
   view_channel: true,
   use_apps: true,
   view_audit_log: true,
@@ -30,7 +29,7 @@ const ALL_PERMISSIONS = JSON.stringify({
 });
 
 const MEMBER_PERMISSIONS = JSON.stringify({
-  manage_channels: false,
+  manage_channels_groups: false,
   manage_roles: false,
   kick_members: false,
   ban_members: false,
@@ -49,7 +48,6 @@ const MEMBER_PERMISSIONS = JSON.stringify({
   use_custom_emoji: true,
   change_nickname: true,
   pin_messages: false,
-  manage_channel_groups: false,
   view_channel: true,
   use_apps: true,
   view_audit_log: false,
@@ -58,7 +56,7 @@ const MEMBER_PERMISSIONS = JSON.stringify({
 });
 
 const BOT_PERMISSIONS = JSON.stringify({
-  manage_channels: false,
+  manage_channels_groups: false,
   manage_roles: false,
   kick_members: false,
   ban_members: false,
@@ -77,7 +75,6 @@ const BOT_PERMISSIONS = JSON.stringify({
   use_custom_emoji: true,
   change_nickname: false,
   pin_messages: false,
-  manage_channel_groups: false,
   view_channel: true,
   use_apps: true,
   view_audit_log: false,

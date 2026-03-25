@@ -151,7 +151,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 12px 0;
+    padding: var(--space-4) 0;
     flex-shrink: 0;
     z-index: 20;
     box-shadow: 4px 0 24px rgba(0, 0, 0, 0.2);
@@ -161,7 +161,7 @@
     width: 32px;
     height: 2px;
     background: var(--glass-border);
-    margin: 8px 0;
+    margin: var(--space-3) 0;
     flex-shrink: 0;
     border-radius: 2px;
     opacity: 0.5;
@@ -172,9 +172,9 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-3);
     overflow-y: auto;
-    padding: 4px 0;
+    padding: var(--space-2) 0;
     flex: 0 1 auto;
     min-height: 0;
     scrollbar-width: none;
@@ -346,7 +346,7 @@
     position: absolute;
     bottom: -2px;
     right: -2px;
-    border: 3px solid #040408; /* Match nav background */
+    border: 3px solid var(--bg-darkest);
     border-radius: 12px;
     z-index: 2;
   }
@@ -386,14 +386,14 @@
     justify-content: center;
     color: var(--text-dim);
     z-index: 2;
-    border: 2px solid #040408;
+    border: 2px solid var(--bg-darkest);
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   }
 
   .admin-btn {
     background: rgba(255, 255, 255, 0.03);
     color: var(--text-dim);
-    margin-top: 8px;
+    margin-top: var(--space-3);
   }
 
   .admin-btn:hover {

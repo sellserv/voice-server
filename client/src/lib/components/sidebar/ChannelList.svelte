@@ -1,8 +1,5 @@
 <script lang="ts">
-  import { currentUser } from '$lib/stores/auth';
   import {
-    textChannels,
-    voiceChannels,
     activeChannelId,
     unreadChannels,
     unreadCounts,
@@ -10,23 +7,18 @@
     markChannelRead,
     clearMentions,
     renameChannel,
-    reorderChannels,
-    moveChannelToGroup,
     groupedChannels,
     channelGroups,
-    createChannelGroup,
     renameChannelGroup,
-    deleteChannelGroup,
-    reorderChannelGroups,
   } from '$lib/stores/channels';
   import { SvelteSet } from 'svelte/reactivity';
-  import { toast, confirm } from '$lib/stores/toast';
+  import { toast } from '$lib/stores/toast';
   import { inVoiceChannel, voiceChannelMembers, speakingUsers } from '$lib/stores/media';
   import { usersMap } from '$lib/stores/users';
   import { resolveAsset } from '$lib/stores/server';
   import { hasPermissionStore } from '$lib/stores/permissions';
   import { activeScreenShares } from '$lib/stores/screenShare';
-  import { joinVoice, leaveVoice } from '$lib/webrtc';
+  import { joinVoice } from '$lib/webrtc';
   import { nameStyle } from '$lib/nameColor';
   import Icon from '../Icon.svelte';
 
@@ -35,8 +27,6 @@
     onchannelcontextmenu,
     ongroupcontextmenu,
     onviewscreen,
-    showNewGroupInput = $bindable(false),
-    newGroupName = $bindable(''),
   }: {
     onpeercontextmenu: (
       e: MouseEvent,
@@ -45,19 +35,13 @@
     onchannelcontextmenu: (e: MouseEvent, channelId: string, channelName: string) => void;
     ongroupcontextmenu: (e: MouseEvent, groupId: string, groupName: string) => void;
     onviewscreen?: (userId: string) => void;
-    showNewGroupInput?: boolean;
-    newGroupName?: string;
   } = $props();
 
-  const canManageChannels = hasPermissionStore('manage_channels');
-  const canManageGroups = hasPermissionStore('manage_channel_groups');
+  const _canManageChannels = hasPermissionStore('manage_channels');
+  const _canManageGroups = hasPermissionStore('manage_channel_groups');
 
   let editingChannelId: string | null = $state(null);
   let editingChannelName = $state('');
-  let draggingChannelId: string | null = $state(null);
-  let dragOverChannelId: string | null = $state(null);
-  let dragOverGroupId: string | null | undefined = $state(undefined);
-  let draggingGroupId: string | null = $state(null);
 
   // Channel groups state
   let collapsedGroups = new SvelteSet<string>();
@@ -116,132 +100,12 @@
     editingGroupId = null;
   }
 
-  async function handleCreateGroup() {
-    if (!newGroupName.trim()) {
-      showNewGroupInput = false;
-      return;
-    }
-    try {
-      await createChannelGroup(newGroupName.trim());
-      newGroupName = '';
-      showNewGroupInput = false;
-    } catch (err: any) {
-      toast.error('Failed to create group: ' + err.message);
-    }
-  }
-
   function toggleGroupCollapse(groupId: string) {
     if (collapsedGroups.has(groupId)) {
       collapsedGroups.delete(groupId);
     } else {
       collapsedGroups.add(groupId);
     }
-  }
-
-  // Drag and drop for reordering channels
-  function handleDragStart(e: DragEvent, channelId: string) {
-    if (!$canManageChannels) return;
-    draggingChannelId = channelId;
-    if (e.dataTransfer) {
-      e.dataTransfer.setData('channelId', channelId);
-      e.dataTransfer.effectAllowed = 'move';
-    }
-  }
-
-  function handleDragOver(e: DragEvent, channelId: string) {
-    if (!$canManageChannels || !draggingChannelId || draggingChannelId === channelId) return;
-    e.preventDefault();
-    dragOverChannelId = channelId;
-  }
-
-  function handleDragLeave() {
-    dragOverChannelId = null;
-  }
-
-  async function handleDrop(e: DragEvent, targetId: string, siblings: any[]) {
-    if (!$canManageChannels || !draggingChannelId || draggingChannelId === targetId) return;
-    e.preventDefault();
-    dragOverChannelId = null;
-
-    const sourceId = draggingChannelId;
-    draggingChannelId = null;
-
-    const targetIdx = siblings.findIndex((c) => c.id === targetId);
-    const sourceIdx = siblings.findIndex((c) => c.id === sourceId);
-
-    if (targetIdx === -1) return;
-
-    // Determine new position: if we're moving it "up", we insert at targetIdx
-    // If moving "down", we insert at targetIdx
-    let newPosition = siblings[targetIdx].position;
-
-    try {
-      await reorderChannels(sourceId, newPosition);
-    } catch (err: any) {
-      toast.error('Failed to reorder: ' + err.message);
-    }
-  }
-
-  function handleDragEnd() {
-    draggingChannelId = null;
-    dragOverChannelId = null;
-  }
-
-  // Drag and drop for groups
-  function handleGroupDragStart(e: DragEvent, groupId: string) {
-    if (!$canManageGroups) return;
-    draggingGroupId = groupId;
-    if (e.dataTransfer) {
-      e.dataTransfer.setData('groupId', groupId);
-      e.dataTransfer.effectAllowed = 'move';
-    }
-  }
-
-  function handleGroupDragOver(e: DragEvent, groupId: string | null) {
-    if (!$canManageGroups) return;
-    e.preventDefault();
-    dragOverGroupId = groupId;
-  }
-
-  function handleGroupDragLeave() {
-    dragOverGroupId = undefined;
-  }
-
-  async function handleGroupDrop(e: DragEvent, groupId: string | null) {
-    if (!$canManageChannels || draggingGroupId) return;
-    e.preventDefault();
-    const channelId = e.dataTransfer?.getData('channelId');
-    dragOverGroupId = undefined;
-
-    if (!channelId) return;
-
-    try {
-      await moveChannelToGroup(channelId, groupId);
-    } catch (err: any) {
-      toast.error('Failed to move channel: ' + err.message);
-    }
-  }
-
-  async function handleGroupReorderDrop(e: DragEvent, targetGroupId: string) {
-    if (!$canManageGroups || !draggingGroupId || draggingGroupId === targetGroupId) return;
-    e.preventDefault();
-    const sourceGroupId = draggingGroupId;
-    draggingGroupId = null;
-    dragOverGroupId = undefined;
-
-    const targetGroup = $channelGroups.find((g) => g.id === targetGroupId);
-    if (!targetGroup) return;
-
-    try {
-      await reorderChannelGroups(sourceGroupId, targetGroup.position);
-    } catch (err: any) {
-      toast.error('Failed to reorder groups: ' + err.message);
-    }
-  }
-
-  function handleGroupDragEnd() {
-    draggingGroupId = null;
-    dragOverGroupId = undefined;
   }
 
   async function handleJoinVoice(channelId: string) {
@@ -264,17 +128,6 @@
       {#if group}
         <div
           class="group-header"
-          class:group-dragging={draggingGroupId === group.id}
-          class:group-drag-over={dragOverGroupId === group.id}
-          draggable={$canManageGroups ? 'true' : undefined}
-          ondragstart={(e) => handleGroupDragStart(e, group.id)}
-          ondragover={(e) => handleGroupDragOver(e, group.id)}
-          ondragleave={handleGroupDragLeave}
-          ondrop={(e) => {
-            if (draggingGroupId) handleGroupReorderDrop(e, group.id);
-            else handleGroupDrop(e, group.id);
-          }}
-          ondragend={handleGroupDragEnd}
           oncontextmenu={(e) => ongroupcontextmenu(e, group.id, group.name)}
         >
           {#if editingGroupId === group.id}
@@ -309,35 +162,11 @@
         </div>
       {/if}
 
-      {#if !group && $canManageChannels}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="ungrouped-drop-zone"
-          class:group-drag-over={dragOverGroupId === null}
-          ondragover={(e) => handleGroupDragOver(e, null)}
-          ondragleave={handleGroupDragLeave}
-          ondrop={(e) => handleGroupDrop(e, null)}
-        ></div>
-      {/if}
-
       {#if !group || !collapsedGroups.has(group.id)}
         {#each groupChannels as channel (channel.id)}
           {#if channel.type === 'text'}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="channel-row"
-              class:drag-over={dragOverChannelId === channel.id}
-              draggable={$canManageChannels ? 'true' : undefined}
-              ondragstart={(e) => handleDragStart(e, channel.id)}
-              ondragover={(e) => handleDragOver(e, channel.id)}
-              ondragleave={handleDragLeave}
-              ondrop={(e) =>
-                handleDrop(
-                  e,
-                  channel.id,
-                  groupChannels.filter((c) => c.type === 'text'),
-                )}
-              ondragend={handleDragEnd}
               oncontextmenu={(e) => onchannelcontextmenu(e, channel.id, channel.name)}
             >
               {#if editingChannelId === channel.id}
@@ -383,21 +212,8 @@
               {/if}
             </div>
           {:else if channel.type === 'voice'}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="channel-row"
-              class:drag-over={dragOverChannelId === channel.id}
-              draggable={$canManageChannels ? 'true' : undefined}
-              ondragstart={(e) => handleDragStart(e, channel.id)}
-              ondragover={(e) => handleDragOver(e, channel.id)}
-              ondragleave={handleDragLeave}
-              ondrop={(e) =>
-                handleDrop(
-                  e,
-                  channel.id,
-                  groupChannels.filter((c) => c.type === 'voice'),
-                )}
-              ondragend={handleDragEnd}
               oncontextmenu={(e) => onchannelcontextmenu(e, channel.id, channel.name)}
             >
               {#if editingChannelId === channel.id}
@@ -493,28 +309,6 @@
       {/if}
     </div>
   {/each}
-
-  {#if showNewGroupInput}
-    <form
-      class="new-group-form"
-      onsubmit={(e) => {
-        e.preventDefault();
-        handleCreateGroup();
-      }}
-    >
-      <input
-        type="text"
-        class="rename-input"
-        placeholder="New Group Name"
-        bind:value={newGroupName}
-        maxlength="32"
-        onkeydown={(e) => {
-          if (e.key === 'Escape') showNewGroupInput = false;
-        }}
-        onblur={handleCreateGroup}
-      />
-    </form>
-  {/if}
 </div>
 
 <style>
@@ -546,6 +340,7 @@
     padding: 0 10px;
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.05) transparent;
+    position: relative;
   }
 
   .channel-section {
@@ -557,6 +352,7 @@
     align-items: center;
     padding: 4px 0;
     margin-bottom: 4px;
+    position: relative;
   }
 
   .group-toggle {
@@ -605,59 +401,12 @@
     padding: 0;
   }
 
-  .new-group-form {
-    padding: 8px 0;
-  }
-
-  .group-dragging {
-    opacity: 0.4;
-    transform: scale(0.98);
-  }
-
-  .group-header[draggable='true'] {
-    cursor: grab;
-  }
-
-  .group-header[draggable='true']:active {
-    cursor: grabbing;
-  }
-
-  .group-drag-over {
-    background: var(--accent-subtle);
-    border-radius: var(--radius-sm);
-    box-shadow: 0 0 0 1px var(--accent);
-  }
-
-  .ungrouped-drop-zone {
-    height: 4px;
-    margin: 4px 0;
-    border-radius: 2px;
-    transition: all 0.2s var(--ease-out);
-  }
-
-  .ungrouped-drop-zone.group-drag-over {
-    height: 36px;
-    background: var(--accent-subtle);
-    box-shadow: 0 0 0 1px var(--accent);
-  }
-
   .channel-row {
     display: flex;
     align-items: center;
     position: relative;
     margin: 2px 0;
-  }
-
-  .channel-row.drag-over {
-    box-shadow: 0 -2px 0 var(--accent);
-  }
-
-  .channel-row[draggable='true'] {
-    cursor: grab;
-  }
-
-  .channel-row[draggable='true']:active {
-    cursor: grabbing;
+    transition: all 0.2s var(--ease-out);
   }
 
   .rename-form {

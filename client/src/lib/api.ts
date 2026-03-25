@@ -1,4 +1,7 @@
 import { getServerUrl, getDesktopCsrf, getDesktopToken, isDesktop, markSessionExpired } from './stores/server';
+import { toast } from './stores/toast';
+
+let rateLimitWarned = false;
 
 function getBase(): string {
   return getServerUrl();
@@ -35,11 +38,25 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     opts.body = JSON.stringify(body);
   }
 
-  const res = await fetch(`${BASE}${path}`, opts);
+  let res = await fetch(`${BASE}${path}`, opts);
+
+  // Retry once after a short delay on rate limit or temporary unavailable
+  if (res.status === 429 || res.status === 503) {
+    if (!rateLimitWarned) {
+      rateLimitWarned = true;
+      toast.error('Slow down — too many requests. Retrying...');
+      setTimeout(() => { rateLimitWarned = false; }, 5000);
+    }
+    await new Promise(r => setTimeout(r, 1500));
+    res = await fetch(`${BASE}${path}`, opts);
+  }
 
   if (!res.ok) {
     if (res.status === 401 && isDesktop && getDesktopToken()) {
       markSessionExpired();
+    }
+    if (res.status === 429 || res.status === 503) {
+      throw new Error('Slow down — too many requests. Try again in a moment.');
     }
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || err.message || 'Request failed');

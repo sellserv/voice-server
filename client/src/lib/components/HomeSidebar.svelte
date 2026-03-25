@@ -6,6 +6,7 @@
   import { onlineUsers } from '$lib/stores/presence';
   import { currentUser } from '$lib/stores/auth';
   import { toast } from '$lib/stores/toast';
+  import { api } from '$lib/api';
 
   import { resolveAsset } from '$lib/stores/server';
   import Avatar from './Avatar.svelte';

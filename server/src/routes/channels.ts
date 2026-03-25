@@ -158,10 +158,10 @@ export default async function channelRoutes(app: FastifyInstance) {
     return enrichChannelsBatch(filtered);
   });
 
-  // Create channel (manage_channels) — server-scoped
+  // Create channel (manage_channels_groups) — server-scoped
   app.post<{ Body: CreateChannelBody }>(
     '/api/servers/:serverId/channels',
-    { preHandler: [requirePermission('manage_channels'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { name, type, group_id } = request.body;
@@ -200,13 +200,13 @@ export default async function channelRoutes(app: FastifyInstance) {
     },
   );
 
-  // Update channel (manage_channels) - supports name, topic, and group_id — server-scoped
+  // Update channel (manage_channels_groups) - supports name, topic, and group_id — server-scoped
   app.patch<{
     Params: { serverId: string; id: string };
     Body: { name?: string; topic?: string; group_id?: string | null };
   }>(
     '/api/servers/:serverId/channels/:id',
-    { preHandler: [requirePermission('manage_channels'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { id } = request.params;
@@ -258,10 +258,10 @@ export default async function channelRoutes(app: FastifyInstance) {
     },
   );
 
-  // Delete channel (manage_channels) — server-scoped
+  // Delete channel (manage_channels_groups) — server-scoped
   app.delete<{ Params: { serverId: string; id: string } }>(
     '/api/servers/:serverId/channels/:id',
-    { preHandler: [requirePermission('manage_channels'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { id } = request.params;
@@ -280,10 +280,10 @@ export default async function channelRoutes(app: FastifyInstance) {
     },
   );
 
-  // Reorder channels (manage_channels) — server-scoped
+  // Reorder channels (manage_channels_groups) — server-scoped
   app.put<{ Body: { order: string[] } }>(
     '/api/servers/:serverId/channels/reorder',
-    { preHandler: [requirePermission('manage_channels'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { order } = request.body;
@@ -303,13 +303,13 @@ export default async function channelRoutes(app: FastifyInstance) {
     },
   );
 
-  // Legacy: Update channel access control (manage_channels) — server-scoped
+  // Legacy: Update channel access control (manage_channels_groups) — server-scoped
   app.patch<{
     Params: { serverId: string; id: string };
     Body: { restricted: boolean; allowed_role_ids?: string[]; allowed_user_ids?: string[] };
   }>(
     '/api/servers/:serverId/channels/:id/access',
-    { preHandler: [requirePermission('manage_channels'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { id } = request.params;
@@ -371,7 +371,7 @@ export default async function channelRoutes(app: FastifyInstance) {
   // Get all overrides for a channel — server-scoped
   app.get<{ Params: { serverId: string; id: string } }>(
     '/api/servers/:serverId/channels/:id/permissions',
-    { preHandler: [requirePermission('manage_channels'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { id } = request.params;
@@ -393,7 +393,7 @@ export default async function channelRoutes(app: FastifyInstance) {
     };
   }>(
     '/api/servers/:serverId/channels/:id/permissions',
-    { preHandler: [requirePermission('manage_channels'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { id } = request.params;
@@ -513,7 +513,7 @@ export default async function channelRoutes(app: FastifyInstance) {
   // Delete a specific override — server-scoped
   app.delete<{ Params: { serverId: string; id: string; targetType: string; targetId: string } }>(
     '/api/servers/:serverId/channels/:id/permissions/:targetType/:targetId',
-    { preHandler: [requirePermission('manage_channels'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { id, targetType, targetId } = request.params;
@@ -569,7 +569,7 @@ export default async function channelRoutes(app: FastifyInstance) {
     const serverId = getServerId(request);
     const userId = request.user.userId;
     const canManage =
-      hasPermission(userId, 'manage_channels') || hasPermission(userId, 'administrator');
+      hasPermission(userId, 'manage_channels_groups') || hasPermission(userId, 'administrator');
 
     let rows: any[];
     if (canManage) {

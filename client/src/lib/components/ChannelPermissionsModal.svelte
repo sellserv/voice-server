@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from '$lib/api';
-  import { channels } from '$lib/stores/channels';
+  import { channels, channelGroups } from '$lib/stores/channels';
   import { getActiveServerId } from '$lib/stores/servers';
   import { roles } from '$lib/stores/permissions';
   import { toast } from '$lib/stores/toast';
@@ -63,6 +63,7 @@
   const channel = $derived($channels.find((c) => c.id === channelId));
   const channelName = $derived(channel?.name ?? 'channel');
   const isVoice = $derived(channel?.type === 'voice');
+  const channelGroup = $derived(channel?.group_id ? $channelGroups.find((g) => g.id === channel.group_id) : null);
 
   const isEveryone = $derived(
     selectedTarget?.type === 'role' && selectedTarget?.id === EVERYONE_ID,
@@ -270,7 +271,13 @@
       </button>
     </div>
 
-    {#if loading}
+    {#if channelGroup?.permissions_enabled}
+      <div class="group-notice">
+        <Icon name="lock" size={32} />
+        <h4>Permissions controlled by group</h4>
+        <p>This channel's permissions are managed by the <strong>{channelGroup.name}</strong> group. Edit the group's permissions to make changes.</p>
+      </div>
+    {:else if loading}
       <div class="loading">
         <div class="spinner"></div>
         <span>Loading permissions...</span>
@@ -508,6 +515,37 @@
     background: var(--bg-hover);
     color: var(--text);
     transform: rotate(90deg);
+  }
+
+  .group-notice {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--text-dim);
+    text-align: center;
+    padding: 48px 32px;
+  }
+
+  .group-notice h4 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-muted);
+  }
+
+  .group-notice p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    line-height: 1.5;
+    max-width: 300px;
+  }
+
+  .group-notice strong {
+    color: var(--text-muted);
   }
 
   .loading {

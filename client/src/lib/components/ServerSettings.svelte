@@ -7,6 +7,7 @@
   import Icon from './Icon.svelte';
   import GeneralSettings from './settings/GeneralSettings.svelte';
   import RolesSettings from './settings/RolesSettings.svelte';
+  import ChannelManagement from './settings/ChannelManagement.svelte';
   import MemberManagement from './settings/MemberManagement.svelte';
   import InvitesSettings from './settings/InvitesSettings.svelte';
   import SoundboardSettings from './settings/SoundboardSettings.svelte';
@@ -45,12 +46,14 @@
   let activeSection = $state('general');
 
   const isAdmin = hasPermissionStore('administrator');
+  const canManageChannelsGroups = hasPermissionStore('manage_channels_groups');
   const canManageBots = hasPermissionStore('manage_bots');
   const canViewAuditLog = hasPermissionStore('view_audit_log');
 
   const TAB_LABELS: Record<string, string> = {
     general: 'General',
     roles: 'Roles',
+    channels: 'Channels',
     members: 'Members',
     invites: 'Invite Codes',
     soundboard: 'Soundboard',
@@ -70,6 +73,9 @@
         <h5 class="sidebar-title">Server Settings</h5>
         <button class="sidebar-item" class:active={activeSection === 'general'} onclick={() => activeSection = 'general'}>General</button>
         <button class="sidebar-item" class:active={activeSection === 'roles'} onclick={() => activeSection = 'roles'}>Roles</button>
+        {#if $isAdmin || $canManageChannelsGroups}
+          <button class="sidebar-item" class:active={activeSection === 'channels'} onclick={() => activeSection = 'channels'}>Channels</button>
+        {/if}
         <button class="sidebar-item" class:active={activeSection === 'members'} onclick={() => activeSection = 'members'}>Members</button>
         <button class="sidebar-item" class:active={activeSection === 'invites'} onclick={() => activeSection = 'invites'}>Invite Codes</button>
         
@@ -113,6 +119,8 @@
           <GeneralSettings {onclose} />
         {:else if activeSection === 'roles'}
           <RolesSettings />
+        {:else if activeSection === 'channels'}
+          <ChannelManagement serverId={getActiveServerId()} />
         {:else if activeSection === 'members'}
           <MemberManagement />
         {:else if activeSection === 'invites'}

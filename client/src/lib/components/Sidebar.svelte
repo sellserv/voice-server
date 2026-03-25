@@ -4,7 +4,6 @@
   import { hasPermissionStore } from '$lib/stores/permissions';
   import { channelGroups, deleteChannelGroup, renameChannelGroup } from '$lib/stores/channels';
   import { activeServerId } from '$lib/stores/servers';
-  import CreateChannelModal from './CreateChannelModal.svelte';
   import VoiceContextMenu from './VoiceContextMenu.svelte';
   import ChannelContextMenu from './ChannelContextMenu.svelte';
   import ChannelPermissionsModal from './ChannelPermissionsModal.svelte';
@@ -16,6 +15,7 @@
   import SidebarFooter from './sidebar/SidebarFooter.svelte';
   import InviteModal from './InviteModal.svelte';
 
+
   let switching = $state(false);
   $effect(() => {
     $activeServerId; // track
@@ -24,7 +24,6 @@
     return () => clearTimeout(t);
   });
 
-  let showCreateModal = $state(false);
   let showInviteModal = $state(false);
   let contextMenuTarget: { userId: string; username: string; x: number; y: number } | null =
     $state(null);
@@ -38,8 +37,6 @@
   let permissionsGroupId: string | null = $state(null);
   let groupContextTarget: { groupId: string; groupName: string; x: number; y: number } | null =
     $state(null);
-  let showNewGroupInput = $state(false);
-  let newGroupName = $state('');
 
   const canManageChannels = hasPermissionStore('manage_channels');
   const canManageGroups = hasPermissionStore('manage_channel_groups');
@@ -110,11 +107,6 @@
 
 <aside class="sidebar">
   <SidebarHeader
-    oncreate={() => (showCreateModal = true)}
-    oncreategroup={() => {
-      showNewGroupInput = true;
-      newGroupName = '';
-    }}
     onserversettings={() => onserversettings?.()}
     oninvite={() => (showInviteModal = true)}
   />
@@ -126,8 +118,6 @@
       onchannelcontextmenu={handleChannelContextMenu}
       ongroupcontextmenu={handleGroupContextMenu}
       {onviewscreen}
-      bind:showNewGroupInput
-      bind:newGroupName
     />
   </div>
 
@@ -137,10 +127,6 @@
     <SidebarFooter onsettings={() => onopensettings?.()} />
   </div>
 </aside>
-
-{#if showCreateModal}
-  <CreateChannelModal onclose={() => (showCreateModal = false)} />
-{/if}
 
 {#if showInviteModal}
   <InviteModal onclose={() => (showInviteModal = false)} />

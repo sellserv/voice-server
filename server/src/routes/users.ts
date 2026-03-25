@@ -100,6 +100,12 @@ export default async function userRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: 'User is not a member of this server' });
       }
 
+      // Block role changes for bots
+      const targetUser = db.prepare('SELECT is_bot FROM users WHERE id = ?').get(id) as { is_bot: number } | undefined;
+      if (targetUser?.is_bot) {
+        return reply.code(400).send({ error: 'Bot roles cannot be changed. Manage bots in Bot Settings.' });
+      }
+
       if (role_id) {
         const roleRow = db
           .prepare('SELECT id, permissions FROM roles WHERE id = ? AND server_id = ?')
@@ -144,9 +150,13 @@ export default async function userRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'At least one role is required' });
       }
 
-      const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+      const user = db.prepare('SELECT id, is_bot FROM users WHERE id = ?').get(id) as { id: string; is_bot: number } | undefined;
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
+      }
+
+      if (user.is_bot) {
+        return reply.code(400).send({ error: 'Bot roles cannot be changed. Manage bots in Bot Settings.' });
       }
 
       // Verify user is a member of this server

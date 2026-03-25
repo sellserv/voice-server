@@ -184,7 +184,25 @@ textarea {
   font-family: var(--font);
   font-size: 16px;
   outline: none;
-  border: none;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s var(--ease-out);
+}
+
+input:hover,
+textarea:hover {
+  border-color: var(--border-light);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+input:focus,
+textarea:focus {
+  border-color: var(--accent);
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 :focus-visible {
@@ -194,7 +212,27 @@ textarea {
 
 input:focus-visible,
 textarea:focus-visible {
-  outline-offset: 0;
+  outline: none;
+}
+
+/* ── Animated Backgrounds ── */
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.05); }
+}
+
+@keyframes drift {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(10px, 15px); }
+  50% { transform: translate(-5px, 20px); }
+  75% { transform: translate(-15px, 5px); }
+  100% { transform: translate(0, 0); }
 }
 
 ::-webkit-scrollbar {

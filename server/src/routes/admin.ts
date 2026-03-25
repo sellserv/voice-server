@@ -349,11 +349,15 @@ export default async function adminRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Cannot kick yourself' });
       }
 
-      const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id) as
-        | { id: string }
+      const user = db.prepare('SELECT id, is_bot FROM users WHERE id = ?').get(id) as
+        | { id: string; is_bot: number }
         | undefined;
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
+      }
+
+      if (user.is_bot) {
+        return reply.code(400).send({ error: 'Bots cannot be kicked. Disable them in Bot Settings.' });
       }
 
       // Can't kick someone with administrator permission
@@ -396,11 +400,15 @@ export default async function adminRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Cannot ban yourself' });
       }
 
-      const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id) as
-        | { id: string; role: string }
+      const user = db.prepare('SELECT id, role, is_bot FROM users WHERE id = ?').get(id) as
+        | { id: string; role: string; is_bot: number }
         | undefined;
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
+      }
+
+      if (user.is_bot) {
+        return reply.code(400).send({ error: 'Bots cannot be banned. Disable them in Bot Settings.' });
       }
 
       // Can't ban someone with administrator permission

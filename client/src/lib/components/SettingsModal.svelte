@@ -20,6 +20,7 @@
   import { isGradient, parseGradientColors, nameStyle } from '$lib/nameColor';
   import GifPicker from './GifPicker.svelte';
   import Icon from './Icon.svelte';
+  import { toast } from '$lib/stores/toast';
 
   let { onclose, onlogout }: { onclose: () => void; onlogout: () => void } = $props();
 

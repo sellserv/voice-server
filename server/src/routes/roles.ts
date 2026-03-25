@@ -15,7 +15,7 @@ function invalidateRolesCache() {
 }
 
 const VALID_PERMISSIONS: (keyof RolePermissions)[] = [
-  'manage_channels',
+  'manage_channels_groups',
   'manage_roles',
   'ban_members',
   'manage_messages',
@@ -33,7 +33,6 @@ const VALID_PERMISSIONS: (keyof RolePermissions)[] = [
   'use_custom_emoji',
   'change_nickname',
   'pin_messages',
-  'manage_channel_groups',
   'view_channel',
   'use_apps',
   'view_audit_log',

@@ -83,7 +83,8 @@ import type { ... } from '@voip-server/shared';
 - **`main` branch** → deploys to `chat.sellserv.net` (production)
 - **Always commit to `staging` first by default.** Only merge to `main` when the user explicitly says to.
 - To merge staging to production: `git checkout main && git merge --squash staging && git commit && git push origin main`
-- Both branches auto-deploy via GitHub Actions on push.
+- **`staging`** auto-deploys via GitHub Actions on push.
+- **`main`** deploys when a GitHub Release is published (not on push). The desktop build workflow creates a draft release on tag push (`v*`); publishing that draft triggers the production web UI deploy.
 
 ## Commit Rules
 

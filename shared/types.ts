@@ -3,7 +3,7 @@ export type Role = 'admin' | 'member';
 export type MfaMethod = 'email' | 'totp';
 
 export interface RolePermissions {
-  manage_channels: boolean;
+  manage_channels_groups: boolean;
   manage_roles: boolean;
   kick_members: boolean;
   ban_members: boolean;
@@ -22,7 +22,6 @@ export interface RolePermissions {
   use_custom_emoji: boolean;
   change_nickname: boolean;
   pin_messages: boolean;
-  manage_channel_groups: boolean;
   view_channel: boolean;
   use_apps: boolean;
   view_audit_log: boolean;

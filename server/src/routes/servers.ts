@@ -10,7 +10,7 @@ import { sendWelcomeMessages } from '../bots/welcomeBot.js';
 import type { Server, ServerInvitation, Message } from '@voip-server/shared';
 
 const ALL_PERMISSIONS = JSON.stringify({
-  manage_channels: true,
+  manage_channels_groups: true,
   manage_roles: true,
   ban_members: true,
   manage_messages: true,
@@ -27,7 +27,6 @@ const ALL_PERMISSIONS = JSON.stringify({
   use_custom_emoji: true,
   change_nickname: true,
   pin_messages: true,
-  manage_channel_groups: true,
   view_channel: true,
   use_apps: true,
   view_audit_log: true,
@@ -36,7 +35,7 @@ const ALL_PERMISSIONS = JSON.stringify({
 });
 
 const MEMBER_PERMISSIONS = JSON.stringify({
-  manage_channels: false,
+  manage_channels_groups: false,
   manage_roles: false,
   ban_members: false,
   manage_messages: false,
@@ -53,7 +52,6 @@ const MEMBER_PERMISSIONS = JSON.stringify({
   use_custom_emoji: true,
   change_nickname: true,
   pin_messages: false,
-  manage_channel_groups: false,
   view_channel: true,
   use_apps: false,
   view_audit_log: false,

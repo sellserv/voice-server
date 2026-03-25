@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { servers, loadServers, isDmView } from '$lib/stores/servers';
+  import { loadServers } from '$lib/stores/servers';
   import { sendFriendRequest, loadPendingRequests } from '$lib/stores/friends';
 
   import { currentUser } from '$lib/stores/auth';
@@ -46,11 +46,11 @@
 </script>
 
 <div class="splash-container">
-  <div class="splash-inner">
+  <div class="splash-inner glass-panel" style="padding: 60px; background: rgba(255, 255, 255, 0.015);">
     <h1 class="splash-heading">Get Started</h1>
 
     <div class="action-cards">
-      <button class="action-card" onclick={() => (showCreateModal = true)}>
+      <button class="action-card glass-panel" onclick={() => (showCreateModal = true)}>
         <div class="card-icon">
           <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="5" x2="12" y2="19" />
@@ -60,7 +60,7 @@
         <span class="card-label">Create a Server</span>
       </button>
 
-      <div class="action-card join-card">
+      <div class="action-card join-card glass-panel">
         <div class="card-icon">
           <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
@@ -76,14 +76,14 @@
             placeholder="Invite code"
             class="inline-input"
           />
-          <button type="submit" class="inline-btn" disabled={joiningServer || !inviteCode.trim()}>
+          <button type="submit" class="inline-btn btn-accent" disabled={joiningServer || !inviteCode.trim()}>
             {joiningServer ? 'Joining...' : 'Join'}
           </button>
         </form>
       </div>
     </div>
 
-    <div class="friend-section">
+    <div class="friend-section glass-panel" style="background: rgba(0,0,0,0.2);">
       <h2 class="section-heading">Add some friends</h2>
       <form class="inline-form" onsubmit={(e) => { e.preventDefault(); handleAddFriend(); }}>
         <input
@@ -92,7 +92,7 @@
           placeholder="Enter a username"
           class="inline-input"
         />
-        <button type="submit" class="inline-btn" disabled={!friendUsername.trim()}>
+        <button type="submit" class="inline-btn btn-accent" disabled={!friendUsername.trim()}>
           Send Request
         </button>
       </form>
@@ -111,30 +111,37 @@
     justify-content: center;
     width: 100%;
     height: 100%;
-    padding: 40px;
-    background: var(--bg-dark);
+    padding: var(--space-8);
+    background: var(--bg-darkest);
   }
 
   .splash-inner {
-    max-width: 540px;
+    max-width: 680px;
     width: 100%;
     display: flex;
     flex-direction: column;
-    gap: 32px;
+    gap: var(--space-8);
+    border-radius: var(--radius-lg);
+    animation: splashIn 0.5s var(--ease-out);
+  }
+
+  @keyframes splashIn {
+    from { opacity: 0; transform: scale(0.98) translateY(10px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
   }
 
   .splash-heading {
     margin: 0;
-    font-size: 2rem;
+    font-size: 2.2rem;
     font-weight: 800;
     color: white;
     text-align: center;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.03em;
   }
 
   .action-cards {
     display: flex;
-    gap: 20px;
+    gap: var(--space-5);
   }
 
   .action-card {
@@ -142,117 +149,96 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 16px;
-    padding: 32px 20px;
-    background: var(--bg-darker);
+    gap: var(--space-5);
+    padding: var(--space-8) var(--space-5);
+    background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
     cursor: pointer;
-    transition: all 0.2s var(--ease-out);
+    transition: all 0.3s var(--ease-out);
     text-align: center;
-    border: none;
   }
 
   button.action-card {
-    background: var(--bg-darker);
     color: inherit;
   }
 
   button.action-card:hover {
     background: var(--bg-hover);
-    transform: translateY(-4px);
+    transform: translateY(-6px);
+    border-color: var(--accent-subtle);
     box-shadow: var(--shadow-lg);
   }
 
   .join-card {
     cursor: default;
-    background: var(--bg-darker);
+    background: rgba(255, 255, 255, 0.03);
   }
 
   .card-icon {
-    width: 64px;
-    height: 64px;
-    border-radius: 16px;
+    width: 64px; height: 64px;
+    border-radius: 18px;
     background: var(--bg-mid);
     display: flex;
     align-items: center;
     justify-content: center;
     color: var(--accent);
-    transition: all 0.2s;
+    transition: all 0.4s var(--ease-elastic);
   }
 
   .action-card:hover .card-icon {
     background: var(--accent);
     color: white;
     transform: scale(1.1) rotate(5deg);
+    box-shadow: 0 4px 15px var(--accent-glow);
   }
 
   .card-label {
-    font-size: 1.1rem;
-    font-weight: 700;
+    font-size: 1.15rem;
+    font-weight: 800;
     color: white;
+    letter-spacing: -0.01em;
   }
 
   .section-heading {
-    margin: 0 0 16px;
+    margin: 0 0 var(--space-4);
     font-size: 0.75rem;
     font-weight: 800;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.12em;
     color: var(--text-dim);
     text-align: center;
   }
 
   .inline-form {
     display: flex;
-    gap: 10px;
+    gap: var(--space-3);
     width: 100%;
   }
 
   .inline-input {
     flex: 1;
-    padding: 12px 16px;
-    background: var(--bg-darkest);
-    color: white;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    font-size: var(--font-md);
-    outline: none;
-    transition: all 0.2s;
-  }
-
-  .inline-input:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent);
+    background: rgba(0, 0, 0, 0.3);
   }
 
   .inline-btn {
     padding: 12px 24px;
-    background: var(--accent);
-    color: white;
-    font-weight: 700;
-    font-size: var(--font-md);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     white-space: nowrap;
-    transition: all 0.2s;
-    border: none;
-    cursor: pointer;
-  }
-
-  .inline-btn:hover:not(:disabled) {
-    background: var(--accent-hover);
-    box-shadow: var(--shadow-glow);
-  }
-
-  .inline-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 800;
   }
 
   .friend-section {
-    background: var(--bg-darker);
-    padding: 24px;
-    border-radius: 12px;
+    padding: var(--space-7);
+    border-radius: var(--radius-lg);
     border: 1px solid var(--border);
+  }
+
+  @media (max-width: 640px) {
+    .action-cards {
+      flex-direction: column;
+    }
   }
 </style>

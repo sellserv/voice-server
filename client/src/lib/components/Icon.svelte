@@ -84,13 +84,11 @@
         x2="10"
         y2="8"
       /><line x1="14" y1="8" x2="14" y2="8" /><line x1="18" y1="8" x2="18" y2="8" /><line
-        x1="6"
-        y1="12"
+        x1="6" y1="12"
         x2="6"
         y2="12"
       /><line x1="10" y1="12" x2="10" y2="12" /><line x1="14" y1="12" x2="14" y2="12" /><line
-        x1="18"
-        y1="12"
+        x1="18" y1="12"
         x2="18"
         y2="12"
       /><line x1="7" y1="16" x2="17" y2="16" />
@@ -104,19 +102,25 @@
       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
     {:else if name === 'chevron-down'}
       <polyline points="6 9 12 15 18 9" />
+    {:else if name === 'chevron-up'}
+      <polyline points="18 15 12 9 6 15" />
+    {:else if name === 'chevron-right'}
+      <polyline points="9 18 15 12 9 6" />
+    {:else if name === 'arrow-up'}
+      <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
+    {:else if name === 'arrow-down'}
+      <line x1="12" y1="5" x2="12" y2="19" /><polyline points="19 12 12 19 5 12" />
     {:else if name === 'message-square'}
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     {:else if name === 'bar-chart'}
       <line x1="12" y1="20" x2="12" y2="10" /><line x1="18" y1="20" x2="18" y2="4" /><line
-        x1="6"
-        y1="20"
+        x1="6" y1="20"
         x2="6"
         y2="16"
       />
     {:else if name === 'info'}
       <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line
-        x1="12"
-        y1="8"
+        x1="12" y1="8"
         x2="12.01"
         y2="8"
       />
@@ -140,8 +144,6 @@
       <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
     {:else if name === 'grid'}
       <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
-    {:else if name === 'users'}
-      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
     {:else if name === 'bell-off'}
       <path d="M13.73 21a2 2 0 0 1-3.46 0" /><path d="M18.63 13A17.89 17.89 0 0 1 18 8" /><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14" /><path d="M18 8a6 6 0 0 0-9.33-5" /><line x1="1" y1="1" x2="23" y2="23" />
     {:else if name === 'at-sign'}

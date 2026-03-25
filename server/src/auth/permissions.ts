@@ -2,7 +2,7 @@ import db from '../db/connection.js';
 import type { RolePermissions, ChannelOverridablePermission } from '@voip-server/shared';
 
 const DEFAULT_PERMISSIONS: RolePermissions = {
-  manage_channels: false,
+  manage_channels_groups: false,
   manage_roles: false,
   kick_members: false,
   ban_members: false,
@@ -21,7 +21,6 @@ const DEFAULT_PERMISSIONS: RolePermissions = {
   use_custom_emoji: true,
   change_nickname: true,
   pin_messages: false,
-  manage_channel_groups: false,
   view_channel: true,
   use_apps: true,
   view_audit_log: false,

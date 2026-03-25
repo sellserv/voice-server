@@ -9,7 +9,6 @@
 
   import { toast } from '$lib/stores/toast';
   import { roles, hasPermissionStore } from '$lib/stores/permissions';
-  import { serverSettings } from '$lib/stores/serverSettings';
   import { allUsers as usersStore, fetchUsers } from '$lib/stores/users';
   import type { Message } from '@voip-server/shared';
   import { resolveAsset } from '$lib/stores/server';
@@ -45,8 +44,6 @@
   let showAppsMenu = $state(false);
   let activeApp = $state<string | null>(null);
   let inputBar: HTMLDivElement;
-
-  const canUseApps = hasPermissionStore('use_apps');
 
   // Mention autocomplete state
   let mentionQuery = $state<string | null>(null);
@@ -467,8 +464,8 @@
   .input-bar {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 0 20px 24px;
+    gap: var(--space-2);
+    padding: 0 var(--space-5) var(--space-6);
     flex-shrink: 0;
     position: relative;
     z-index: 20;
@@ -476,14 +473,14 @@
 
   .input-row {
     display: flex;
-    align-items: center; /* Changed from flex-end for better icon centering */
-    gap: 4px;
+    align-items: center;
+    gap: var(--space-1);
     background: rgba(255, 255, 255, 0.03);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--glass-border);
-    border-radius: 14px;
-    padding: 4px 8px;
+    border-radius: var(--radius-lg);
+    padding: 4px var(--space-3);
     transition: all 0.3s var(--ease-out);
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
   }
@@ -510,7 +507,7 @@
     justify-content: center;
     background: transparent;
     color: var(--text-icon);
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     transition: all 0.2s var(--ease-elastic);
     border: none;
     cursor: pointer;
@@ -536,7 +533,7 @@
     display: flex;
     align-items: center;
     min-width: 0;
-    padding: 0 8px;
+    padding: 0 var(--space-3);
   }
 
   .text-input {
@@ -544,7 +541,8 @@
     padding: 10px 0;
     background: none;
     color: white;
-    border: none;
+    border: none !important;
+    box-shadow: none !important;
     resize: none;
     max-height: 200px;
     line-height: 1.5;
@@ -567,7 +565,7 @@
     justify-content: center;
     background: var(--accent);
     color: white;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     transition: all 0.3s var(--ease-elastic);
     flex-shrink: 0;
     box-shadow: 0 4px 12px var(--accent-glow);
@@ -602,8 +600,8 @@
   .mention-popup {
     position: absolute;
     bottom: 100%;
-    left: 20px;
-    right: 20px;
+    left: var(--space-5);
+    right: var(--space-5);
     max-height: 320px;
     overflow-y: auto;
     background: var(--glass-bg-heavy);
@@ -611,10 +609,10 @@
     -webkit-backdrop-filter: blur(32px);
     border: 1px solid var(--glass-border-bright);
     border-radius: var(--radius);
-    padding: 8px;
+    padding: var(--space-3);
     box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
     z-index: 50;
-    margin-bottom: 12px;
+    margin-bottom: var(--space-4);
     animation: popupIn 0.2s var(--ease-out);
     scrollbar-width: thin;
   }
@@ -627,7 +625,7 @@
   .mention-item {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-4);
     padding: 8px 12px;
     border-radius: var(--radius-sm);
     cursor: pointer;
@@ -714,7 +712,7 @@
     border: 1px solid var(--glass-border);
     border-bottom: none;
     border-radius: var(--radius) var(--radius) 0 0;
-    margin: 0 20px -8px;
+    margin: 0 var(--space-6) -8px;
     position: relative;
     z-index: 1;
     box-shadow: 0 -4px 12px rgba(0,0,0,0.1);
@@ -723,7 +721,7 @@
   .reply-preview-content {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-3);
     min-width: 0;
     flex: 1;
   }
@@ -771,12 +769,12 @@
 
   @media (max-width: 768px) {
     .input-bar {
-      padding: 0 12px 16px;
+      padding: 0 var(--space-4) var(--space-5);
     }
 
     .input-row {
-      gap: 6px;
-      padding: 0 8px;
+      gap: var(--space-2);
+      padding: 0 var(--space-3);
     }
 
     .picker-btn, .attach-btn, .send-btn {

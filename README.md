@@ -23,6 +23,7 @@ Features real-time messaging, WebRTC voice/video calls, screen sharing, synchron
 - **Screen Sharing** — Share your screen to a voice channel with a fullscreen viewer
 - **Direct Messages** — Private 1-on-1 DM channels with voice and video call support
 - **Calling** — Initiate, accept, reject, and end 1-on-1 calls with ring notifications, missed call tracking
+- **Friends System** — Add friends, manage pending requests, and block users. See online status and mutual servers.
 - **Polls** — Create polls in chat channels with real-time voting, multiple choice support, auto-expiry with winner announcements, manual close by creator
 
 ### Apps
@@ -35,13 +36,15 @@ Features real-time messaging, WebRTC voice/video calls, screen sharing, synchron
 
 - **Multi-Server** — Users can create and join multiple servers, each with independent channels, roles, bots, and settings
 - **Roles & Permissions** — 25 granular permissions with per-channel and per-group overrides (view, send, upload, react, emoji, manage messages, pin, connect voice, speak, screen share)
-- **Channel Groups** — Organize channels into collapsible groups with drag-and-drop reordering and group-level permission overrides
+- **Channel Groups** — Organize channels into collapsible groups with group-level permission overrides. Precise reordering via drag-and-drop or **Context Menu "Move"** tool.
+- **AFK Channels** — Automatically move inactive voice users to a designated AFK channel after a configurable timeout
 - **Custom Emojis** — Upload and use custom emojis in chat and reactions (per-server, up to 50)
 - **Bots** — Welcome bot with custom greeting and DM support, Automod bot with blocked word filtering (delete/warn/both) and admin immunity
 - **Server Bans** — Ban/unban users with optional reasons and ban history
 - **Admin Tools** — Invite codes (with expiry and max uses), server name/icon customization, app toggling, audit log
 - **Instance Admin** — Global admin panel for managing all servers, users, and instance-wide settings
 - **GIF Picker** — Search and send GIFs via Giphy API
+- **Message Reporting** — Users can report problematic messages; Instance Admins can review and resolve reports via the global dashboard
 
 ### Security
 
@@ -59,6 +62,7 @@ Features real-time messaging, WebRTC voice/video calls, screen sharing, synchron
 
 - **Desktop App** — Native desktop app via Electron (macOS, Windows, Linux) with auto-updates via GitHub Releases
 - **Microsoft Store** — APPX build target for Windows Store distribution
+- **Cinematic Login** — Premium, interactive entry experience with mouse-parallax stellar background and technical system pulse indicator
 - **Themes** — Midnight Blue (default), Dark, Light with glassmorphism UI
 - **Noise Suppression** — RNNoise-based noise suppression via WebAssembly
 - **Responsive** — Mobile-friendly with hamburger menus at 768px breakpoint
@@ -66,6 +70,7 @@ Features real-time messaging, WebRTC voice/video calls, screen sharing, synchron
 - **Idle Detection** — Auto-sets status to idle after 5 minutes of inactivity
 - **Presence** — Online, idle, do not disturb, and invisible statuses
 - **Home Notifications** — Unread badge on Home button for DMs and server invitations
+- **Profile Banners** — Customize your server profile with uploaded banners or GIFs
 
 ## Tech Stack
 
@@ -75,7 +80,7 @@ Features real-time messaging, WebRTC voice/video calls, screen sharing, synchron
 | HTTP Server       | Fastify 5                     |
 | Frontend          | SvelteKit + Svelte 5          |
 | Build Tool        | Vite 6                        |
-| Database          | SQLite via better-sqlite3     |
+| Database          | SQLite via better-sqlite3 + FTS5 |
 | Voice/Video       | mediasoup 3.15 (WebRTC SFU)   |
 | Auth              | bcrypt + JWT + otpauth (TOTP) |
 | Email             | Resend API                    |

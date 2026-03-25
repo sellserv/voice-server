@@ -62,7 +62,7 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
   // Create channel group — server-scoped
   app.post<{ Body: { name: string } }>(
     '/api/servers/:serverId/channel-groups',
-    { preHandler: [requirePermission('manage_channel_groups'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { name } = request.body;
@@ -94,7 +94,7 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
   // Update channel group (name, permissions_enabled) — server-scoped
   app.patch<{ Params: { serverId: string; id: string }; Body: { name?: string; permissions_enabled?: boolean } }>(
     '/api/servers/:serverId/channel-groups/:id',
-    { preHandler: [requirePermission('manage_channel_groups'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { id } = request.params;
@@ -147,7 +147,7 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
   // Delete channel group (channels become ungrouped) — server-scoped
   app.delete<{ Params: { serverId: string; id: string } }>(
     '/api/servers/:serverId/channel-groups/:id',
-    { preHandler: [requirePermission('manage_channel_groups'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { id } = request.params;
@@ -167,7 +167,7 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
   // Reorder channel groups — server-scoped
   app.put<{ Body: { order: string[] } }>(
     '/api/servers/:serverId/channel-groups/reorder',
-    { preHandler: [requirePermission('manage_channel_groups'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { order } = request.body;
@@ -192,7 +192,7 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
   // Get all overrides for a group — server-scoped
   app.get<{ Params: { serverId: string; id: string } }>(
     '/api/servers/:serverId/channel-groups/:id/permissions',
-    { preHandler: [requirePermission('manage_channel_groups'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { id } = request.params;
@@ -214,7 +214,7 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
     };
   }>(
     '/api/servers/:serverId/channel-groups/:id/permissions',
-    { preHandler: [requirePermission('manage_channel_groups'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { id } = request.params;
@@ -334,7 +334,7 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
   // Delete a specific group override — server-scoped
   app.delete<{ Params: { serverId: string; id: string; targetType: string; targetId: string } }>(
     '/api/servers/:serverId/channel-groups/:id/permissions/:targetType/:targetId',
-    { preHandler: [requirePermission('manage_channel_groups'), requireServerMember] },
+    { preHandler: [requirePermission('manage_channels_groups'), requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const { id, targetType, targetId } = request.params;
@@ -390,7 +390,7 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
     const serverId = getServerId(request);
     const userId = request.user.userId;
     const canManage =
-      hasPermission(userId, 'manage_channel_groups') || hasPermission(userId, 'administrator');
+      hasPermission(userId, 'manage_channels_groups') || hasPermission(userId, 'administrator');
 
     let rows: any[];
     if (canManage) {

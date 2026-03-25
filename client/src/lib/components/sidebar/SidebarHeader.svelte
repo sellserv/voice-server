@@ -1,27 +1,18 @@
 <script lang="ts">
   import { serverSettings } from '$lib/stores/serverSettings';
   import { hasPermissionStore } from '$lib/stores/permissions';
-  import { resolveAsset } from '$lib/stores/server';
   import Icon from '../Icon.svelte';
 
   let {
-    oncreate,
-    oncreategroup,
     onserversettings,
     oninvite,
   }: {
-    oncreate: () => void;
-    oncreategroup: () => void;
     onserversettings: () => void;
     oninvite: () => void;
   } = $props();
 
-  const canManageChannels = hasPermissionStore('manage_channels');
-  const canManageGroups = hasPermissionStore('manage_channel_groups');
   const canInvite = hasPermissionStore('create_invites');
   const isAdmin = hasPermissionStore('administrator');
-
-  let showPlusMenu = $state(false);
 </script>
 
 <div class="sidebar-header">
@@ -38,46 +29,6 @@
       >
         <Icon name="plus" size={20} strokeWidth={2.5} />
       </button>
-    {/if}
-    {#if $canManageChannels}
-      <div class="plus-menu-container">
-        <button
-          class="icon-btn"
-          title="Create"
-          aria-label="Create"
-          onclick={() => (showPlusMenu = !showPlusMenu)}
-        >
-          <Icon name="grid" size={20} strokeWidth={2.5} />
-        </button>
-        {#if showPlusMenu}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="plus-menu-backdrop" onclick={() => (showPlusMenu = false)}></div>
-          <div class="plus-menu">
-            <button
-              class="plus-menu-item"
-              onclick={() => {
-                oncreate();
-                showPlusMenu = false;
-              }}
-            >
-              <Icon name="hash" size={16} strokeWidth={2.5} />
-              <span>Create Channel</span>
-            </button>
-            {#if $canManageGroups}
-              <button
-                class="plus-menu-item"
-                onclick={() => {
-                  oncreategroup();
-                  showPlusMenu = false;
-                }}
-              >
-                <Icon name="users" size={16} strokeWidth={2.5} />
-                <span>Create Group</span>
-              </button>
-            {/if}
-          </div>
-        {/if}
-      </div>
     {/if}
     {#if $isAdmin}
       <button

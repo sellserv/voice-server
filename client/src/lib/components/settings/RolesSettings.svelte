@@ -2,7 +2,7 @@
   import { roles, loadRoles } from '$lib/stores/permissions';
   import { hasPermissionStore } from '$lib/stores/permissions';
   import { api } from '$lib/api';
-  import { confirm } from '$lib/stores/toast';
+  import { confirm, toast } from '$lib/stores/toast';
   import type { RolePermissions, RoleRecord } from '@voip-server/shared';
   import { getActiveServerId } from '$lib/stores/servers';
   import Icon from '../Icon.svelte';
@@ -22,8 +22,7 @@
     { key: 'manage_server', label: 'Manage Server', description: 'Allows changing server name, icon, and general settings.', section: 'General' },
     { key: 'create_invites', label: 'Create Invites', description: 'Allows members to invite new members to the server.', section: 'General' },
     { key: 'manage_roles', label: 'Manage Roles', description: 'Allows creating, editing, and deleting roles below this one.', section: 'General' },
-    { key: 'manage_channels', label: 'Manage Channels', description: 'Allows creating, editing, and deleting channels.', section: 'General' },
-    { key: 'manage_channel_groups', label: 'Manage Groups', description: 'Allows creating and reordering channel categories.', section: 'General' },
+    { key: 'manage_channels_groups', label: 'Manage Channels & Groups', description: 'Allows creating, editing, and reordering channels and categories.', section: 'General' },
     { key: 'view_audit_log', label: 'View Audit Log', description: 'Allows viewing records of server administrative actions.', section: 'General' },
     
     { key: 'kick_members', label: 'Kick Members', description: 'Allows removing members from the server. They can rejoin with an invite.', section: 'Moderation' },
@@ -491,14 +490,31 @@
   }
 
   .color-input {
-    width: 48px;
-    height: 44px;
+    width: 38px;
+    height: 38px;
     padding: 0;
-    border: 1px solid var(--border);
+    border: 2px solid var(--border);
     background: none;
     cursor: pointer;
-    border-radius: var(--radius);
+    border-radius: 50%;
     overflow: hidden;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .color-input::-webkit-color-swatch-wrapper {
+    padding: 0;
+  }
+
+  .color-input::-webkit-color-swatch {
+    border: none;
+    border-radius: 50%;
+  }
+
+  .color-input:hover {
+    transform: scale(1.15);
+    border-color: white;
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
   }
 
   .color-text { font-family: var(--font-mono); text-transform: uppercase; }
