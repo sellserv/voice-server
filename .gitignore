@@ -13,3 +13,10 @@ data/
 # SQLite temp files
 :memory:*
 
+.superpowers/
+
+# AI tool configs
+CLAUDE.md
+GEMINI.md
+AGENTS.md
+.claude/
