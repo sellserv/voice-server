@@ -1045,12 +1045,15 @@ export function initSchema() {
       }
     }
     // Ensure automod bot user is a member of every server that has an automod bot
+    // Only for servers that still exist (cleanup may have removed some)
     const serversWithAutomod = db.prepare(
-      `SELECT DISTINCT server_id FROM bots WHERE type = 'automod'`
+      `SELECT DISTINCT b.server_id FROM bots b JOIN servers s ON s.id = b.server_id WHERE b.type = 'automod'`
     ).all() as { server_id: string }[];
     for (const { server_id } of serversWithAutomod) {
       db.prepare("INSERT OR IGNORE INTO server_members (server_id, user_id) VALUES (?, 'bot-automod')").run(server_id);
     }
+    // Clean up orphaned bot entries pointing to deleted servers
+    db.prepare("DELETE FROM bots WHERE server_id NOT IN (SELECT id FROM servers)").run();
   }
 
   // Server invitations table
@@ -1331,6 +1334,14 @@ export function initSchema() {
     if (process.env.ALPHA_PHASE === 'true') {
       db.prepare('UPDATE instance_settings SET alpha_billing = 1 WHERE id = 1').run();
     }
+  } catch {}
+
+  // Migration: add legal URLs to instance_settings
+  try {
+    db.exec("ALTER TABLE instance_settings ADD COLUMN terms_url TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE instance_settings ADD COLUMN privacy_url TEXT NOT NULL DEFAULT ''");
   } catch {}
 
   // Migration: add author column to link_previews

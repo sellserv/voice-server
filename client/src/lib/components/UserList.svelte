@@ -155,39 +155,24 @@
             showStatus={true}
           />
           <div class="user-info">
-            <span
-              class="username"
-              style={nameStyle(userData?.name_color, userData?.role_color, userData?.name_font)}
-              >{userData?.server_nickname || user.display_name || user.username}</span
-            >
+            <div class="username-row">
+              <span
+                class="username"
+                style={nameStyle(userData?.name_color, userData?.role_color, userData?.name_font)}
+                >{userData?.server_nickname || user.display_name || user.username}</span
+              >{#if userData?.is_bot === 1}<span class="bot-tag" title="Bot"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7v1a2 2 0 0 1 0 4H3a2 2 0 0 1 0-4v-1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2zM9 13a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg></span>{:else if userData?.premium_tier === 'pro'}<span class="pro-tag" title="Pro"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>{/if}
+            </div>
             {#if user.activity}
               <span class="user-activity">Playing {user.activity}</span>
             {/if}
           </div>
-          {#if userData?.is_bot === 1}
-            <span class="bot-tag" title="Bot"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7v1a2 2 0 0 1 0 4H3a2 2 0 0 1 0-4v-1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2zM9 13a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg></span>
-          {:else if userData?.premium_tier === 'pro'}
-            <span class="pro-tag" title="Pro"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>
-          {/if}
-          {#if user.userId !== $currentUser?.id && userData?.is_bot !== 1}
-            <button
-              class="dm-icon-btn"
-              title="Message"
-              onclick={(e) => handleDmClick(e, user.userId)}
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                ><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg
-              >
-            </button>
-          {/if}
+          <div class="user-actions-right">
+            {#if user.userId !== $currentUser?.id && userData?.is_bot !== 1}
+              <button class="dm-icon-btn" title="Message" onclick={(e) => handleDmClick(e, user.userId)}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+              </button>
+            {/if}
+          </div>
         </div>
       {/each}
     </div>
@@ -208,12 +193,15 @@
             userId={user.userId}
             showStatus={true}
           />
-          <span
-            class="username"
-            style={nameStyle(userData?.name_color, userData?.role_color, userData?.name_font)}
-            >{userData?.server_nickname || user.display_name || user.username}</span
-          >
-          <span class="bot-tag" title="Bot"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7v1a2 2 0 0 1 0 4H3a2 2 0 0 1 0-4v-1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2zM9 13a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg></span>
+          <div class="user-info">
+            <div class="username-row">
+              <span
+                class="username"
+                style={nameStyle(userData?.name_color, userData?.role_color, userData?.name_font)}
+                >{userData?.server_nickname || user.display_name || user.username}</span
+              ><span class="bot-tag" title="Bot"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7v1a2 2 0 0 1 0 4H3a2 2 0 0 1 0-4v-1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2zM9 13a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg></span>
+            </div>
+          </div>
         </div>
       {/each}
     </div>
@@ -233,31 +221,22 @@
             userId={user.id}
             showStatus={true}
           />
-          <span
-            class="username"
-            style={nameStyle(user.name_color, user.role_color, user.name_font)}
-            >{user.server_nickname || user.display_name || user.username}</span
-          >
-          {#if user.is_bot === 1}
-            <span class="bot-tag" title="Bot"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7v1a2 2 0 0 1 0 4H3a2 2 0 0 1 0-4v-1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2zM9 13a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg></span>
-          {:else if user.premium_tier === 'pro'}
-            <span class="pro-tag" title="Pro"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>
-          {/if}
-          {#if user.id !== $currentUser?.id && user.is_bot !== 1}
-            <button class="dm-icon-btn" title="Message" onclick={(e) => handleDmClick(e, user.id)}>
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                ><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg
-              >
-            </button>
-          {/if}
+          <div class="user-info">
+            <div class="username-row">
+              <span
+                class="username"
+                style={nameStyle(user.name_color, user.role_color, user.name_font)}
+                >{user.server_nickname || user.display_name || user.username}</span
+              >{#if user.is_bot === 1}<span class="bot-tag" title="Bot"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7v1a2 2 0 0 1 0 4H3a2 2 0 0 1 0-4v-1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2zM9 13a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg></span>{:else if user.premium_tier === 'pro'}<span class="pro-tag" title="Pro"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>{/if}
+            </div>
+          </div>
+          <div class="user-actions-right">
+            {#if user.id !== $currentUser?.id && user.is_bot !== 1}
+              <button class="dm-icon-btn" title="Message" onclick={(e) => handleDmClick(e, user.id)}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+              </button>
+            {/if}
+          </div>
         </div>
       {/each}
     </div>
@@ -322,6 +301,7 @@
     transition: all 0.2s var(--ease-out);
     cursor: pointer;
     position: relative;
+    min-width: 0;
   }
 
   .user:hover {
@@ -369,7 +349,6 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 1;
     color: var(--text-muted);
     transition: all 0.2s;
   }
@@ -378,53 +357,66 @@
     color: white;
   }
 
+  .username-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .user-actions-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
   .dm-icon-btn {
-    width: 30px;
-    height: 30px;
+    width: 22px;
+    height: 22px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.3);
     color: var(--text-dim);
-    border-radius: 50%;
+    border-radius: 4px;
     opacity: 0;
-    transition: all 0.3s var(--ease-elastic);
+    transition: all 0.15s var(--ease-out);
     flex-shrink: 0;
-    border: 1px solid var(--glass-border);
+    border: none;
     cursor: pointer;
-    transform: translateX(10px);
+    background: none;
+    padding: 0;
+  }
+
+  .dm-icon-btn svg {
+    width: 14px;
+    height: 14px;
   }
 
   .user:hover .dm-icon-btn {
-    opacity: 1;
-    transform: translateX(0);
+    opacity: 0.6;
   }
 
   .dm-icon-btn:hover {
-    color: white;
-    background: var(--accent);
-    border-color: transparent;
-    box-shadow: 0 4px 12px var(--accent-glow);
-    transform: scale(1.1);
+    opacity: 1 !important;
+    color: var(--text);
+  }
+
+  .bot-tag, .pro-tag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
   }
 
   .bot-tag {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    margin-left: 4px;
     color: var(--accent);
-    opacity: 0.8;
+    opacity: 0.6;
   }
 
   .pro-tag {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    margin-left: 4px;
     color: #f59e0b;
-    opacity: 0.9;
+    opacity: 0.7;
   }
 </style>

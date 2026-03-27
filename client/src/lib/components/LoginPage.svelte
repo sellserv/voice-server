@@ -31,10 +31,13 @@
   let email = $state('');
   let confirmPassword = $state('');
   let displayName = $state('');
+  let agreedToTerms = $state(false);
   let turnstileSiteKey = $state<string | null>(null);
   let captchaToken = $state<string | null>(null);
   let turnstileWidgetId = $state<string | null>(null);
   let registrationOpen = $state(true);
+  let termsUrl = $state('');
+  let privacyUrl = $state('');
   let serverName = $state('SellServ Voice');
 
   async function loadPublicSettings() {
@@ -51,9 +54,11 @@
 
   async function checkSetupStatus() {
     try {
-      const res = await api.get<{ turnstileSiteKey: string | null; registrationOpen: boolean }>('/api/auth/setup-status');
+      const res = await api.get<{ turnstileSiteKey: string | null; registrationOpen: boolean; termsUrl?: string; privacyUrl?: string }>('/api/auth/setup-status');
       turnstileSiteKey = res.turnstileSiteKey ?? null;
       registrationOpen = res.registrationOpen ?? true;
+      termsUrl = res.termsUrl || '';
+      privacyUrl = res.privacyUrl || '';
     } catch {
       // Use defaults
     }
@@ -948,12 +953,19 @@
                 {#if turnstileSiteKey && turnstileLoaded}
                   <div class="turnstile-container" use:renderTurnstile></div>
                 {/if}
+
+                {#if termsUrl || privacyUrl}
+                  <label class="terms-checkbox">
+                    <input type="checkbox" bind:checked={agreedToTerms} />
+                    <span>I agree to the {#if termsUrl}<a href={termsUrl} target="_blank" rel="noopener">Terms of Service</a>{/if}{#if termsUrl && privacyUrl} and {/if}{#if privacyUrl}<a href={privacyUrl} target="_blank" rel="noopener">Privacy Policy</a>{/if}</span>
+                  </label>
+                {/if}
               {/if}
             </div>
 
             {#if error}<p class="error">{error}</p>{/if}
 
-            <button type="submit" class="submit-btn crystal-btn" disabled={loading || (mode === 'register' && !registrationOpen)}>
+            <button type="submit" class="submit-btn crystal-btn" disabled={loading || (mode === 'register' && (!registrationOpen || ((termsUrl || privacyUrl) && !agreedToTerms)))}>
               {loading ? 'Please wait...' : mode === 'login' ? 'Login' : 'Register'}
             </button>
 
@@ -1266,6 +1278,35 @@
     border-color: var(--accent);
     box-shadow: var(--shadow);
     outline: none;
+  }
+
+  .terms-checkbox {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 12px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+
+  .terms-checkbox input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    flex-shrink: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .terms-checkbox a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .terms-checkbox a:hover {
+    text-decoration: underline;
   }
 
   .submit-btn {

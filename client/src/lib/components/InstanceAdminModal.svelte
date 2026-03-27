@@ -20,6 +20,10 @@
   let alphaBilling = $state(false);
   let instanceName = $state('SellServ Voice');
   let instanceNameInput = $state('SellServ Voice');
+  let termsUrl = $state('');
+  let termsUrlInput = $state('');
+  let privacyUrl = $state('');
+  let privacyUrlInput = $state('');
   let reportFilter: 'open' | 'all' = $state('open');
 
   // User detail
@@ -68,6 +72,10 @@
       alphaBilling = !!is.alpha_billing;
       instanceName = is.instance_name || 'SellServ Voice';
       instanceNameInput = instanceName;
+      termsUrl = is.terms_url || '';
+      termsUrlInput = termsUrl;
+      privacyUrl = is.privacy_url || '';
+      privacyUrlInput = privacyUrl;
       globalRoles = gr;
     } catch (e: any) {
       error = e.message || 'Failed to load data';
@@ -122,6 +130,28 @@
       instanceNameInput = instanceName;
     } catch (e: any) {
       error = e?.message || 'Failed to update instance name';
+    }
+  }
+
+  async function saveTermsUrl() {
+    if (termsUrlInput.trim() === termsUrl) return;
+    try {
+      const result = await api.patch<any>('/api/admin/instance-settings', { terms_url: termsUrlInput.trim() });
+      termsUrl = result.terms_url || '';
+      termsUrlInput = termsUrl;
+    } catch (e: any) {
+      error = e?.message || 'Failed to update Terms URL';
+    }
+  }
+
+  async function savePrivacyUrl() {
+    if (privacyUrlInput.trim() === privacyUrl) return;
+    try {
+      const result = await api.patch<any>('/api/admin/instance-settings', { privacy_url: privacyUrlInput.trim() });
+      privacyUrl = result.privacy_url || '';
+      privacyUrlInput = privacyUrl;
+    } catch (e: any) {
+      error = e?.message || 'Failed to update Privacy URL';
     }
   }
 
@@ -404,6 +434,44 @@
               >
                 <span class="toggle-knob"></span>
               </button>
+            </div>
+
+            <h4 class="section-title" style="margin-top: 24px;">Legal</h4>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-name">Terms of Service URL</span>
+                <span class="setting-desc">Shown as a required checkbox on registration</span>
+              </div>
+              <div class="name-input-group">
+                <input
+                  type="url"
+                  class="name-input"
+                  bind:value={termsUrlInput}
+                  placeholder="https://example.com/terms"
+                  onkeydown={(e) => e.key === 'Enter' && saveTermsUrl()}
+                />
+                {#if termsUrlInput.trim() !== termsUrl}
+                  <button class="save-btn" onclick={saveTermsUrl}>Save</button>
+                {/if}
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-name">Privacy Policy URL</span>
+                <span class="setting-desc">Shown as a required checkbox on registration</span>
+              </div>
+              <div class="name-input-group">
+                <input
+                  type="url"
+                  class="name-input"
+                  bind:value={privacyUrlInput}
+                  placeholder="https://example.com/privacy"
+                  onkeydown={(e) => e.key === 'Enter' && savePrivacyUrl()}
+                />
+                {#if privacyUrlInput.trim() !== privacyUrl}
+                  <button class="save-btn" onclick={savePrivacyUrl}>Save</button>
+                {/if}
+              </div>
             </div>
           </div>
 

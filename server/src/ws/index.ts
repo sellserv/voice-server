@@ -181,6 +181,30 @@ export function disconnectUser(userId: string) {
   }
 }
 
+// Inject a fake client for demo/screenshot purposes (no real WS connection)
+// Uses readyState=99 as a sentinel so heartbeat and broadcast skip it
+export function injectFakeClient(userId: string, opts: { username: string; display_name: string; status: UserStatus; serverIds: string[]; activity?: string }) {
+  clients.set(userId, {
+    ws: { readyState: 99, send: () => {}, close: () => {}, ping: () => {}, terminate: () => {} } as any,
+    user: { userId, username: opts.username, role: 'member', jti: '' },
+    status: opts.status,
+    display_name: opts.display_name,
+    avatar_url: null,
+    serverIds: opts.serverIds,
+    isAlive: true,
+    activity: opts.activity || null,
+    activityVisibility: 'all',
+    activityServerIds: [],
+  });
+}
+
+export function removeFakeClient(userId: string) {
+  const client = clients.get(userId);
+  if (client && client.ws.readyState === 0) {
+    clients.delete(userId);
+  }
+}
+
 export function setClientStatus(userId: string, status: UserStatus) {
   const client = clients.get(userId);
   if (!client) return;
@@ -331,6 +355,8 @@ export function setupWebSocket(app: FastifyInstance) {
   // Heartbeat interval for cleaning up dead connections
   const interval = setInterval(() => {
     for (const [userId, client] of clients) {
+      // Skip fake demo clients (readyState 99)
+      if (client.ws.readyState === 99) continue;
       if (client.isAlive === false) {
         console.log(`[WS] Terminating dead connection for user ${userId}`);
         client.ws.terminate();

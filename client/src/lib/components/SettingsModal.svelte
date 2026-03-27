@@ -271,6 +271,60 @@
   let emailSuccess = $state('');
   let emailVerifying = $state(false);
 
+  // Username change state
+  let showUsernameEdit = $state(false);
+  let usernameValue = $state('');
+  let usernameMfaCode = $state('');
+  let usernameMfaMethod = $state<'totp' | 'email' | null>(null);
+  let usernameLoading = $state(false);
+  let usernameError = $state('');
+  let usernameSuccess = $state('');
+
+  async function startUsernameChange() {
+    usernameError = '';
+    usernameSuccess = '';
+    usernameValue = $currentUser?.username || '';
+    usernameMfaCode = '';
+    usernameMfaMethod = null;
+    showUsernameEdit = true;
+
+    try {
+      const result = await api.post<{ method: 'totp' | 'email' }>('/api/auth/change-username/request-code');
+      usernameMfaMethod = result.method;
+      if (result.method === 'email') {
+        usernameSuccess = 'Verification code sent to your email';
+      }
+    } catch (e: any) {
+      usernameError = e?.message || 'Failed to request verification';
+      showUsernameEdit = false;
+    }
+  }
+
+  async function handleChangeUsername() {
+    usernameError = '';
+    usernameSuccess = '';
+    if (!usernameValue.trim() || !usernameMfaCode.trim()) return;
+    if (usernameValue === $currentUser?.username) {
+      showUsernameEdit = false;
+      return;
+    }
+
+    usernameLoading = true;
+    try {
+      const result = await api.post<{ username: string }>('/api/auth/change-username', {
+        username: usernameValue.trim(),
+        mfa_code: usernameMfaCode.trim(),
+      });
+      currentUser.update((u) => u ? { ...u, username: result.username } : u);
+      usernameSuccess = 'Username updated successfully';
+      showUsernameEdit = false;
+    } catch (e: any) {
+      usernameError = e?.message || 'Failed to change username';
+    } finally {
+      usernameLoading = false;
+    }
+  }
+
   // 2FA state
   let mfaSetupData = $state<{ qr_url: string; secret: string } | null>(null);
   let mfaConfirmCode = $state('');
@@ -748,6 +802,12 @@
         {/if}
 
         <div class="sidebar-separator"></div>
+        {#if isDesktop || isCapacitor}
+          <button class="sidebar-item change-instance-btn" onclick={() => { serverUrl.set(''); onclose(); }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m9 9a9 9 0 0 1-9-9m9 9c1.66 0 3-4.03 3-9s-1.34-9-3-9m0 18c-1.66 0-3-4.03-3-9s1.34-9 3-9m-9 9a9 9 0 0 1 9-9"/></svg>
+            <span>Change Instance</span>
+          </button>
+        {/if}
         <button class="sidebar-item logout-nav-btn" onclick={onlogout}>
           <Icon name="logout" size={18} />
           <span>Log Out</span>
@@ -791,9 +851,29 @@
                 <div class="detail-item">
                   <div class="detail-label-group">
                     <div class="detail-label">Username</div>
-                    <div class="detail-value">{$currentUser?.username}</div>
+                    <div class="detail-value">
+                      {#if showUsernameEdit}
+                        <div class="username-edit-form">
+                          <input type="text" class="text-input" bind:value={usernameValue} placeholder="New username" maxlength="24" />
+                          <input type="text" class="text-input" bind:value={usernameMfaCode} placeholder={usernameMfaMethod === 'totp' ? 'Authenticator code' : 'Email code'} maxlength="6" />
+                          <div class="username-edit-actions">
+                            <button class="btn-accent" onclick={handleChangeUsername} disabled={usernameLoading || !usernameValue.trim() || !usernameMfaCode.trim()}>
+                              {usernameLoading ? 'Saving...' : 'Save'}
+                            </button>
+                            <button class="btn-text" onclick={() => showUsernameEdit = false}>Cancel</button>
+                          </div>
+                        </div>
+                      {:else}
+                        {$currentUser?.username}
+                      {/if}
+                    </div>
                   </div>
+                  {#if !showUsernameEdit}
+                    <button class="detail-edit-btn" onclick={startUsernameChange}>Edit</button>
+                  {/if}
                 </div>
+                {#if usernameError}<p class="status-msg error" style="margin: -8px 0 8px 0; padding: 0 20px;">{usernameError}</p>{/if}
+                {#if usernameSuccess && !showUsernameEdit}<p class="status-msg success" style="margin: -8px 0 8px 0; padding: 0 20px;">{usernameSuccess}</p>{/if}
                 <div class="detail-item">
                   <div class="detail-label-group">
                     <div class="detail-label">Email</div>
@@ -1650,8 +1730,17 @@
     opacity: 0.5;
   }
 
+  .change-instance-btn {
+    color: var(--text-muted);
+    gap: 8px;
+  }
+
+  .change-instance-btn:hover {
+    color: var(--text);
+  }
+
   .logout-nav-btn {
-    margin-top: 8px;
+    margin-top: 4px;
     color: var(--danger);
   }
 
@@ -2927,6 +3016,25 @@
 
   .btn-copy-tiny:hover {
     background: rgba(255, 255, 255, 0.2);
+  }
+
+  .username-edit-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+    width: 100%;
+  }
+
+  .username-edit-form .text-input {
+    padding: 8px 12px;
+    font-size: 0.95rem;
+  }
+
+  .username-edit-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
   }
 
   .email-edit-row, .email-verify-row {

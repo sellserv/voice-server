@@ -25,7 +25,9 @@
     "lint:fix": "eslint . --fix",
     "mobile:sync": "npm run sync --workspace=mobile",
     "mobile:build": "npm run build --workspace=mobile",
-    "mobile:apk": "npm run apk --workspace=mobile"
+    "mobile:apk": "npm run apk --workspace=mobile",
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "seed:demo:cleanup": "tsx scripts/seed-demo.ts --cleanup"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

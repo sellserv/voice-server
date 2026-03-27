@@ -1,0 +1,25 @@
+services:
+  sellserv:
+    image: ghcr.io/sellserv/voice-server:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "40000-40100:40000-40100/udp"
+    volumes:
+      - data:/app/data
+      - uploads:/app/uploads
+    environment:
+      - JWT_SECRET=change-me-run-openssl-rand-hex-32
+      - MEDIASOUP_ANNOUNCED_IP=127.0.0.1  # Set to your server's public IP
+      # - CORS_ORIGINS=https://your-domain.com
+      # - ADMIN_USERS=your-username
+      # - RESEND_API_KEY=
+      # - EMAIL_FROM=
+      # - STRIPE_SECRET_KEY=
+      # - STRIPE_WEBHOOK_SECRET=
+      # - STRIPE_PRO_PRICE_ID=
+      # - GIPHY_API_KEY=
+
+volumes:
+  data:
+  uploads:

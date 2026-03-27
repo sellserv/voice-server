@@ -5,7 +5,7 @@ import db from '../db/connection.js';
 import { requirePermission, requireAdmin, requireAuth, isInstanceAdmin } from '../auth/middleware.js';
 import { hasPermission } from '../auth/permissions.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
-import { broadcast, disconnectUser, getOnlineUsers, sendToMany } from '../ws/index.js';
+import { broadcast, disconnectUser, getOnlineUsers, sendToMany, injectFakeClient, removeFakeClient } from '../ws/index.js';
 import type { InviteCode } from '@voip-server/shared';
 import { logAuditEvent, getAuditLog } from '../audit/log.js';
 
@@ -502,16 +502,16 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // Get instance settings
   app.get('/api/admin/instance-settings', { preHandler: requireAdmin }, async () => {
-    const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name, alpha_billing FROM instance_settings WHERE id = 1').get() as any;
-    return settings || { allow_server_creation: 1, allow_registration: 1, instance_name: 'SellServ Voice', alpha_billing: 0 };
+    const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name, alpha_billing, terms_url, privacy_url FROM instance_settings WHERE id = 1').get() as any;
+    return settings || { allow_server_creation: 1, allow_registration: 1, instance_name: 'SellServ Voice', alpha_billing: 0, terms_url: '', privacy_url: '' };
   });
 
   // Update instance settings
-  app.patch<{ Body: { allow_registration?: boolean; instance_name?: string; alpha_billing?: boolean } }>(
+  app.patch<{ Body: { allow_registration?: boolean; instance_name?: string; alpha_billing?: boolean; terms_url?: string; privacy_url?: string } }>(
     '/api/admin/instance-settings',
     { preHandler: requireAdmin },
     async (request, reply) => {
-      const { allow_registration, instance_name, alpha_billing } = request.body;
+      const { allow_registration, instance_name, alpha_billing, terms_url, privacy_url } = request.body;
       if (allow_registration !== undefined) {
         db.prepare('UPDATE instance_settings SET allow_registration = ? WHERE id = 1').run(allow_registration ? 1 : 0);
       }
@@ -525,7 +525,13 @@ export default async function adminRoutes(app: FastifyInstance) {
       if (alpha_billing !== undefined) {
         db.prepare('UPDATE instance_settings SET alpha_billing = ? WHERE id = 1').run(alpha_billing ? 1 : 0);
       }
-      const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name, alpha_billing FROM instance_settings WHERE id = 1').get() as any;
+      if (terms_url !== undefined) {
+        db.prepare('UPDATE instance_settings SET terms_url = ? WHERE id = 1').run(terms_url.trim().slice(0, 500));
+      }
+      if (privacy_url !== undefined) {
+        db.prepare('UPDATE instance_settings SET privacy_url = ? WHERE id = 1').run(privacy_url.trim().slice(0, 500));
+      }
+      const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name, alpha_billing, terms_url, privacy_url FROM instance_settings WHERE id = 1').get() as any;
       return settings;
     },
   );
@@ -677,6 +683,116 @@ export default async function adminRoutes(app: FastifyInstance) {
       });
 
       return { ok: true };
+    },
+  );
+
+  // ─── Demo Fake Presence ─────────────────────────────
+
+  // Inject fake online presence for demo users (screenshot purposes)
+  app.post<{ Body: { users: { userId: string; activity?: string; status?: string }[]; voiceChannelId?: string; voiceUserIds?: string[] } }>(
+    '/api/admin/demo-presence',
+    { preHandler: requireAdmin },
+    async (request) => {
+      const { users, voiceChannelId, voiceUserIds } = request.body;
+      let injected = 0;
+
+      for (const entry of users) {
+        const user = db.prepare('SELECT id, username, display_name FROM users WHERE id = ?').get(entry.userId) as
+          | { id: string; username: string; display_name: string }
+          | undefined;
+        if (!user) continue;
+
+        const serverIds = (db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(user.id) as { server_id: string }[])
+          .map((r) => r.server_id);
+
+        injectFakeClient(user.id, {
+          username: user.username,
+          display_name: user.display_name,
+          status: (entry.status as any) || 'online',
+          serverIds,
+          activity: entry.activity,
+        });
+        injected++;
+      }
+
+      // Broadcast presence:update for each injected user so clients see them online
+      for (const entry of users) {
+        const user = db.prepare('SELECT id, username, display_name FROM users WHERE id = ?').get(entry.userId) as
+          | { id: string; username: string; display_name: string }
+          | undefined;
+        if (!user) continue;
+
+        broadcast({
+          type: 'presence:update',
+          userId: user.id,
+          username: user.username,
+          display_name: user.display_name,
+          online: true,
+          status: entry.status || 'online',
+        } as any);
+
+        if (entry.activity) {
+          broadcast({
+            type: 'presence:activity',
+            userId: user.id,
+            activity: entry.activity,
+          } as any);
+        }
+      }
+
+      // Fake voice channel members
+      if (voiceChannelId && voiceUserIds && voiceUserIds.length > 0) {
+        const voiceMembers: Record<string, any[]> = {};
+        voiceMembers[voiceChannelId] = [];
+        for (const vuId of voiceUserIds) {
+          const vu = db.prepare('SELECT id, username, display_name, avatar_url FROM users WHERE id = ?').get(vuId) as
+            | { id: string; username: string; display_name: string; avatar_url: string | null }
+            | undefined;
+          if (vu) {
+            voiceMembers[voiceChannelId].push({
+              userId: vu.id,
+              username: vu.username,
+              display_name: vu.display_name,
+              avatar_url: vu.avatar_url,
+              muted: false,
+              deafened: false,
+            });
+          }
+        }
+        broadcast({ type: 'voice:channelMembers', channels: voiceMembers } as any);
+      }
+
+      return { ok: true, injected };
+    },
+  );
+
+  // Remove all fake demo presence
+  app.delete(
+    '/api/admin/demo-presence',
+    { preHandler: requireAdmin },
+    async () => {
+      const demoUsers = db.prepare("SELECT id FROM users WHERE id LIKE 'demo_%'").all() as { id: string }[];
+      let removed = 0;
+      for (const u of demoUsers) {
+        removeFakeClient(u.id);
+        removed++;
+      }
+      // Broadcast offline for each removed user
+      for (const u of demoUsers) {
+        const user = db.prepare('SELECT username, display_name FROM users WHERE id = ?').get(u.id) as
+          | { username: string; display_name: string }
+          | undefined;
+        if (user) {
+          broadcast({
+            type: 'presence:update',
+            userId: u.id,
+            username: user.username,
+            display_name: user.display_name,
+            online: false,
+          } as any);
+        }
+      }
+      return { ok: true, removed };
     },
   );
 

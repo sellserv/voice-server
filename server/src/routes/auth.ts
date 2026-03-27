@@ -99,10 +99,12 @@ function isValidEmail(email: string): boolean {
 export default async function authRoutes(app: FastifyInstance) {
   // Setup status — returns public config for the login page
   app.get('/api/auth/setup-status', authRateLimit, async (_request, reply) => {
-    const instanceSettings = db.prepare('SELECT allow_registration FROM instance_settings WHERE id = 1').get() as { allow_registration: number } | undefined;
+    const instanceSettings = db.prepare('SELECT allow_registration, terms_url, privacy_url FROM instance_settings WHERE id = 1').get() as { allow_registration: number; terms_url: string; privacy_url: string } | undefined;
     return reply.send({
       turnstileSiteKey: isTurnstileEnabled() ? config.turnstileSiteKey : null,
       registrationOpen: instanceSettings ? !!instanceSettings.allow_registration : true,
+      termsUrl: instanceSettings?.terms_url || '',
+      privacyUrl: instanceSettings?.privacy_url || '',
     });
   });
 
@@ -635,6 +637,106 @@ export default async function authRoutes(app: FastifyInstance) {
 
       const user = db.prepare('SELECT email FROM users WHERE id = ?').get(userId) as any;
       return reply.send({ ok: true, email: user.email });
+    },
+  );
+
+  // Change username (requires MFA verification)
+  app.post<{ Body: { username: string; mfa_code: string } }>(
+    '/api/auth/change-username',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { username, mfa_code } = request.body;
+      const userId = request.user.userId;
+
+      if (!username || !mfa_code) {
+        return reply.code(400).send({ error: 'Username and MFA code required' });
+      }
+
+      if (username.length < 2 || username.length > 24) {
+        return reply.code(400).send({ error: 'Username must be 2-24 characters' });
+      }
+      if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
+        return reply.code(400).send({ error: 'Username can only contain letters, numbers, underscores, and hyphens' });
+      }
+
+      // Check uniqueness (case-insensitive)
+      const existing = db.prepare('SELECT id FROM users WHERE LOWER(username) = ? AND id != ?').get(username.toLowerCase(), userId);
+      if (existing) {
+        return reply.code(409).send({ error: 'Username unavailable' });
+      }
+
+      // Block reserved admin usernames
+      if (config.adminUsers.includes(username.toLowerCase())) {
+        const existingAdmin = db.prepare('SELECT id FROM users WHERE LOWER(username) = ?').get(username.toLowerCase());
+        if (!existingAdmin || (existingAdmin as any).id !== userId) {
+          return reply.code(403).send({ error: 'This username is reserved' });
+        }
+      }
+
+      // Verify MFA
+      const user = db.prepare('SELECT totp_enabled, totp_secret, mfa_method, email, email_verified FROM users WHERE id = ?').get(userId) as any;
+      if (!user) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+
+      if (user.totp_enabled && user.totp_secret) {
+        // TOTP verification
+        const totp = new OTPAuth.TOTP({
+          secret: OTPAuth.Secret.fromBase32(user.totp_secret),
+          algorithm: 'SHA1',
+          digits: 6,
+          period: 30,
+        });
+        const delta = totp.validate({ token: mfa_code, window: 1 });
+        if (delta === null) {
+          return reply.code(401).send({ error: 'Invalid MFA code' });
+        }
+      } else {
+        // Email code verification
+        const valid = validateEmailCode(userId, mfa_code, 'verification');
+        if (!valid) {
+          return reply.code(401).send({ error: 'Invalid or expired code' });
+        }
+      }
+
+      const oldUsername = request.user.username;
+      db.prepare('UPDATE users SET username = ? WHERE id = ?').run(username, userId);
+
+      logAuditEvent('username_change', userId, userId, request.ip, { old: oldUsername, new: username });
+
+      return reply.send({ ok: true, username });
+    },
+  );
+
+  // Request MFA code for username change (email-based MFA users)
+  app.post(
+    '/api/auth/change-username/request-code',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const userId = request.user.userId;
+      const user = db.prepare('SELECT totp_enabled, email, email_verified FROM users WHERE id = ?').get(userId) as any;
+
+      if (!user) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+
+      if (user.totp_enabled) {
+        return reply.send({ method: 'totp' });
+      }
+
+      if (!user.email || !user.email_verified) {
+        return reply.code(400).send({ error: 'No verified email on file' });
+      }
+
+      const code = createEmailCode(userId, 'verification');
+      const template = verificationEmail(code);
+      try {
+        await sendEmail(user.email, template.subject, template.html);
+      } catch {
+        return reply.code(500).send({ error: 'Failed to send verification email' });
+      }
+
+      return reply.send({ method: 'email' });
     },
   );
 

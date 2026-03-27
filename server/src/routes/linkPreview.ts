@@ -282,7 +282,7 @@ export default async function linkPreviewRoutes(app: FastifyInstance) {
           const res = await undiciFetch(url, {
             signal: AbortSignal.timeout(5000),
             headers: {
-              'User-Agent': 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)',
+              'User-Agent': 'Mozilla/5.0 (compatible; SellServBot/1.0; +https://sellserv.net)',
               Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             },
             dispatcher: pinnedAgent,

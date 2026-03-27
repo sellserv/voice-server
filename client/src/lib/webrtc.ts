@@ -423,7 +423,7 @@ export async function joinVoice(channelId: string): Promise<MediaStream> {
     }
   };
 
-  // Get mic access with Discord-quality audio constraints
+  // Get mic access with high-quality audio constraints
   // Always disable browser noiseSuppression — we use RNNoise instead
   const inputDeviceId = get(selectedInputDeviceId);
   const audioConstraints: MediaTrackConstraints = {
@@ -532,7 +532,7 @@ export async function joinVoice(channelId: string): Promise<MediaStream> {
 
   recvTransport.on('connectionstatechange', (_state: string) => {});
 
-  // Produce our audio with high bitrate (Discord uses 64-128kbps)
+  // Produce our audio with high bitrate (64-128kbps)
   // Build audio chain: raw mic → [voice changer] → [noise suppression] → producer
   let audioTrack = localStream.getAudioTracks()[0];
 

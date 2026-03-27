@@ -286,7 +286,7 @@ ipcMain.handle('notification:send', (_e, title, body) => {
 ipcMain.handle('shell:openExternal', (_e, url) => {
   try {
     const parsed = new URL(url);
-    if (!['http:', 'https:', 'mailto:'].includes(parsed.protocol)) return;
+    if (!['http:', 'https:', 'mailto:', 'ms-windows-store:'].includes(parsed.protocol)) return;
     return shell.openExternal(url);
   } catch {
     return;
