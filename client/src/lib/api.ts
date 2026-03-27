@@ -1,4 +1,4 @@
-import { getServerUrl, getDesktopCsrf, getDesktopToken, isDesktop, markSessionExpired } from './stores/server';
+import { getServerUrl, getDesktopCsrf, getDesktopToken, isDesktop, isCapacitor, markSessionExpired } from './stores/server';
 import { toast } from './stores/toast';
 
 let rateLimitWarned = false;
@@ -8,7 +8,7 @@ function getBase(): string {
 }
 
 function getCsrfToken(): string {
-  if (isDesktop) {
+  if (isDesktop || isCapacitor) {
     return getDesktopCsrf() || '';
   }
   const match = document.cookie.match(/(?:^|;\s*)csrf=([^;]*)/);
@@ -23,8 +23,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     headers: {} as Record<string, string>,
   };
 
-  // Desktop app: use Bearer token since cross-origin cookies aren't sent
-  if (isDesktop) {
+  // Desktop/Capacitor app: use Bearer token since cross-origin cookies aren't sent
+  if (isDesktop || isCapacitor) {
     const token = getDesktopToken();
     if (token) {
       (opts.headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
@@ -52,7 +52,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
 
   if (!res.ok) {
-    if (res.status === 401 && isDesktop && getDesktopToken()) {
+    if (res.status === 401 && (isDesktop || isCapacitor) && getDesktopToken()) {
       markSessionExpired();
     }
     if (res.status === 429 || res.status === 503) {
@@ -76,7 +76,7 @@ export const api = {
     const form = new FormData();
     form.append('file', file, filename ?? (file instanceof File ? file.name : 'upload.bin'));
     const headers: Record<string, string> = { 'X-CSRF-Token': getCsrfToken() };
-    if (isDesktop) {
+    if (isDesktop || isCapacitor) {
       const token = getDesktopToken();
       if (token) headers['Authorization'] = `Bearer ${token}`;
     }
@@ -87,7 +87,7 @@ export const api = {
       body: form,
     });
     if (!res.ok) {
-      if (res.status === 401 && isDesktop && getDesktopToken()) {
+      if (res.status === 401 && (isDesktop || isCapacitor) && getDesktopToken()) {
         markSessionExpired();
       }
       const err = await res.json().catch(() => ({ error: res.statusText }));

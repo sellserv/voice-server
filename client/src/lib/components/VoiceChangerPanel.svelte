@@ -227,7 +227,7 @@
   }
 
   .vc-preset.selected {
-    background: rgba(124, 92, 252, 0.1);
+    background: var(--accent-glow);
     color: var(--accent);
     border-color: var(--accent);
     box-shadow: 0 0 15px var(--accent-glow);

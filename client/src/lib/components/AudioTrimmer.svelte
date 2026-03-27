@@ -444,10 +444,10 @@
 
   .trimmer-toolbar { display: flex; align-items: center; gap: 20px; }
   .playback-btn {
-    width: 44px; height: 44px; border-radius: 50%; background: #7c5cfc; color: white;
+    width: 44px; height: 44px; border-radius: 50%; background: var(--accent); color: white;
     display: flex; align-items: center; justify-content: center; border: none; cursor: pointer;
     transition: transform 0.2s, background 0.2s;
-    box-shadow: 0 4px 12px rgba(124, 92, 252, 0.4);
+    box-shadow: var(--shadow);
   }
   .playback-btn:hover { background: #8b6fff; transform: scale(1.05); }
 
@@ -463,7 +463,7 @@
   .btn-apply:hover { transform: translateY(-2px); opacity: 0.9; }
 
   .trimmer-status { height: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #aaa; font-weight: 600; }
-  .spinner { width: 32px; height: 32px; border: 4px solid rgba(255,255,255,0.1); border-top-color: #7c5cfc; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  .spinner { width: 32px; height: 32px; border: 4px solid rgba(255,255,255,0.1); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   
   .trimmer-status.error { color: #f87171; }

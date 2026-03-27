@@ -3,11 +3,14 @@ import { randomUUID } from 'crypto';
 import db from '../db/connection.js';
 import { requireAuth, isInstanceAdmin } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
-import { hasPermission } from '../auth/permissions.js';
+import { hasPermission, isPremium } from '../auth/permissions.js';
 import { sendTo, sendToMany, getServerMemberUserIds } from '../ws/index.js';
 import { ensureDmChannel, notifyDmCreated } from '../ws/dmUtils.js';
 import { sendWelcomeMessages } from '../bots/welcomeBot.js';
 import type { Server, ServerInvitation, Message } from '@voip-server/shared';
+
+const FREE_SERVER_LIMIT = 100;
+const PRO_SERVER_LIMIT = 200;
 
 const ALL_PERMISSIONS = JSON.stringify({
   manage_channels_groups: true,
@@ -397,6 +400,18 @@ export default async function serverRoutes(app: FastifyInstance) {
 
       if (isBanned) {
         return reply.code(403).send({ error: 'You are banned from this server' });
+      }
+
+      // Check server join limit
+      const serverCount = db
+        .prepare('SELECT COUNT(*) as count FROM server_members WHERE user_id = ?')
+        .get(userId) as { count: number };
+      const maxServers = isPremium(userId) ? PRO_SERVER_LIMIT : FREE_SERVER_LIMIT;
+      if (serverCount.count >= maxServers) {
+        return reply.code(403).send({
+          error: `You have reached the ${maxServers} server limit. ${isPremium(userId) ? '' : 'Upgrade to Pro for up to 200 servers.'}`,
+          premiumRequired: !isPremium(userId),
+        });
       }
 
       // Check if already a member

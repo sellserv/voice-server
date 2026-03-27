@@ -197,7 +197,7 @@
 
   .emoji-preview-box:hover {
     border-color: var(--accent);
-    background: rgba(124, 92, 252, 0.05);
+    background: var(--accent-subtle);
   }
 
   .emoji-preview-box img {

@@ -525,7 +525,7 @@
 
   .action-btn.active {
     color: var(--accent);
-    background: rgba(124, 92, 252, 0.1);
+    background: var(--accent-glow);
   }
 
   .text-input-wrap {
@@ -657,7 +657,7 @@
     font-weight: 800;
     font-size: 1rem;
     color: var(--accent);
-    background: rgba(124, 92, 252, 0.15);
+    background: var(--accent-glow);
     border-radius: 50%;
   }
 
@@ -671,7 +671,7 @@
     height: 14px;
     border-radius: 50%;
     border: 2px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 0 10px currentColor;
+    box-shadow: none;
   }
 
   .mention-avatar {

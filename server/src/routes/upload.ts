@@ -9,7 +9,11 @@ import db from '../db/connection.js';
 import { config } from '../config.js';
 import { requireAuth } from '../auth/middleware.js';
 import { checkNewUserCooldown } from '../auth/cooldown.js';
+import { isPremium } from '../auth/permissions.js';
 import type { FileRecord } from '@voip-server/shared';
+
+const FREE_FILE_SIZE = 25 * 1024 * 1024;  // 25MB
+const PRO_FILE_SIZE = 100 * 1024 * 1024;   // 100MB
 
 const ALLOWED_EXTENSIONS = new Set([
   '.jpg',
@@ -114,6 +118,15 @@ export default async function uploadRoutes(app: FastifyInstance) {
     }
 
     const sizeBytes = data.file.bytesRead;
+    const maxSize = isPremium(request.user.userId) ? PRO_FILE_SIZE : FREE_FILE_SIZE;
+    if (sizeBytes > maxSize) {
+      await unlink(filePath).catch(() => {});
+      const limitMB = Math.round(maxSize / (1024 * 1024));
+      return reply.code(413).send({
+        error: `File too large. ${isPremium(request.user.userId) ? 'Pro' : 'Free'} limit is ${limitMB}MB.`,
+        premiumRequired: !isPremium(request.user.userId),
+      });
+    }
 
     db.prepare(
       `INSERT INTO files (id, user_id, original_name, stored_name, mime_type, size_bytes)

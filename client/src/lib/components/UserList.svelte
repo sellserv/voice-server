@@ -165,7 +165,9 @@
             {/if}
           </div>
           {#if userData?.is_bot === 1}
-            <span class="bot-tag">BOT</span>
+            <span class="bot-tag" title="Bot"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7v1a2 2 0 0 1 0 4H3a2 2 0 0 1 0-4v-1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2zM9 13a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg></span>
+          {:else if userData?.premium_tier === 'pro'}
+            <span class="pro-tag" title="Pro"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>
           {/if}
           {#if user.userId !== $currentUser?.id && userData?.is_bot !== 1}
             <button
@@ -211,7 +213,7 @@
             style={nameStyle(userData?.name_color, userData?.role_color, userData?.name_font)}
             >{userData?.server_nickname || user.display_name || user.username}</span
           >
-          <span class="bot-tag">BOT</span>
+          <span class="bot-tag" title="Bot"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7v1a2 2 0 0 1 0 4H3a2 2 0 0 1 0-4v-1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2zM9 13a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg></span>
         </div>
       {/each}
     </div>
@@ -237,7 +239,9 @@
             >{user.server_nickname || user.display_name || user.username}</span
           >
           {#if user.is_bot === 1}
-            <span class="bot-tag">BOT</span>
+            <span class="bot-tag" title="Bot"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7v1a2 2 0 0 1 0 4H3a2 2 0 0 1 0-4v-1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2zM9 13a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg></span>
+          {:else if user.premium_tier === 'pro'}
+            <span class="pro-tag" title="Pro"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>
           {/if}
           {#if user.id !== $currentUser?.id && user.is_bot !== 1}
             <button class="dm-icon-btn" title="Message" onclick={(e) => handleDmClick(e, user.id)}>
@@ -405,16 +409,22 @@
   }
 
   .bot-tag {
-    font-size: 0.6rem;
-    font-weight: 900;
-    padding: 2px 5px;
-    border-radius: 4px;
-    background: var(--accent);
-    color: white;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
-    margin-left: 6px;
-    box-shadow: 0 0 8px var(--accent-glow);
+    margin-left: 4px;
+    color: var(--accent);
+    opacity: 0.8;
+  }
+
+  .pro-tag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-left: 4px;
+    color: #f59e0b;
+    opacity: 0.9;
   }
 </style>

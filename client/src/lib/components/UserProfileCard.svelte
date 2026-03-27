@@ -107,6 +107,9 @@
         style={nameStyle(user.name_color, undefined, user.name_font)}
       >
         {user.server_nickname || user.display_name || user.username}
+        {#if user.premium_tier === 'pro'}
+          <span class="pro-icon" title="Pro"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>
+        {/if}
       </h3>
       <p class="username-text">@{user.username}</p>
     </div>
@@ -285,6 +288,15 @@
     color: white;
     margin: 0;
     letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .pro-icon {
+    display: inline-flex;
+    align-items: center;
+    color: #f59e0b;
   }
 
   .username-text {
@@ -350,7 +362,6 @@
     height: 10px;
     border-radius: 50%;
     flex-shrink: 0;
-    box-shadow: 0 0 8px currentColor;
   }
 
   .date-text {
@@ -395,13 +406,11 @@
 
   .call-btn {
     background: var(--success);
-    box-shadow: 0 4px 12px rgba(52, 211, 153, 0.2);
   }
 
   .call-btn:hover {
     filter: brightness(1.1);
     transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(52, 211, 153, 0.3);
   }
 
   .call-btn.video-call {

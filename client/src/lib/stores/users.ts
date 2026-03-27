@@ -21,6 +21,7 @@ export interface UserInfo {
   name_font?: string | null;
   name_color?: string | null;
   is_bot: number;
+  premium_tier?: string;
   created_at: string;
   banned?: boolean;
 }

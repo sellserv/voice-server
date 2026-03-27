@@ -13,6 +13,7 @@ import {
   verifyToken,
 } from '../auth/jwt.js';
 import { requireAuth, isInstanceAdmin } from '../auth/middleware.js';
+import { isAlphaPhase } from '../auth/permissions.js';
 import { config } from '../config.js';
 import { createEmailCode, validateEmailCode } from '../email/codes.js';
 import { sendEmail } from '../email/sender.js';
@@ -914,7 +915,7 @@ export default async function authRoutes(app: FastifyInstance) {
     const user = db
       .prepare(
         `SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.avatar_url, u.bio, u.banner_url, u.totp_enabled, u.created_at, u.email, u.mfa_method,
-              u.name_font, u.name_color, r.name as role_name, r.color as role_color
+              u.name_font, u.name_color, u.premium_tier, r.name as role_name, r.color as role_color
        FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ?`,
       )
       .get(request.user.userId) as any;
@@ -924,6 +925,9 @@ export default async function authRoutes(app: FastifyInstance) {
     }
 
     user.totp_enabled = !!user.totp_enabled;
+    if (isAlphaPhase()) {
+      user.premium_tier = 'pro';
+    }
 
     // Attach role arrays
     const userRoles = db

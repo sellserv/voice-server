@@ -1,4 +1,6 @@
 import { writable, get, readonly } from 'svelte/store';
+import { isCapacitor, getPreference, setPreference, removePreference } from '../capacitor.js';
+export { isCapacitor } from '../capacitor.js';
 
 const STORAGE_KEY = 'serverUrl';
 
@@ -16,20 +18,32 @@ export const isDesktop = typeof window !== 'undefined' && detectDesktop();
 // to avoid the subscribe callback overwriting the stored value with ''
 let serverUrlLoaded = false;
 
-/** Load the server URL from electron-store (async). Call once at startup. */
+/** Load the server URL from electron-store or Capacitor preferences (async). Call once at startup. */
 export async function loadServerUrlFromStore() {
-  if (!isDesktop) return;
-  const url = await (window as any).electronAPI.storeGet(STORAGE_KEY);
-  serverUrlLoaded = true;
-  if (url) serverUrl.set(url);
+  if (isDesktop) {
+    const url = await (window as any).electronAPI.storeGet(STORAGE_KEY);
+    serverUrlLoaded = true;
+    if (url) serverUrl.set(url);
+  } else if (isCapacitor) {
+    const stored = await getPreference('serverUrl');
+    serverUrlLoaded = true;
+    if (stored) serverUrl.set(stored);
+  }
 }
 
 export const serverUrl = writable<string>('');
 
 serverUrl.subscribe((url) => {
-  if (isDesktop && serverUrlLoaded) {
+  if (!serverUrlLoaded) return;
+  if (isDesktop) {
     // Persist to electron-store (survives random-port origin changes)
     (window as any).electronAPI.storeSet(STORAGE_KEY, url || null);
+  } else if (isCapacitor) {
+    if (url) {
+      setPreference('serverUrl', url);
+    } else {
+      removePreference('serverUrl');
+    }
   }
 });
 
@@ -53,6 +67,8 @@ export function setDesktopToken(token: string) {
   desktopToken = token;
   if (isDesktop) {
     (window as any).electronAPI.storeSet('authToken', token);
+  } else if (isCapacitor) {
+    setPreference('authToken', token);
   }
 }
 
@@ -64,6 +80,8 @@ export function setDesktopCsrf(csrf: string) {
   desktopCsrf = csrf;
   if (isDesktop) {
     (window as any).electronAPI.storeSet('authCsrf', csrf);
+  } else if (isCapacitor) {
+    setPreference('authCsrf', csrf);
   }
 }
 
@@ -72,11 +90,17 @@ export function getDesktopCsrf(): string | null {
 }
 
 export async function loadDesktopTokens() {
-  if (!isDesktop) return;
-  const token = await (window as any).electronAPI.storeGet('authToken');
-  const csrf = await (window as any).electronAPI.storeGet('authCsrf');
-  if (token) desktopToken = token;
-  if (csrf) desktopCsrf = csrf;
+  if (isDesktop) {
+    const token = await (window as any).electronAPI.storeGet('authToken');
+    const csrf = await (window as any).electronAPI.storeGet('authCsrf');
+    if (token) desktopToken = token;
+    if (csrf) desktopCsrf = csrf;
+  } else if (isCapacitor) {
+    const token = await getPreference('authToken');
+    const csrf = await getPreference('authCsrf');
+    if (token) desktopToken = token;
+    if (csrf) desktopCsrf = csrf;
+  }
 }
 
 export function clearDesktopTokens() {
@@ -85,6 +109,9 @@ export function clearDesktopTokens() {
   if (isDesktop) {
     (window as any).electronAPI.storeSet('authToken', null);
     (window as any).electronAPI.storeSet('authCsrf', null);
+  } else if (isCapacitor) {
+    removePreference('authToken');
+    removePreference('authCsrf');
   }
 }
 
@@ -109,7 +136,7 @@ export function resolveAsset(path: string | null | undefined): string {
     path.startsWith('blob:')
   )
     return path;
-  if (!isDesktop) return path;
+  if (!isDesktop && !isCapacitor) return path;
   const base = getServerUrl();
   if (!base) return path;
   return `${base}${path}`;

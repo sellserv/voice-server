@@ -11,6 +11,9 @@
   <a href="https://ko-fi.com/sellserv"><img src="https://img.shields.io/badge/Ko--fi-Support%20this%20project-FF5E5B?logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
 </p>
 
+> [!CAUTION]
+> Hey there! This is a solo developer side project currently in alpha. Development happens in my free time, so expect rough edges, breaking changes, and periods of inactivity. Thanks for checking it out! If you run into bugs, please open an issue or reach out at support@sellserv.net.
+
 Features real-time messaging, WebRTC voice/video calls, screen sharing, synchronized YouTube watching, a soundboard, custom emojis, a voice changer, polls, automod, and a role-based permission system — all running on a single server.
 
 ## Features

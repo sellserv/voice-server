@@ -179,6 +179,7 @@ export interface User {
   email_verified?: boolean;
   mfa_method?: MfaMethod;
   created_at: string;
+  premium_tier?: string;
   is_instance_admin?: boolean;
 }
 export interface UserRow extends Omit<User, 'email_verified'> {

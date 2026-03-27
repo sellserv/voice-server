@@ -10,6 +10,7 @@ interface LinkPreview {
   description: string | null;
   image: string | null;
   site_name: string | null;
+  author: string | null;
   favicon: string | null;
   fetched_at: string;
 }
@@ -109,6 +110,10 @@ function isYouTubeUrl(urlStr: string): { isYT: boolean; videoId?: string } {
   if (host === 'youtube.com' || host === 'm.youtube.com') {
     const videoId = parsed.searchParams.get('v');
     if (videoId) return { isYT: true, videoId };
+
+    // Shorts: /shorts/VIDEO_ID
+    const shortsMatch = parsed.pathname.match(/^\/shorts\/([^/?]+)/);
+    if (shortsMatch) return { isYT: true, videoId: shortsMatch[1] };
   }
 
   if (host === 'youtu.be') {
@@ -226,6 +231,7 @@ export default async function linkPreviewRoutes(app: FastifyInstance) {
             description: cached.description,
             image: cached.image,
             site_name: cached.site_name,
+            author: cached.author || null,
             favicon: cached.favicon,
           };
         }
@@ -242,6 +248,8 @@ export default async function linkPreviewRoutes(app: FastifyInstance) {
         let siteName: string | null = null;
         let favicon: string | null = null;
 
+        let author: string | null = null;
+
         if (isYT && videoId) {
           // Use YouTube oEmbed API
           const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
@@ -255,7 +263,8 @@ export default async function linkPreviewRoutes(app: FastifyInstance) {
               thumbnail_url?: string;
             };
             title = data.title || null;
-            siteName = data.author_name || 'YouTube';
+            author = data.author_name || null;
+            siteName = 'YouTube';
             image = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
             favicon = 'https://www.youtube.com/favicon.ico';
           }
@@ -313,6 +322,35 @@ export default async function linkPreviewRoutes(app: FastifyInstance) {
           image = extractMetaContent(html, 'og:image');
           siteName = extractMetaContent(html, 'og:site_name');
           favicon = extractFavicon(html, parsed.origin);
+          author = extractMetaContent(html, 'og:article:author')
+            || extractMetaContent(html, 'article:author')
+            || extractMetaContent(html, 'twitter:creator')
+            || null;
+
+          // Site-specific author extraction
+          const host = parsed.hostname.replace('www.', '');
+          if ((host === 'reddit.com' || host.endsWith('.reddit.com')) && parsed.pathname) {
+            // Extract subreddit from path like /r/subreddit/...
+            const subMatch = parsed.pathname.match(/^\/r\/([^/]+)/);
+            if (subMatch) author = `r/${subMatch[1]}`;
+          } else if ((host === 'twitter.com' || host === 'x.com') && parsed.pathname) {
+            // Extract @handle from path like /username/status/...
+            const handleMatch = parsed.pathname.match(/^\/([^/]+)/);
+            if (handleMatch && !['search', 'explore', 'home', 'i', 'settings'].includes(handleMatch[1])) {
+              author = `@${handleMatch[1]}`;
+            }
+          } else if (host === 'github.com' && parsed.pathname) {
+            // Extract owner/repo from path
+            const ghMatch = parsed.pathname.match(/^\/([^/]+)(?:\/([^/]+))?/);
+            if (ghMatch) {
+              author = ghMatch[2] ? `${ghMatch[1]}/${ghMatch[2]}` : ghMatch[1];
+            }
+          } else if ((host === 'twitch.tv' || host.endsWith('.twitch.tv')) && parsed.pathname) {
+            const channelMatch = parsed.pathname.match(/^\/([^/]+)/);
+            if (channelMatch && !['directory', 'downloads', 'p', 'jobs'].includes(channelMatch[1])) {
+              author = channelMatch[1];
+            }
+          }
 
           // Make relative image URLs absolute
           if (image && !image.startsWith('http')) {
@@ -327,9 +365,9 @@ export default async function linkPreviewRoutes(app: FastifyInstance) {
         // Only cache if we got at least a title
         if (title) {
           db.prepare(
-            `INSERT OR REPLACE INTO link_previews (url, title, description, image, site_name, favicon)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-          ).run(url, title, description, image, siteName, favicon);
+            `INSERT OR REPLACE INTO link_previews (url, title, description, image, site_name, author, favicon)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          ).run(url, title, description, image, siteName, author, favicon);
         }
 
         return {
@@ -338,6 +376,7 @@ export default async function linkPreviewRoutes(app: FastifyInstance) {
           description,
           image,
           site_name: siteName,
+          author,
           favicon,
         };
       } catch (err: any) {

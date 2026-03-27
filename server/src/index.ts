@@ -30,6 +30,8 @@ import linkPreviewRoutes from './routes/linkPreview.js';
 import auditRoutes from './routes/audit.js';
 import serverRoutes from './routes/servers.js';
 import friendRoutes from './routes/friends.js';
+import billingRoutes from './routes/billing.js';
+import pushRoutes from './routes/push.js';
 import { cleanupOldAuditEntries } from './audit/log.js';
 import { setupWebSocket } from './ws/index.js';
 import { createWorkers, setWorkerDiedCallback } from './media/worker.js';
@@ -83,7 +85,7 @@ await app.register(fastifyWebSocket, {
   options: { maxPayload: 64 * 1024 }, // 64KB max WebSocket message size
 });
 await app.register(fastifyMultipart, {
-  limits: { fileSize: config.maxFileSize },
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB max (pro limit); per-user checks enforce free tier limit
 });
 
 // Security headers
@@ -246,6 +248,8 @@ await app.register(linkPreviewRoutes);
 await app.register(auditRoutes);
 await app.register(serverRoutes);
 await app.register(friendRoutes);
+await app.register(billingRoutes);
+await app.register(pushRoutes);
 
 // WebSocket
 setupWebSocket(app);

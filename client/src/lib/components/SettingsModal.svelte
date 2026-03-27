@@ -15,7 +15,7 @@
   import { currentUser, updateProfile, changePassword } from '$lib/stores/auth';
   import { applyNoiseSuppression } from '$lib/webrtc';
   import { api } from '$lib/api';
-  import { isDesktop, resolveAsset } from '$lib/stores/server';
+  import { isDesktop, isCapacitor, resolveAsset, serverUrl } from '$lib/stores/server';
   import { servers, updateServerMember } from '$lib/stores/servers';
   import { isGradient, parseGradientColors, nameStyle } from '$lib/nameColor';
   import GifPicker from './GifPicker.svelte';
@@ -33,6 +33,41 @@
   let videoDevices = $state<MediaDeviceInfo[]>([]);
   let loadingDevices = $state(true);
   let capturingPttKey = $state(false);
+
+  // Billing
+  let billingStatus: { tier: string; subscription: any; stripeConfigured?: boolean } | null = $state(null);
+  let billingLoading = $state(false);
+  let billingError = $state('');
+
+  async function loadBillingStatus() {
+    billingLoading = true;
+    billingError = '';
+    try {
+      billingStatus = await api.get<any>('/api/billing/status');
+    } catch (e: any) {
+      billingError = e?.message || 'Failed to load billing status';
+    } finally {
+      billingLoading = false;
+    }
+  }
+
+  async function handleUpgrade() {
+    try {
+      const result = await api.post<{ url: string }>('/api/billing/create-checkout-session');
+      if (result.url) window.location.href = result.url;
+    } catch (e: any) {
+      billingError = e?.message || 'Failed to start checkout';
+    }
+  }
+
+  async function handleManageBilling() {
+    try {
+      const result = await api.post<{ url: string }>('/api/billing/portal');
+      if (result.url) window.location.href = result.url;
+    } catch (e: any) {
+      billingError = e?.message || 'Failed to open billing portal';
+    }
+  }
 
   // Game Activity settings
   let gameEnabled = $state(true);
@@ -695,17 +730,23 @@
         <button class="sidebar-item" class:active={activeTab === 'my-account'} onclick={() => activeTab = 'my-account'}>My Account</button>
         <button class="sidebar-item" class:active={activeTab === 'profiles'} onclick={() => activeTab = 'profiles'}>Profiles</button>
         <button class="sidebar-item" class:active={activeTab === 'mfa'} onclick={() => activeTab = 'mfa'}>Two-Factor Authentication</button>
-        
+        <button class="sidebar-item" class:active={activeTab === 'billing'} onclick={() => { activeTab = 'billing'; loadBillingStatus(); }}>
+          Billing
+        </button>
+
         <div class="sidebar-separator"></div>
         <h5 class="sidebar-title">App Settings</h5>
         <button class="sidebar-item" class:active={activeTab === 'voice-video'} onclick={() => activeTab = 'voice-video'}>Voice & Video</button>
         <button class="sidebar-item" class:active={activeTab === 'notifications'} onclick={() => activeTab = 'notifications'}>Notifications</button>
         <button class="sidebar-item" class:active={activeTab === 'appearance'} onclick={() => activeTab = 'appearance'}>Appearance</button>
-        <button class="sidebar-item" class:active={activeTab === 'game-activity'} onclick={() => { activeTab = 'game-activity'; loadGameSettings(); }}>Game Activity</button>
         {#if isDesktop}
+          <button class="sidebar-item" class:active={activeTab === 'game-activity'} onclick={() => { activeTab = 'game-activity'; loadGameSettings(); }}>Game Activity</button>
           <button class="sidebar-item" class:active={activeTab === 'desktop'} onclick={() => activeTab = 'desktop'}>Desktop</button>
         {/if}
-        
+        {#if isDesktop || isCapacitor}
+          <button class="sidebar-item" class:active={activeTab === 'server-connection'} onclick={() => activeTab = 'server-connection'}>Server</button>
+        {/if}
+
         <div class="sidebar-separator"></div>
         <button class="sidebar-item logout-nav-btn" onclick={onlogout}>
           <Icon name="logout" size={18} />
@@ -1411,10 +1452,63 @@
             {/if}
           </section>
 
+        {:else if activeTab === 'billing'}
+          <section class="section">
+            <h3 class="content-title">Billing</h3>
+            {#if billingLoading}
+              <div class="billing-loading">
+                <div class="spinner"></div>
+                <p>Loading billing info...</p>
+              </div>
+            {:else if billingError}
+              <p class="billing-error">{billingError}</p>
+            {:else}
+              <div class="billing-card" class:pro={billingStatus?.tier === 'pro'}>
+                <div class="billing-tier-header">
+                  <span class="billing-tier-name">
+                    {billingStatus?.tier === 'pro' ? 'Pro' : 'Free'}
+                  </span>
+                  {#if billingStatus?.tier === 'pro'}
+                    <span class="billing-pro-badge" title="Pro"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>
+                  {/if}
+                </div>
+                {#if billingStatus?.tier === 'pro'}
+                  <p class="billing-desc">You have access to all premium features.</p>
+                  {#if billingStatus?.subscription?.current_period_end}
+                    <p class="billing-period">
+                      Next billing date: {new Date(billingStatus.subscription.current_period_end).toLocaleDateString()}
+                    </p>
+                  {/if}
+                  {#if billingStatus?.stripeConfigured}
+                    <button class="billing-btn manage" onclick={handleManageBilling}>Manage Subscription</button>
+                  {/if}
+                {:else}
+                  <p class="billing-desc">Upgrade to Pro for premium features:</p>
+                  <ul class="billing-features">
+                    <li>100MB file uploads (vs 25MB)</li>
+                    <li>4,000 character messages (vs 2,000)</li>
+                    <li>Join up to 200 servers (vs 100)</li>
+                    <li>Custom name colors and fonts</li>
+                    <li>Animated avatars and banners</li>
+                    <li>Exclusive Pro badge</li>
+                    <li>Early access to new features</li>
+                  </ul>
+                  {#if billingStatus?.stripeConfigured}
+                    <button class="billing-btn upgrade" onclick={handleUpgrade}>
+                      Upgrade to Pro — $5/month
+                    </button>
+                  {:else}
+                    <p class="billing-note">Contact an admin to upgrade your account.</p>
+                  {/if}
+                {/if}
+              </div>
+            {/if}
+          </section>
+
         {:else if activeTab === 'desktop' && isDesktop}
           <section class="section">
             <h3 class="content-title">Desktop Settings</h3>
-            
+
             <div class="setting-toggle-row">
               <div class="toggle-info">
                 <div class="toggle-label">Open on Startup</div>
@@ -1433,6 +1527,21 @@
               <button class="toggle-switch" class:active={closeToTray} aria-label="Toggle minimize to tray" disabled={closeToTrayLoading} onclick={toggleCloseToTray}>
                 <div class="toggle-knob"></div>
               </button>
+            </div>
+          </section>
+
+        {:else if activeTab === 'server-connection'}
+          <section class="section">
+            <h3 class="content-title">Server Connection</h3>
+            <div class="form-group">
+              <label>Connected to</label>
+              <div class="server-url-display">{$serverUrl}</div>
+              <button class="btn btn-danger" onclick={() => {
+                serverUrl.set('');
+              }}>
+                Disconnect & Choose Another Server
+              </button>
+              <p class="server-note">This will sign you out and return to the server selector.</p>
             </div>
           </section>
         {/if}
@@ -2456,7 +2565,7 @@
 
   .theme-card.active {
     border-color: var(--accent);
-    background: rgba(124, 92, 252, 0.05);
+    background: rgba(88, 101, 242, 0.05);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
   }
 
@@ -2471,10 +2580,15 @@
   }
 
   /* Theme Previews specific colors */
-  .theme-preview-box:not(.theme-dark):not(.theme-light) { background: #0e0e1a; }
-  .theme-preview-box:not(.theme-dark):not(.theme-light) .preview-sidebar { background: #0c0c16; }
-  .theme-preview-box:not(.theme-dark):not(.theme-light) .preview-bubble { background: #1e1e32; }
-  .theme-preview-box:not(.theme-dark):not(.theme-light) .preview-bubble-short { background: #1e1e32; }
+  .theme-preview-box:not(.theme-midnight):not(.theme-dark):not(.theme-light) { background: #1c1d21; }
+  .theme-preview-box:not(.theme-midnight):not(.theme-dark):not(.theme-light) .preview-sidebar { background: #17181b; }
+  .theme-preview-box:not(.theme-midnight):not(.theme-dark):not(.theme-light) .preview-bubble { background: #2b2d31; }
+  .theme-preview-box:not(.theme-midnight):not(.theme-dark):not(.theme-light) .preview-bubble-short { background: #2b2d31; }
+
+  .theme-preview-box.theme-midnight { background: #0e0e1a; }
+  .theme-preview-box.theme-midnight .preview-sidebar { background: #0c0c16; }
+  .theme-preview-box.theme-midnight .preview-bubble { background: #1e1e32; }
+  .theme-preview-box.theme-midnight .preview-bubble-short { background: #1e1e32; }
 
   .theme-preview-box.theme-dark { background: #0d0d0d; }
   .theme-preview-box.theme-dark .preview-sidebar { background: #050505; }
@@ -2692,7 +2806,6 @@
   .mfa-status-card.enabled .mfa-status-icon {
     background: var(--success);
     color: white;
-    box-shadow: 0 0 20px rgba(52, 211, 153, 0.3);
   }
 
   .mfa-status-info {
@@ -3057,5 +3170,142 @@
 
   .game-input:focus {
     border-color: var(--accent);
+  }
+
+  /* Billing */
+  .pro-sidebar-badge {
+    display: inline-flex;
+    align-items: center;
+    color: #f59e0b;
+    margin-left: 4px;
+  }
+
+  .billing-loading {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-dim);
+  }
+
+  .billing-error {
+    color: var(--danger);
+    padding: 12px;
+  }
+
+  .billing-card {
+    background: var(--bg-darker);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .billing-card.pro {
+    border-color: #f59e0b;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.05), rgba(217, 119, 6, 0.02));
+  }
+
+  .billing-tier-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .billing-tier-name {
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: white;
+  }
+
+  .billing-pro-badge {
+    display: inline-flex;
+    align-items: center;
+    color: #f59e0b;
+    margin-left: 4px;
+  }
+
+  .billing-desc {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+  }
+
+  .billing-period {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+  }
+
+  .billing-features {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .billing-features li {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    padding-left: 20px;
+    position: relative;
+  }
+
+  .billing-features li::before {
+    content: '\2713';
+    position: absolute;
+    left: 0;
+    color: #f59e0b;
+    font-weight: 700;
+  }
+
+  .billing-btn {
+    padding: 12px 24px;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 0.95rem;
+    border: none;
+    cursor: pointer;
+    transition: filter 0.15s;
+    margin-top: 8px;
+    align-self: flex-start;
+  }
+
+  .billing-btn:hover {
+    filter: brightness(1.1);
+  }
+
+  .billing-btn.upgrade {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: white;
+  }
+
+  .billing-btn.manage {
+    background: var(--bg-light);
+    color: var(--text);
+  }
+
+  .billing-note {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    font-style: italic;
+  }
+
+  .server-url-display {
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.6rem 1rem;
+    color: var(--text);
+    font-family: monospace;
+    font-size: 0.85rem;
+    margin-bottom: 1rem;
+    word-break: break-all;
+  }
+
+  .server-note {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    margin-top: 0.75rem;
   }
 </style>

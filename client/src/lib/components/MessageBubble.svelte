@@ -457,6 +457,9 @@
           style={nameStyle(liveUser?.name_color || message.name_color, liveUser?.role_color || message.role_color, liveUser?.name_font || message.name_font)}
           >{liveUser?.server_nickname || liveUser?.display_name || message.display_name || message.username}</span
         >
+        {#if liveUser?.premium_tier === 'pro'}
+          <span class="pro-badge" title="Pro"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>
+        {/if}
         <span class="time">{timeStr}</span>
         {#if message.pinned}
           <Icon name="pin" size={12} class="pinned-icon-small" />
@@ -869,6 +872,14 @@
     letter-spacing: -0.01em;
   }
 
+  .pro-badge {
+    display: inline-flex;
+    align-items: center;
+    color: #f59e0b;
+    vertical-align: middle;
+    margin-left: 2px;
+  }
+
   .time {
     font-size: 0.75rem;
     color: var(--text-dim);
@@ -1187,7 +1198,7 @@
   }
 
   .reaction-pill.reacted {
-    background: rgba(124, 92, 252, 0.15);
+    background: var(--accent-glow);
     border-color: var(--accent);
     box-shadow: 0 0 12px var(--accent-glow);
   }
@@ -1240,13 +1251,13 @@
   }
 
   :global(.mention) {
-    background: rgba(124, 92, 252, 0.15);
+    background: var(--accent-glow);
     color: var(--accent);
     padding: 0 6px;
     border-radius: 4px;
     font-weight: 700;
     transition: all 0.2s var(--ease-out);
-    box-shadow: 0 0 8px rgba(124, 92, 252, 0.1);
+    box-shadow: 0 0 8px var(--accent-glow);
   }
 
   :global(.mention:hover) {

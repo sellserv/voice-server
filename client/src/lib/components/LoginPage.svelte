@@ -1048,7 +1048,7 @@
   .aurora-1 {
     width: 1200px;
     height: 1200px;
-    background: radial-gradient(circle, rgba(124, 92, 252, 0.4) 0%, transparent 70%);
+    background: radial-gradient(circle, rgba(88, 101, 242, 0.4) 0%, transparent 70%);
     top: -500px;
     left: -400px;
     animation: nebula-float 20s infinite alternate ease-in-out;
@@ -1072,7 +1072,7 @@
     position: absolute;
     width: 800px;
     height: 800px;
-    background: radial-gradient(circle, rgba(124, 92, 252, 0.12) 0%, transparent 70%);
+    background: radial-gradient(circle, rgba(88, 101, 242, 0.12) 0%, transparent 70%);
     border-radius: 50%;
     pointer-events: none;
     left: 0;
@@ -1264,7 +1264,7 @@
   .field input:focus {
     background: rgba(255, 255, 255, 0.06);
     border-color: var(--accent);
-    box-shadow: 0 0 20px rgba(124, 92, 252, 0.15);
+    box-shadow: var(--shadow);
     outline: none;
   }
 

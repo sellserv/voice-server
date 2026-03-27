@@ -1,5 +1,6 @@
 import db from './connection.js';
 import { randomUUID } from 'crypto';
+import { migrateDeviceTokens } from './migrations/device_tokens.js';
 
 const ALL_PERMISSIONS = JSON.stringify({
   manage_channels_groups: true,
@@ -1280,4 +1281,62 @@ export function initSchema() {
   try {
     db.exec('ALTER TABLE messages ADD COLUMN metadata TEXT');
   } catch {}
+
+  // ─── Premium subscription infrastructure ───
+
+  // Migration: add pro column to roles (marks a role as granting premium status)
+  try {
+    db.exec('ALTER TABLE roles ADD COLUMN pro INTEGER NOT NULL DEFAULT 0');
+  } catch {}
+
+  // Migration: add premium_tier to users (cached premium status)
+  try {
+    db.exec("ALTER TABLE users ADD COLUMN premium_tier TEXT NOT NULL DEFAULT 'free'");
+  } catch {}
+
+  // Create subscriptions table for Stripe billing
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      stripe_subscription_id TEXT UNIQUE,
+      stripe_customer_id TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'past_due', 'canceled')),
+      tier TEXT NOT NULL DEFAULT 'pro',
+      current_period_end TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe ON subscriptions(stripe_subscription_id);
+  `);
+
+  // Seed default global "Pro" role if it doesn't exist
+  {
+    const proRole = db.prepare(
+      "SELECT id FROM roles WHERE server_id IS NULL AND pro = 1 LIMIT 1",
+    ).get();
+    if (!proRole) {
+      const id = randomUUID();
+      db.prepare(
+        `INSERT INTO roles (id, name, color, position, permissions, is_default, server_id, pro)
+         VALUES (?, 'Pro', '#f59e0b', 100, '{}', 0, NULL, 1)`,
+      ).run(id);
+    }
+  }
+
+  // Migration: add alpha_billing toggle to instance_settings
+  try {
+    db.exec('ALTER TABLE instance_settings ADD COLUMN alpha_billing INTEGER NOT NULL DEFAULT 0');
+    // Seed from env var on first migration only
+    if (process.env.ALPHA_PHASE === 'true') {
+      db.prepare('UPDATE instance_settings SET alpha_billing = 1 WHERE id = 1').run();
+    }
+  } catch {}
+
+  // Migration: add author column to link_previews
+  try {
+    db.exec('ALTER TABLE link_previews ADD COLUMN author TEXT');
+  } catch {}
+
+  migrateDeviceTokens();
 }

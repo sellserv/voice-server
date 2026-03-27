@@ -877,13 +877,11 @@
     transition: all 0.3s var(--ease-elastic);
     border: none;
     cursor: pointer;
-    box-shadow: 0 4px 12px rgba(52, 211, 153, 0.2);
   }
 
   .add-friend-chip:hover {
     filter: brightness(1.1);
     transform: scale(1.05) translateY(-1px);
-    box-shadow: 0 6px 16px rgba(52, 211, 153, 0.3);
   }
 
   .add-friend-chip.active {

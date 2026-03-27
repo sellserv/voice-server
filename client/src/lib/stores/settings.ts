@@ -1,7 +1,8 @@
 import { writable } from 'svelte/store';
 
 export const themes = [
-  { id: '', name: 'Midnight Blue' },
+  { id: '', name: 'Default' },
+  { id: 'theme-midnight', name: 'Midnight' },
   { id: 'theme-dark', name: 'Dark' },
   { id: 'theme-light', name: 'Light' },
 ] as const;

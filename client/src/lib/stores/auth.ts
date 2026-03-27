@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import { api } from '../api';
-import { isDesktop, setDesktopToken, setDesktopCsrf, loadDesktopTokens, clearDesktopTokens } from './server';
+import { isDesktop, isCapacitor, setDesktopToken, setDesktopCsrf, loadDesktopTokens, clearDesktopTokens } from './server';
+import { unregisterPush } from '../capacitor.js';
 import type { User, LoginResponse, MfaMethod } from '@voip-server/shared';
 
 export interface ChangePasswordBody {
@@ -35,10 +36,10 @@ export async function checkAuth() {
   await loadDesktopTokens();
   try {
     const user = await api.get<User & { token?: string; csrf?: string }>('/api/auth/me');
-    if (isDesktop && user.token) {
+    if ((isDesktop || isCapacitor) && user.token) {
       setDesktopToken(user.token);
     }
-    if (isDesktop && user.csrf) {
+    if ((isDesktop || isCapacitor) && user.csrf) {
       setDesktopCsrf(user.csrf);
     }
     currentUser.set(user);
@@ -83,11 +84,11 @@ export async function login(username: string, password: string) {
 
   const user = res as User & { token?: string; csrf?: string };
   console.log('[AUTH] Login response has token:', !!user.token, 'isDesktop:', isDesktop);
-  if (isDesktop && user.token) {
+  if ((isDesktop || isCapacitor) && user.token) {
     setDesktopToken(user.token);
     console.log('[AUTH] Token stored for WS');
   }
-  if (isDesktop && user.csrf) {
+  if ((isDesktop || isCapacitor) && user.csrf) {
     setDesktopCsrf(user.csrf);
   }
   currentUser.set(user);
@@ -113,10 +114,10 @@ export async function verifyMfa(userId: string, code: string, mfaMethod: MfaMeth
   }
 
   const user = res as User & { token?: string; csrf?: string };
-  if (isDesktop && user.token) {
+  if ((isDesktop || isCapacitor) && user.token) {
     setDesktopToken(user.token);
   }
-  if (isDesktop && user.csrf) {
+  if ((isDesktop || isCapacitor) && user.csrf) {
     setDesktopCsrf(user.csrf);
   }
   currentUser.set(user);
@@ -211,6 +212,7 @@ export async function resetPassword(resetToken: string, newPassword: string) {
 }
 
 export async function logout() {
+  await unregisterPush();
   await api.post('/api/auth/logout');
   clearDesktopTokens();
   currentUser.set(null);
@@ -224,10 +226,10 @@ export async function changePassword(
   const body: ChangePasswordBody = { current_password: currentPassword, new_password: newPassword };
   if (userId) body.user_id = userId;
   const user = await api.post<User & { token?: string; csrf?: string }>('/api/auth/change-password', body);
-  if (isDesktop && user.token) {
+  if ((isDesktop || isCapacitor) && user.token) {
     setDesktopToken(user.token);
   }
-  if (isDesktop && user.csrf) {
+  if ((isDesktop || isCapacitor) && user.csrf) {
     setDesktopCsrf(user.csrf);
   }
   currentUser.set(user);

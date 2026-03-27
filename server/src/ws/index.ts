@@ -56,6 +56,10 @@ export function getClient(userId: string): ConnectedClient | undefined {
   return clients.get(userId);
 }
 
+export function isUserOnline(userId: string): boolean {
+  return clients.has(userId);
+}
+
 export function getDisplayName(userId: string): string | undefined {
   const client = clients.get(userId);
   if (client) return client.display_name;

@@ -338,7 +338,7 @@
     padding: 24px;
     border-radius: var(--radius);
     border: 1px solid var(--accent-subtle);
-    background: linear-gradient(135deg, rgba(124, 92, 252, 0.05) 0%, transparent 100%);
+    background: linear-gradient(135deg, var(--accent-subtle) 0%, transparent 100%);
   }
 
   .creator-header {

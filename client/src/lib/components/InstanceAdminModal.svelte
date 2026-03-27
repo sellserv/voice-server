@@ -17,6 +17,7 @@
   let loading = $state(true);
   let error = $state('');
   let registrationOpen = $state(true);
+  let alphaBilling = $state(false);
   let instanceName = $state('SellServ Voice');
   let instanceNameInput = $state('SellServ Voice');
   let reportFilter: 'open' | 'all' = $state('open');
@@ -24,21 +25,38 @@
   // User detail
   let selectedUser: any = $state(null);
   let userDetailLoading = $state(false);
+  let userSearch = $state('');
+
+  // Global roles
+  let globalRoles: any[] = $state([]);
+  let selectedUserGlobalRoles: string[] = $state([]);
 
   // Action states
   let actionLoading = $state('');
+
+  let filteredUsers = $derived(
+    userSearch.trim()
+      ? users.filter((u: any) => {
+          const q = userSearch.trim().toLowerCase();
+          return u.username.toLowerCase().includes(q) ||
+            (u.display_name || '').toLowerCase().includes(q) ||
+            (u.email || '').toLowerCase().includes(q);
+        })
+      : users,
+  );
 
   async function loadData() {
     loading = true;
     error = '';
     try {
-      const [st, u, s, r, a, is] = await Promise.all([
+      const [st, u, s, r, a, is, gr] = await Promise.all([
         api.get<any>('/api/admin/stats'),
         api.get<any[]>('/api/admin/users'),
         api.get<any[]>('/api/admin/servers'),
         api.get<any[]>('/api/admin/reports?status=open'),
         api.get<any>('/api/admin/audit-log?limit=50'),
         api.get<any>('/api/admin/instance-settings'),
+        api.get<any[]>('/api/admin/global-roles'),
       ]);
       stats = st;
       users = u;
@@ -47,8 +65,10 @@
       auditEntries = a.entries;
       auditTotal = a.total;
       registrationOpen = !!is.allow_registration;
+      alphaBilling = !!is.alpha_billing;
       instanceName = is.instance_name || 'SellServ Voice';
       instanceNameInput = instanceName;
+      globalRoles = gr;
     } catch (e: any) {
       error = e.message || 'Failed to load data';
     } finally {
@@ -70,6 +90,25 @@
     try {
       const result = await api.patch<any>('/api/admin/instance-settings', { allow_registration: !registrationOpen });
       registrationOpen = !!result.allow_registration;
+    } catch (e: any) {
+      error = e?.message || 'Failed to update settings';
+    }
+  }
+
+  async function toggleAlphaBilling() {
+    const action = alphaBilling ? 'disable' : 'enable';
+    const message = alphaBilling
+      ? 'Are you sure you want to disable alpha billing? Users will need a Pro subscription to access premium features.'
+      : 'Are you sure you want to enable alpha billing? All users will get Pro features for free.';
+    const confirmed = await confirm(message, {
+      title: `${action.charAt(0).toUpperCase() + action.slice(1)} Alpha Billing`,
+      confirmLabel: `${action.charAt(0).toUpperCase() + action.slice(1)} Alpha Billing`,
+      dangerAction: alphaBilling,
+    });
+    if (!confirmed) return;
+    try {
+      const result = await api.patch<any>('/api/admin/instance-settings', { alpha_billing: !alphaBilling });
+      alphaBilling = !!result.alpha_billing;
     } catch (e: any) {
       error = e?.message || 'Failed to update settings';
     }
@@ -111,11 +150,31 @@
     userDetailLoading = true;
     error = '';
     try {
-      selectedUser = await api.get<any>(`/api/admin/users/${userId}`);
+      const [user, roles] = await Promise.all([
+        api.get<any>(`/api/admin/users/${userId}`),
+        api.get<any[]>(`/api/admin/users/${userId}/global-roles`),
+      ]);
+      selectedUser = user;
+      selectedUserGlobalRoles = roles.map((r: any) => r.id);
     } catch (e: any) {
       error = e?.message || 'Failed to load user details';
     } finally {
       userDetailLoading = false;
+    }
+  }
+
+  async function toggleGlobalRole(roleId: string) {
+    if (!selectedUser) return;
+    const hasRole = selectedUserGlobalRoles.includes(roleId);
+    const action = hasRole ? 'remove' : 'add';
+    actionLoading = roleId;
+    try {
+      const result = await api.patch<any>(`/api/admin/users/${selectedUser.id}/global-roles`, { roleId, action });
+      selectedUserGlobalRoles = result.globalRoles.map((r: any) => r.id);
+    } catch (e: any) {
+      error = e?.message || 'Failed to update role';
+    } finally {
+      actionLoading = '';
     }
   }
 
@@ -333,6 +392,19 @@
                 <span class="toggle-knob"></span>
               </button>
             </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-name">Alpha Billing</span>
+                <span class="setting-desc">Give all users Pro features for free during alpha</span>
+              </div>
+              <button
+                class="toggle-btn"
+                class:active={alphaBilling}
+                onclick={toggleAlphaBilling}
+              >
+                <span class="toggle-knob"></span>
+              </button>
+            </div>
           </div>
 
         {:else if activeTab === 'users'}
@@ -391,6 +463,31 @@
                   </div>
                 {/if}
 
+                {#if globalRoles.length > 0}
+                  <div class="detail-section">
+                    <span class="section-title">Global Roles</span>
+                    <div class="role-toggles">
+                      {#each globalRoles as role (role.id)}
+                        <button
+                          class="role-toggle"
+                          class:active={selectedUserGlobalRoles.includes(role.id)}
+                          disabled={actionLoading === role.id}
+                          onclick={() => toggleGlobalRole(role.id)}
+                        >
+                          <span class="role-dot" style:background={role.color}></span>
+                          <span class="role-name">{role.name}</span>
+                          {#if role.pro}
+                            <span class="pro-badge" title="Pro"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>
+                          {/if}
+                          <span class="role-status">
+                            {selectedUserGlobalRoles.includes(role.id) ? 'Assigned' : 'Not assigned'}
+                          </span>
+                        </button>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+
                 <div class="detail-footer">
                   <button
                     class="btn-danger"
@@ -403,8 +500,14 @@
               </div>
             {/if}
           {:else}
+            <input
+              type="text"
+              class="search-input"
+              placeholder="Search users by name, username, or email..."
+              bind:value={userSearch}
+            />
             <div class="admin-list">
-              {#each users as user (user.id)}
+              {#each filteredUsers as user (user.id)}
                 <button class="list-item clickable" onclick={() => loadUserDetail(user.id)}>
                   <div class="item-avatar">
                     {#if user.avatar_url}
@@ -1023,6 +1126,88 @@
 
   .toggle-btn.active .toggle-knob {
     transform: translateX(20px);
+  }
+
+  /* Search */
+  .search-input {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-darker);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.9rem;
+    margin-bottom: 16px;
+    outline: none;
+  }
+
+  .search-input:focus {
+    border-color: var(--accent);
+  }
+
+  .search-input::placeholder {
+    color: var(--text-dim);
+  }
+
+  /* Role toggles */
+  .role-toggles {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .role-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--bg-darkest);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    color: var(--text-muted);
+  }
+
+  .role-toggle:hover {
+    background: var(--bg-hover);
+    border-color: var(--text-dim);
+  }
+
+  .role-toggle.active {
+    border-color: var(--accent);
+    background: rgba(88, 101, 242, 0.08);
+  }
+
+  .role-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .role-name {
+    font-weight: 600;
+    color: var(--text);
+    font-size: 0.9rem;
+  }
+
+  .pro-badge {
+    display: inline-flex;
+    align-items: center;
+    color: #f59e0b;
+    margin-left: 4px;
+  }
+
+  .role-status {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+
+  .role-toggle.active .role-status {
+    color: var(--accent);
   }
 
   @media (max-width: 768px) {

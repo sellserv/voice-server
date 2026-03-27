@@ -23,6 +23,8 @@ import { playPttOn, playPttOff } from './sounds';
 import { isScreenSharing, setScreenShareStream } from './stores/screenShare';
 import { localVideoStream, setRemoteVideo, clearAllVideo } from './stores/video';
 import { get } from 'svelte/store';
+import { channels } from './stores/channels.js';
+import { startBackgroundAudio, stopBackgroundAudio } from './capacitor.js';
 import { RnnoiseWorkletNode, loadRnnoise } from '@sapphi-red/web-noise-suppressor';
 import rnnoiseWorkletPath from '@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url';
 import rnnoiseWasmPath from '@sapphi-red/web-noise-suppressor/rnnoise.wasm?url';
@@ -599,6 +601,10 @@ export async function joinVoice(channelId: string): Promise<MediaStream> {
     await consumeProducer(producerId).catch(console.error);
   }
 
+  // Start background audio service (fire-and-forget for Android foreground service)
+  const channel = get(channels).find(c => c.id === channelId);
+  void startBackgroundAudio(channel?.name || 'voice');
+
   return localStream;
 }
 
@@ -759,6 +765,7 @@ export function stopVideo() {
 }
 
 export function leaveVoice() {
+  void stopBackgroundAudio();
   sendWs({ type: 'voice:leave' });
 
   inVoiceChannel.set(null);

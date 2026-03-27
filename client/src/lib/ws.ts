@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 import type { ClientEvent, ServerEvent } from '@voip-server/shared';
-import { getWsBaseUrl, isDesktop, getDesktopToken, markSessionExpired } from './stores/server';
+import { getWsBaseUrl, isDesktop, isCapacitor, getDesktopToken, markSessionExpired } from './stores/server';
 
 type EventHandler = (event: ServerEvent) => void;
 
@@ -29,8 +29,8 @@ function getWsUrl(): string {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     url = `${proto}//${location.host}/ws`;
   }
-  // Desktop app: pass token as query param since cookies are in Tauri HTTP plugin's jar
-  if (isDesktop) {
+  // Desktop/Capacitor app: pass token as query param since cookies aren't available cross-origin
+  if (isDesktop || isCapacitor) {
     const token = getDesktopToken();
     if (token) url += `?token=${encodeURIComponent(token)}`;
   }

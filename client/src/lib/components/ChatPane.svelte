@@ -440,7 +440,7 @@
   }
 
   .chat-pane.drag-over {
-    background: rgba(124, 92, 252, 0.05);
+    background: var(--accent-subtle);
   }
 
   .chat-pane.drag-over::after {
@@ -678,7 +678,7 @@
 
   .search-toggle.active {
     color: var(--accent);
-    background: rgba(124, 92, 252, 0.1);
+    background: var(--accent-glow);
   }
 
   .search-bar {
@@ -811,13 +811,13 @@
   }
 
   :global(.message.highlight) {
-    background: rgba(124, 92, 252, 0.08) !important;
+    background: var(--accent-subtle) !important;
     box-shadow: inset 4px 0 0 var(--accent);
     animation: highlightFade 2s forwards;
   }
 
   @keyframes highlightFade {
-    from { background: rgba(124, 92, 252, 0.15); }
+    from { background: var(--accent-glow); }
     to { background: transparent; }
   }
 

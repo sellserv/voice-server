@@ -9,10 +9,13 @@ import {
   broadcastToChannel,
   broadcastToServer,
   getClient,
+  getDisplayName,
+  isUserOnline,
 } from './index.js';
+import { sendPushToUser } from '../push/index.js';
 import { ensureDmChannel, notifyDmCreated } from './dmUtils.js';
 import { handleVoiceEvent, leaveVoiceChannel, getPeersInChannel } from '../media/signaling.js';
-import { hasPermission, hasChannelPermission, isAppEnabled } from '../auth/permissions.js';
+import { hasPermission, hasChannelPermission, isAppEnabled, isPremium } from '../auth/permissions.js';
 import type { JwtPayload } from '../auth/jwt.js';
 import type { ClientEvent, Message } from '@voip-server/shared';
 import { clearAfkTimer } from '../media/afkManager.js';
@@ -20,7 +23,8 @@ import { checkNewUserCooldown } from '../auth/cooldown.js';
 import { processMessageForBots } from '../bots/botEngine.js';
 
 // Limits
-const MAX_MESSAGE_LENGTH = 4000;
+const FREE_MAX_MESSAGE_LENGTH = 2000;
+const PRO_MAX_MESSAGE_LENGTH = 4000;
 const MAX_EMOJI_LENGTH = 32;
 const MAX_REPLY_PREVIEW_LENGTH = 200;
 
@@ -32,6 +36,20 @@ export function clearTypingForChannel(channelId: string) {
 }
 // Track which voice channel each user is in
 export const userVoiceChannels = new Map<string, string>();
+// Voice departure tracking for missed call notifications
+const voiceChannelDepartures = new Map<string, { userId: string; leftAt: number }[]>();
+
+function recordVoiceDeparture(userId: string) {
+  const channelId = userVoiceChannels.get(userId);
+  if (!channelId) return;
+  const departures = voiceChannelDepartures.get(channelId) || [];
+  departures.push({ userId, leftAt: Date.now() });
+  voiceChannelDepartures.set(
+    channelId,
+    departures.filter((d) => d.leftAt > Date.now() - 5 * 60 * 1000),
+  );
+}
+
 // Watch Party sessions: Map<channelId, session data>
 interface WatchSessionData {
   hostUserId: string;
@@ -230,6 +248,26 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
               time: getCurrentPlaybackTime(session),
             });
           }
+
+          // Missed call push notifications for recently departed users
+          const recentlyLeft = voiceChannelDepartures.get(joinedChannel) || [];
+          const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+          const ch = db.prepare('SELECT name, server_id FROM channels WHERE id = ?').get(joinedChannel) as { name: string; server_id: string | null } | undefined;
+          if (ch) {
+            for (const departure of recentlyLeft) {
+              if (departure.leftAt > fiveMinAgo && departure.userId !== user.userId && !isUserOnline(departure.userId)) {
+                sendPushToUser(departure.userId, {
+                  title: 'Missed Call',
+                  body: `${getDisplayName(user.userId) || user.username} joined #${ch.name}`,
+                  data: {
+                    type: 'missed_call',
+                    channelId: joinedChannel,
+                    serverId: ch.server_id || '',
+                  },
+                }).catch(() => {});
+              }
+            }
+          }
         }
       });
       break;
@@ -245,12 +283,14 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
       enqueueForUser(user.userId, () => handleVoiceEvent(user, event));
       break;
     }
-    case 'voice:leave':
+    case 'voice:leave': {
       clearAfkTimer(user.userId);
+      recordVoiceDeparture(user.userId);
       removeWatchViewer(user.userId);
       cleanupWatchSession(user.userId);
       enqueueForUser(user.userId, () => handleVoiceEvent(user, event));
       break;
+    }
     case 'voice:disconnect':
       if (!hasPermission(user.userId, 'administrator')) {
         sendTo(user.userId, {
@@ -262,6 +302,7 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
       clearAfkTimer(event.userId);
       removeWatchViewer(event.userId);
       cleanupWatchSession(event.userId);
+      recordVoiceDeparture(event.userId);
       leaveVoiceChannel(event.userId);
       break;
     case 'voice:mute':
@@ -357,10 +398,11 @@ function handleChatSend(
   }
 
   // Validate message content length (#13)
-  if (content && content.length > MAX_MESSAGE_LENGTH) {
+  const maxLen = isPremium(user.userId) ? PRO_MAX_MESSAGE_LENGTH : FREE_MAX_MESSAGE_LENGTH;
+  if (content && content.length > maxLen) {
     sendTo(user.userId, {
       type: 'error',
-      message: `Message too long (max ${MAX_MESSAGE_LENGTH} characters)`,
+      message: `Message too long (max ${maxLen} characters)`,
     });
     return;
   }
@@ -514,8 +556,41 @@ function handleChatSend(
       }
     }
     sendToMany(participantIds, { type: 'chat:message', message });
+
+    // Push notifications for offline DM participants
+    for (const pid of participantIds) {
+      if (pid !== user.userId && !isUserOnline(pid)) {
+        sendPushToUser(pid, {
+          title: userRow.display_name || userRow.username,
+          body: message.content.length > 100 ? message.content.substring(0, 100) + '...' : (message.content || '[attachment]'),
+          data: {
+            type: 'dm',
+            channelId,
+            senderId: user.userId,
+          },
+        }).catch((err) => console.error('Push notification failed:', err));
+      }
+    }
   } else {
     broadcastToChannel(channelId, { type: 'chat:message', message, ...(channel.server_id ? { serverId: channel.server_id } : {}) });
+
+    // Push notifications for @mentions to offline users
+    const mentionRegex = /<@([^>]+)>/g;
+    let mentionMatch;
+    while ((mentionMatch = mentionRegex.exec(content || '')) !== null) {
+      const mentionedUserId = mentionMatch[1];
+      if (mentionedUserId !== user.userId && !isUserOnline(mentionedUserId)) {
+        sendPushToUser(mentionedUserId, {
+          title: `${userRow.display_name || userRow.username} mentioned you`,
+          body: message.content.length > 100 ? message.content.substring(0, 100) + '...' : (message.content || ''),
+          data: {
+            type: 'mention',
+            channelId,
+            serverId: channel.server_id || '',
+          },
+        }).catch((err) => console.error('Push notification failed:', err));
+      }
+    }
   }
 
   // Clear typing for this user in this channel
@@ -523,10 +598,11 @@ function handleChatSend(
 }
 
 function handleChatEdit(user: JwtPayload, messageId: string, content: string) {
-  if (!content || content.length > MAX_MESSAGE_LENGTH) {
+  const editMaxLen = isPremium(user.userId) ? PRO_MAX_MESSAGE_LENGTH : FREE_MAX_MESSAGE_LENGTH;
+  if (!content || content.length > editMaxLen) {
     sendTo(user.userId, {
       type: 'error',
-      message: `Message must be 1-${MAX_MESSAGE_LENGTH} characters`,
+      message: `Message must be 1-${editMaxLen} characters`,
     });
     return;
   }
@@ -1477,6 +1553,7 @@ export function handleDisconnect(user: JwtPayload) {
   // Clean up soundboard playbacks and leave voice channel
   // (leaveVoiceChannel also calls cleanupSoundboardForUser, but we call it here
   // in case the user disconnects without being in voice)
+  recordVoiceDeparture(user.userId);
   leaveVoiceChannel(user.userId);
 }
 

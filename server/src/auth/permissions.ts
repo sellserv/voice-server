@@ -43,11 +43,12 @@ const CHANNEL_OVERRIDABLE: ChannelOverridablePermission[] = [
 
 export function getUserRoleIds(userId: string, serverId?: string): string[] {
   if (serverId) {
+    // Include both server-specific roles AND global roles (server_id IS NULL)
     const rows = db
       .prepare(
         `SELECT ur.role_id FROM user_roles ur
          JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = ? AND r.server_id = ?`,
+         WHERE ur.user_id = ? AND (r.server_id = ? OR r.server_id IS NULL)`,
       )
       .all(userId, serverId) as { role_id: string }[];
     return rows.map((r) => r.role_id);
@@ -65,12 +66,12 @@ export function getUserRoleIds(userId: string, serverId?: string): string[] {
 
 export function getUserPermissions(userId: string, serverId?: string): RolePermissions {
   if (serverId) {
-    // Server-scoped: only consider roles belonging to this server
+    // Server-scoped: consider roles belonging to this server AND global roles (server_id IS NULL)
     const rows = db
       .prepare(
         `SELECT r.permissions FROM user_roles ur
          JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = ? AND r.server_id = ?`,
+         WHERE ur.user_id = ? AND (r.server_id = ? OR r.server_id IS NULL)`,
       )
       .all(userId, serverId) as { permissions: string }[];
 
@@ -509,6 +510,22 @@ export function getUsersWithChannelAccess(channelId: string): string[] {
   }
 
   return result;
+}
+
+export function isAlphaPhase(): boolean {
+  const row = db.prepare('SELECT alpha_billing FROM instance_settings WHERE id = 1').get() as { alpha_billing: number } | undefined;
+  return !!row?.alpha_billing;
+}
+
+export function isPremium(userId: string): boolean {
+  if (isAlphaPhase()) return true;
+
+  const row = db.prepare(
+    `SELECT 1 FROM user_roles ur
+     JOIN roles r ON r.id = ur.role_id
+     WHERE ur.user_id = ? AND r.pro = 1`,
+  ).get(userId);
+  return !!row;
 }
 
 export function isAppEnabled(appId: string, serverId?: string): boolean {

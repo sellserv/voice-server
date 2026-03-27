@@ -39,6 +39,9 @@
     updateChannelMemberDeafen,
     updateChannelMemberProfile,
   } from '$lib/stores/media';
+  import { isCapacitor, initPushNotifications } from '$lib/capacitor';
+  import { App as CapApp } from '@capacitor/app';
+  import { StatusBar, Style } from '@capacitor/status-bar';
   import { isDesktop, serverUrl, resolveAsset, sessionExpired, resetSessionExpired, loadServerUrlFromStore } from '$lib/stores/server';
   import { serverSettings, loadServerSettings } from '$lib/stores/serverSettings';
   import { servers, activeServerId, activeServer, loadServers, isDmView, switchServer, serverNotificationLevels } from '$lib/stores/servers';
@@ -77,7 +80,7 @@
   import HomeSidebar from '$lib/components/HomeSidebar.svelte';
   import CallOverlay from '$lib/components/CallOverlay.svelte';
   import UserList from '$lib/components/UserList.svelte';
-  import ServerConnect from '$lib/components/ServerConnect.svelte';
+  import ServerSelector from '$lib/components/ServerSelector.svelte';
   import ScreenShareViewer from '$lib/components/ScreenShareViewer.svelte';
   import {
     watchSession,
@@ -99,7 +102,7 @@
 
   let { children } = $props();
 
-  let needsServer = $derived(isDesktop && !$serverUrl);
+  let needsServer = $derived((isDesktop || isCapacitor) && !$serverUrl);
   let initialized = $state(false);
   let hasConnectedOnce = false;
   let viewingScreenUserId = $state<string | null>(null);
@@ -163,6 +166,9 @@
     await checkAuth();
 
     if ($currentUser) {
+      if (isCapacitor) {
+        initPushNotifications().catch(err => console.error('[Push] Init failed:', err));
+      }
       appDataLoaded = true;
       appLoading = true;
       try {
@@ -206,6 +212,17 @@
       document.body.classList.add('has-titlebar');
       // Load persisted server URL from electron-store (async, triggers $effect when done)
       loadServerUrlFromStore();
+    }
+
+    if (isCapacitor) {
+      StatusBar.setStyle({ style: Style.Dark }).catch(() => {});
+      StatusBar.setBackgroundColor({ color: '#08080f' }).catch(() => {});
+
+      CapApp.addListener('backButton', ({ canGoBack }) => {
+        if (canGoBack) {
+          window.history.back();
+        }
+      });
     }
 
     const unsub = onWsEvent((event) => {
@@ -955,7 +972,7 @@
 {/if}
 
 {#if needsServer}
-  <ServerConnect />
+  <ServerSelector />
 {:else if $authLoading || appLoading}
   <div class="loading-screen">
     <div class="loading-spinner"></div>

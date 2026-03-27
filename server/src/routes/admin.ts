@@ -502,16 +502,16 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // Get instance settings
   app.get('/api/admin/instance-settings', { preHandler: requireAdmin }, async () => {
-    const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name FROM instance_settings WHERE id = 1').get() as any;
-    return settings || { allow_server_creation: 1, allow_registration: 1, instance_name: 'SellServ Voice' };
+    const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name, alpha_billing FROM instance_settings WHERE id = 1').get() as any;
+    return settings || { allow_server_creation: 1, allow_registration: 1, instance_name: 'SellServ Voice', alpha_billing: 0 };
   });
 
   // Update instance settings
-  app.patch<{ Body: { allow_registration?: boolean; instance_name?: string } }>(
+  app.patch<{ Body: { allow_registration?: boolean; instance_name?: string; alpha_billing?: boolean } }>(
     '/api/admin/instance-settings',
     { preHandler: requireAdmin },
     async (request, reply) => {
-      const { allow_registration, instance_name } = request.body;
+      const { allow_registration, instance_name, alpha_billing } = request.body;
       if (allow_registration !== undefined) {
         db.prepare('UPDATE instance_settings SET allow_registration = ? WHERE id = 1').run(allow_registration ? 1 : 0);
       }
@@ -522,7 +522,10 @@ export default async function adminRoutes(app: FastifyInstance) {
         }
         db.prepare('UPDATE instance_settings SET instance_name = ? WHERE id = 1').run(trimmed);
       }
-      const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name FROM instance_settings WHERE id = 1').get() as any;
+      if (alpha_billing !== undefined) {
+        db.prepare('UPDATE instance_settings SET alpha_billing = ? WHERE id = 1').run(alpha_billing ? 1 : 0);
+      }
+      const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name, alpha_billing FROM instance_settings WHERE id = 1').get() as any;
       return settings;
     },
   );
@@ -539,6 +542,140 @@ export default async function adminRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: 'Invite code not found' });
       }
       logAuditEvent('invite_delete', request.user.userId, null, request.ip, { id }, serverId);
+      return { ok: true };
+    },
+  );
+
+  // ─── Global Role Management ─────────────────────────────
+
+  // List all global roles (server_id IS NULL)
+  app.get(
+    '/api/admin/global-roles',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async () => {
+      return db.prepare(
+        'SELECT id, name, color, position, permissions, is_default, pro FROM roles WHERE server_id IS NULL ORDER BY position ASC',
+      ).all();
+    },
+  );
+
+  // Toggle a global role for a user
+  app.patch<{ Params: { userId: string }; Body: { roleId: string; action: 'add' | 'remove' } }>(
+    '/api/admin/users/:userId/global-roles',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async (request, reply) => {
+      const { userId } = request.params;
+      const { roleId, action } = request.body || {};
+
+      if (!roleId || !action || !['add', 'remove'].includes(action)) {
+        return reply.code(400).send({ error: 'roleId and action (add/remove) are required' });
+      }
+
+      const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId) as
+        | { id: string; username: string }
+        | undefined;
+      if (!user) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+
+      const role = db.prepare('SELECT id, name, pro FROM roles WHERE id = ? AND server_id IS NULL').get(roleId) as
+        | { id: string; name: string; pro: number }
+        | undefined;
+      if (!role) {
+        return reply.code(404).send({ error: 'Global role not found' });
+      }
+
+      if (action === 'add') {
+        db.prepare('INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)').run(userId, roleId);
+      } else {
+        db.prepare('DELETE FROM user_roles WHERE user_id = ? AND role_id = ?').run(userId, roleId);
+      }
+
+      // Update cached premium_tier on users table
+      const hasPro = db.prepare(
+        `SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ? AND r.pro = 1`,
+      ).get(userId);
+      db.prepare('UPDATE users SET premium_tier = ? WHERE id = ?').run(hasPro ? 'pro' : 'free', userId);
+
+      logAuditEvent('role_change', request.user.userId, userId, request.ip, {
+        role: role.name,
+        action,
+        global: true,
+      });
+
+      // Notify all connected clients so badges update in real-time
+      broadcast({ type: 'user:updated', userId });
+
+      // Return updated global roles for this user
+      const userGlobalRoles = db.prepare(
+        `SELECT r.id, r.name, r.color, r.pro FROM user_roles ur
+         JOIN roles r ON r.id = ur.role_id
+         WHERE ur.user_id = ? AND r.server_id IS NULL`,
+      ).all(userId);
+
+      return { ok: true, globalRoles: userGlobalRoles, premiumTier: hasPro ? 'pro' : 'free' };
+    },
+  );
+
+  // Get global roles for a specific user
+  app.get<{ Params: { userId: string } }>(
+    '/api/admin/users/:userId/global-roles',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async (request, reply) => {
+      const { userId } = request.params;
+      const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+      if (!user) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+      const roles = db.prepare(
+        `SELECT r.id, r.name, r.color, r.pro FROM user_roles ur
+         JOIN roles r ON r.id = ur.role_id
+         WHERE ur.user_id = ? AND r.server_id IS NULL`,
+      ).all(userId);
+      return roles;
+    },
+  );
+
+  // Toggle pro flag on a global role
+  app.patch<{ Params: { roleId: string }; Body: { pro: boolean } }>(
+    '/api/admin/global-roles/:roleId',
+    { ...adminRateLimit, preHandler: requireAdmin },
+    async (request, reply) => {
+      const { roleId } = request.params;
+      const { pro } = request.body || {};
+
+      if (typeof pro !== 'boolean') {
+        return reply.code(400).send({ error: 'pro (boolean) is required' });
+      }
+
+      const role = db.prepare('SELECT id, name FROM roles WHERE id = ? AND server_id IS NULL').get(roleId) as
+        | { id: string; name: string }
+        | undefined;
+      if (!role) {
+        return reply.code(404).send({ error: 'Global role not found' });
+      }
+
+      db.prepare('UPDATE roles SET pro = ? WHERE id = ?').run(pro ? 1 : 0, roleId);
+
+      // Recalculate premium_tier for all users who have this role
+      const affectedUsers = db.prepare(
+        'SELECT user_id FROM user_roles WHERE role_id = ?',
+      ).all(roleId) as { user_id: string }[];
+
+      for (const { user_id } of affectedUsers) {
+        const hasPro = db.prepare(
+          `SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ? AND r.pro = 1`,
+        ).get(user_id);
+        db.prepare('UPDATE users SET premium_tier = ? WHERE id = ?').run(hasPro ? 'pro' : 'free', user_id);
+        broadcast({ type: 'user:updated', userId: user_id });
+      }
+
+      logAuditEvent('permission_change', request.user.userId, null, request.ip, {
+        role: role.name,
+        pro,
+        global: true,
+      });
+
       return { ok: true };
     },
   );

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import db from '../db/connection.js';
 import { requireAuth, requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
-import { hasPermission, invalidateChannelAccessCache } from '../auth/permissions.js';
+import { hasPermission, invalidateChannelAccessCache, isPremium, isAlphaPhase } from '../auth/permissions.js';
 import { broadcast, getClient } from '../ws/index.js';
 import type { User } from '@voip-server/shared';
 
@@ -16,7 +16,7 @@ export default async function userRoutes(app: FastifyInstance) {
       const users = db
        .prepare(
          `SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.avatar_url, u.bio, u.banner_url, u.banned, u.created_at, u.is_bot,
-               u.name_font, u.name_color,
+               u.name_font, u.name_color, u.premium_tier,
                r.name as role_name, r.color as role_color,
                sm.nickname as server_nickname, sm.avatar_url as member_avatar_url, sm.banner_url as member_banner_url
         FROM users u
@@ -71,6 +71,10 @@ export default async function userRoutes(app: FastifyInstance) {
         }
         if (user.member_banner_url) {
           user.banner_url = user.member_banner_url;
+        }
+
+        if (isAlphaPhase()) {
+          user.premium_tier = 'pro';
         }
       }
 
@@ -319,6 +323,9 @@ export default async function userRoutes(app: FastifyInstance) {
     }
 
     if (name_font !== undefined) {
+      if (name_font !== null && !isPremium(request.user.userId)) {
+        return reply.code(403).send({ error: 'Custom name fonts are a Pro feature', premiumRequired: true });
+      }
       const allowedFonts = [
         null,
         "'Permanent Marker', cursive",
@@ -341,6 +348,9 @@ export default async function userRoutes(app: FastifyInstance) {
     }
 
     if (name_color !== undefined) {
+      if (name_color !== null && !isPremium(request.user.userId)) {
+        return reply.code(403).send({ error: 'Custom name colors are a Pro feature', premiumRequired: true });
+      }
       if (name_color !== null) {
         const hexPattern = /^#[0-9a-fA-F]{6}$/;
         const gradientPattern = /^gradient:#[0-9a-fA-F]{6},#[0-9a-fA-F]{6}$/;

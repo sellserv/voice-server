@@ -56,6 +56,15 @@ export const config = {
   emailFrom: env('EMAIL_FROM', ''),
   turnstileSiteKey: env('TURNSTILE_SITE_KEY', ''),
   turnstileSecretKey: env('TURNSTILE_SECRET_KEY', ''),
+  firebase: {
+    serviceAccount: env('FIREBASE_SERVICE_ACCOUNT', ''),
+  },
+  stripe: {
+    secretKey: env('STRIPE_SECRET_KEY', ''),
+    webhookSecret: env('STRIPE_WEBHOOK_SECRET', ''),
+    priceId: env('STRIPE_PRO_PRICE_ID', ''),
+    portalReturnUrl: env('STRIPE_PORTAL_RETURN_URL', ''),
+  },
   mediasoup: {
     announcedIp: env('MEDIASOUP_ANNOUNCED_IP', '127.0.0.1'),
     minPort: envInt('MEDIASOUP_MIN_PORT', 40000),
