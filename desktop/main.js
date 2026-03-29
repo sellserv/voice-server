@@ -299,35 +299,47 @@ autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = false;
 autoUpdater.on('error', (e) => console.error('[Updater]', e?.message || e));
 
+// Check GitHub releases directly (for platforms that can't use electron-updater)
+async function checkGitHubRelease() {
+  const https = require('https');
+  const remote = await new Promise((resolve, reject) => {
+    const req = https.get(
+      'https://api.github.com/repos/sellserv/voice-server/releases/latest',
+      { headers: { 'User-Agent': 'SellServ-Voice' } },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => data += chunk);
+        res.on('end', () => {
+          try {
+            const tag = JSON.parse(data).tag_name || '';
+            resolve(tag.replace(/^v/, ''));
+          } catch {
+            reject(new Error('Failed to parse release info'));
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+  });
+  return remote;
+}
+
 ipcMain.handle('updater:checkForUpdates', async () => {
   try {
-    if (process.windowsStore) {
-      // AppX: check GitHub releases since electron-updater can't update Store packages
-      const https = require('https');
-      const remote = await new Promise((resolve, reject) => {
-        const req = https.get(
-          'https://api.github.com/repos/sellserv/voice-server/releases/latest',
-          { headers: { 'User-Agent': 'SellServ-Voice' } },
-          (res) => {
-            let data = '';
-            res.on('data', (chunk) => data += chunk);
-            res.on('end', () => {
-              try {
-                const tag = JSON.parse(data).tag_name || '';
-                resolve(tag.replace(/^v/, ''));
-              } catch {
-                reject(new Error('Failed to parse release info'));
-              }
-            });
-          },
-        );
-        req.on('error', reject);
-        req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
-      });
+    // AppX/macOS/Linux: check GitHub releases directly (electron-updater can't update these)
+    if (process.windowsStore || process.platform === 'darwin' || process.platform === 'linux') {
+      const remote = await checkGitHubRelease();
       const current = app.getVersion();
-      console.log(`[Updater] AppX — Current: ${current}, Latest: ${remote}`);
+      console.log(`[Updater] ${process.platform} — Current: ${current}, Latest: ${remote}`);
       if (isNewerVersion(remote, current)) {
-        return { available: true, version: remote, current, store: true };
+        return {
+          available: true,
+          version: remote,
+          current,
+          store: !!process.windowsStore,
+          download: !process.windowsStore,
+        };
       }
       return { available: false };
     }
@@ -574,8 +586,8 @@ if (!gotTheLock) {
       url = `http://127.0.0.1:${port}`;
     }
 
-    // Auto-update on startup (production only, exe/non-Store builds)
-    if (!isDev && !process.windowsStore) {
+    // Auto-update on startup (production only, Windows exe builds only — macOS/Linux redirect to downloads page)
+    if (!isDev && !process.windowsStore && process.platform === 'win32') {
       const updated = await checkAndApplyUpdate();
       if (updated) return; // App is restarting with the new version
     }

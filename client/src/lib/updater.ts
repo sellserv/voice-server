@@ -1,8 +1,7 @@
 import { writable } from 'svelte/store';
 import { isDesktop } from './stores/server';
-import { addToast } from './stores/toast';
 
-export const updateReady = writable<{ version: string; store?: boolean } | null>(null);
+export const updateReady = writable<{ version: string; store?: boolean; download?: boolean } | null>(null);
 
 let pollingStarted = false;
 let alreadyReady = false;
@@ -36,7 +35,7 @@ async function doCheck() {
         await api.downloadUpdate();
       }
 
-      updateReady.set({ version: update.version, store: !!update.store });
+      updateReady.set({ version: update.version, store: !!update.store, download: !!update.download });
     }
   } catch (e: any) {
     console.error('[Updater] Failed to check for updates:', e);
@@ -51,4 +50,9 @@ export function installUpdate() {
 export function openStoreUpdate() {
   const api = (window as any).electronAPI;
   api.openExternal('ms-windows-store://pdp/?productid=9NTD3XLC0JRJ');
+}
+
+export function openDownloadsPage() {
+  const api = (window as any).electronAPI;
+  api.openExternal('https://info.sellserv.net/downloads.html');
 }

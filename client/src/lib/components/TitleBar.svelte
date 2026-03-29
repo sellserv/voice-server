@@ -1,19 +1,14 @@
 <script lang="ts">
   import { serverSettings } from '$lib/stores/serverSettings';
-  import { updateReady, installUpdate, openStoreUpdate } from '$lib/updater';
-  import { addToast } from '$lib/stores/toast';
+  import { updateReady, installUpdate, openStoreUpdate, openDownloadsPage } from '$lib/updater';
 
   function handleUpdateClick() {
     if ($updateReady?.store) {
       openStoreUpdate();
-    } else if (isWindows) {
-      installUpdate();
+    } else if ($updateReady?.download) {
+      openDownloadsPage();
     } else {
-      addToast(
-        `Update v${$updateReady?.version} available — please download the latest version from the downloads page.`,
-        'info',
-        0,
-      );
+      installUpdate();
     }
   }
   import { onMount } from 'svelte';

@@ -1,10 +1,17 @@
 <script lang="ts">
-  import { updateReady } from '$lib/updater';
-  import { openStoreUpdate } from '$lib/updater';
+  import { updateReady, openStoreUpdate, openDownloadsPage } from '$lib/updater';
 
   let dismissed = $state(false);
 
-  let show = $derived($updateReady?.store && !dismissed);
+  let show = $derived(($updateReady?.store || $updateReady?.download) && !dismissed);
+
+  function handleUpdate() {
+    if ($updateReady?.store) {
+      openStoreUpdate();
+    } else {
+      openDownloadsPage();
+    }
+  }
 </script>
 
 {#if show}
@@ -13,9 +20,13 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="modal" onclick={(e) => e.stopPropagation()}>
       <h3 class="title">Update Available</h3>
-      <p class="message">A new version of SellServ Voice (v{$updateReady?.version}) is available in the Microsoft Store.</p>
+      {#if $updateReady?.store}
+        <p class="message">A new version of SellServ Voice (v{$updateReady?.version}) is available in the Microsoft Store.</p>
+      {:else}
+        <p class="message">A new version of SellServ Voice (v{$updateReady?.version}) is available. Visit the downloads page to get the latest version.</p>
+      {/if}
       <div class="actions">
-        <button class="btn update" onclick={openStoreUpdate}>Update</button>
+        <button class="btn update" onclick={handleUpdate}>{$updateReady?.store ? 'Update' : 'Download'}</button>
         <button class="btn later" onclick={() => (dismissed = true)}>Later</button>
       </div>
     </div>
