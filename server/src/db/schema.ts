@@ -1399,5 +1399,35 @@ export function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_pending_notifications_created ON pending_notifications(created_at);
   `);
 
+  // OAuth2 authorization codes + tokens (for admin console OAuth2 provider)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS oauth2_codes (
+      code TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      client_id TEXT NOT NULL,
+      redirect_uri TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'admin',
+      state TEXT,
+      used INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth2_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      client_id TEXT NOT NULL,
+      access_token TEXT UNIQUE NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'admin',
+      expires_at TEXT NOT NULL,
+      revoked INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_oauth2_tokens_access_token ON oauth2_tokens(access_token);
+    CREATE INDEX IF NOT EXISTS idx_oauth2_codes_expires ON oauth2_codes(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_oauth2_tokens_expires ON oauth2_tokens(expires_at);
+  `);
+
   migrateDeviceTokens();
 }
