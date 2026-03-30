@@ -12,7 +12,8 @@ import {
   getDisplayName,
   isUserOnline,
 } from './index.js';
-import { sendPushToUser } from '../push/index.js';
+import { sendDataPush } from '../push/index.js';
+import { shouldNotifyUser } from '../push/pending.js';
 import { ensureDmChannel, notifyDmCreated } from './dmUtils.js';
 import { handleVoiceEvent, leaveVoiceChannel, getPeersInChannel } from '../media/signaling.js';
 import { hasPermission, hasChannelPermission, isAppEnabled, isPremium } from '../auth/permissions.js';
@@ -256,14 +257,11 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
           if (ch) {
             for (const departure of recentlyLeft) {
               if (departure.leftAt > fiveMinAgo && departure.userId !== user.userId && !isUserOnline(departure.userId)) {
-                sendPushToUser(departure.userId, {
-                  title: 'Missed Call',
-                  body: `${getDisplayName(user.userId) || user.username} joined #${ch.name}`,
-                  data: {
-                    type: 'missed_call',
-                    channelId: joinedChannel,
-                    serverId: ch.server_id || '',
-                  },
+                sendDataPush(departure.userId, 'missed_call', {
+                  channelId: joinedChannel,
+                  serverId: ch.server_id || '',
+                  callerName: getDisplayName(user.userId) || user.username,
+                  channelName: ch.name,
                 }).catch(() => {});
               }
             }
@@ -407,8 +405,8 @@ function handleChatSend(
     return;
   }
 
-  const channel = db.prepare('SELECT id, type, server_id FROM channels WHERE id = ?').get(channelId) as
-    | { id: string; type: string; server_id: string | null }
+  const channel = db.prepare('SELECT id, type, server_id, name FROM channels WHERE id = ?').get(channelId) as
+    | { id: string; type: string; server_id: string | null; name: string }
     | undefined;
   if (!channel || channel.type === 'voice') {
     sendTo(user.userId, { type: 'error', message: 'Text channel not found' });
@@ -559,15 +557,11 @@ function handleChatSend(
 
     // Push notifications for offline DM participants
     for (const pid of participantIds) {
-      if (pid !== user.userId && !isUserOnline(pid)) {
-        sendPushToUser(pid, {
-          title: userRow.display_name || userRow.username,
-          body: message.content.length > 100 ? message.content.substring(0, 100) + '...' : (message.content || '[attachment]'),
-          data: {
-            type: 'dm',
-            channelId,
-            senderId: user.userId,
-          },
+      if (pid !== user.userId && !isUserOnline(pid) && shouldNotifyUser(pid, channelId, null, 'dm')) {
+        sendDataPush(pid, 'dm', {
+          channelId,
+          senderId: user.userId,
+          senderName: userRow.display_name || userRow.username,
         }).catch((err) => console.error('Push notification failed:', err));
       }
     }
@@ -577,18 +571,47 @@ function handleChatSend(
     // Push notifications for @mentions to offline users
     const mentionRegex = /<@([^>]+)>/g;
     let mentionMatch;
+    const mentionedUserIds = new Set<string>();
     while ((mentionMatch = mentionRegex.exec(content || '')) !== null) {
       const mentionedUserId = mentionMatch[1];
-      if (mentionedUserId !== user.userId && !isUserOnline(mentionedUserId)) {
-        sendPushToUser(mentionedUserId, {
-          title: `${userRow.display_name || userRow.username} mentioned you`,
-          body: message.content.length > 100 ? message.content.substring(0, 100) + '...' : (message.content || ''),
-          data: {
-            type: 'mention',
+      if (mentionedUserId !== user.userId && !mentionedUserIds.has(mentionedUserId) && !isUserOnline(mentionedUserId) && shouldNotifyUser(mentionedUserId, channelId, channel.server_id, 'mention')) {
+        mentionedUserIds.add(mentionedUserId);
+        sendDataPush(mentionedUserId, 'mention', {
+          channelId,
+          serverId: channel.server_id || '',
+          senderName: userRow.display_name || userRow.username,
+          channelName: channel.name,
+        }).catch((err) => console.error('Push notification failed:', err));
+      }
+    }
+
+    // Push notifications for @everyone/@here
+    if (content && (content.includes('@everyone') || content.includes('@here'))) {
+      const serverMembers = db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(channel.server_id) as { user_id: string }[];
+      for (const { user_id: memberId } of serverMembers) {
+        if (memberId !== user.userId && !mentionedUserIds.has(memberId) && !isUserOnline(memberId) && shouldNotifyUser(memberId, channelId, channel.server_id, 'everyone')) {
+          sendDataPush(memberId, 'everyone', {
             channelId,
             serverId: channel.server_id || '',
-          },
-        }).catch((err) => console.error('Push notification failed:', err));
+            senderName: userRow.display_name || userRow.username,
+            channelName: channel.name,
+          }).catch((err) => console.error('Push notification failed:', err));
+        }
+      }
+    }
+
+    // Push notifications for guild channel messages (users with 'all' notification level)
+    if (channel.server_id) {
+      const serverMembers = db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(channel.server_id) as { user_id: string }[];
+      for (const { user_id: memberId } of serverMembers) {
+        if (memberId !== user.userId && !mentionedUserIds.has(memberId) && !isUserOnline(memberId) && shouldNotifyUser(memberId, channelId, channel.server_id, 'channel_message')) {
+          sendDataPush(memberId, 'channel_message', {
+            channelId,
+            serverId: channel.server_id || '',
+            senderName: userRow.display_name || userRow.username,
+            channelName: channel.name,
+          }).catch((err) => console.error('Push notification failed:', err));
+        }
       }
     }
   }
@@ -1458,6 +1481,14 @@ function handleCallInitiate(user: JwtPayload, targetUserId: string, video = fals
     callerAvatar: callerRow?.avatar_url ?? null,
     video,
   });
+
+  // Push notification for incoming call (if recipient is offline)
+  if (!isUserOnline(targetUserId)) {
+    sendDataPush(targetUserId, 'incoming_call', {
+      callerId: user.userId,
+      callerName: callerRow?.display_name || callerRow?.username || 'Unknown',
+    }).catch(() => {});
+  }
 }
 
 function handleCallAccept(user: JwtPayload, callId: string) {
