@@ -75,7 +75,7 @@ export default async function serverRoutes(app: FastifyInstance) {
     const userId = request.user.userId;
     const rows = db
       .prepare(
-        `SELECT servers.*, sm.notification_level, COUNT(sm2.user_id) as member_count, f.stored_name as icon_stored_name
+        `SELECT servers.*, sm.notification_level, sm.suppress_everyone, sm.muted_until, COUNT(sm2.user_id) as member_count, f.stored_name as icon_stored_name
          FROM servers
          JOIN server_members sm ON sm.server_id = servers.id AND sm.user_id = ?
          LEFT JOIN server_members sm2 ON sm2.server_id = servers.id
@@ -93,6 +93,8 @@ export default async function serverRoutes(app: FastifyInstance) {
       member_count: row.member_count,
       created_at: row.created_at,
       notification_level: row.notification_level || 'default',
+      suppress_everyone: !!row.suppress_everyone,
+      muted_until: row.muted_until || null,
     })) as Server[];
   });
 
@@ -1021,23 +1023,36 @@ export default async function serverRoutes(app: FastifyInstance) {
     },
   );
 
-  // Update per-server notification level
-  app.patch<{ Params: { serverId: string }; Body: { notification_level: string } }>(
+  // Update per-server notification settings
+  app.patch<{ Params: { serverId: string }; Body: { notification_level?: string; suppress_everyone?: boolean; muted_until?: string | null } }>(
     '/api/servers/:serverId/members/me/notifications',
     { preHandler: [requireAuth, requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
       const userId = request.user.userId;
-      const { notification_level } = request.body;
+      const { notification_level, suppress_everyone, muted_until } = request.body;
 
-      const valid = ['default', 'all', 'mentions', 'nothing'];
-      if (!notification_level || !valid.includes(notification_level)) {
-        return reply.code(400).send({ error: 'Invalid notification_level' });
+      if (notification_level !== undefined) {
+        const valid = ['all', 'mentions', 'nothing'];
+        if (!valid.includes(notification_level)) {
+          return reply.code(400).send({ error: 'Invalid notification_level' });
+        }
+        db.prepare(
+          'UPDATE server_members SET notification_level = ? WHERE server_id = ? AND user_id = ?',
+        ).run(notification_level, serverId, userId);
       }
 
-      db.prepare(
-        'UPDATE server_members SET notification_level = ? WHERE server_id = ? AND user_id = ?'
-      ).run(notification_level, serverId, userId);
+      if (suppress_everyone !== undefined) {
+        db.prepare(
+          'UPDATE server_members SET suppress_everyone = ? WHERE server_id = ? AND user_id = ?',
+        ).run(suppress_everyone ? 1 : 0, serverId, userId);
+      }
+
+      if (muted_until !== undefined) {
+        db.prepare(
+          'UPDATE server_members SET muted_until = ? WHERE server_id = ? AND user_id = ?',
+        ).run(muted_until, serverId, userId);
+      }
 
       return { ok: true };
     },
