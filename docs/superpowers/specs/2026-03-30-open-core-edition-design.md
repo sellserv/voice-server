@@ -1,89 +1,73 @@
-# Open Core Edition Separation Design
+# Open Core Feature Toggles Design
 
 **Date:** 2026-03-30
 **Status:** Approved
 
 ## Overview
 
-Separate self-hosted (community) and official instance code within a single repo using a feature flag approach. Community is the default — self-hosters don't need to configure anything. All code remains visible in the repo; official-only features are simply gated at runtime.
+Gate official-only features behind individual boolean env vars. Each feature is a simple `true`/`false` toggle, defaulting to `false`. Self-hosters don't need to configure anything — they get the full chat app with the integrated admin panel. The official instance sets the flags it needs.
 
-## Edition Config
+## Feature Toggles
 
-Add an `edition` field to the server config:
-
-```typescript
-edition: process.env.EDITION || 'community' // 'community' | 'official'
+```bash
+BILLING_ENABLED=false
+STANDALONE_ADMIN_CONSOLE=false
 ```
 
-A helper `isOfficial()` wraps the check. Community is the default. The edition flag is the single gate — if `edition` is `community`, official-only routes don't register regardless of whether their backing service keys are set.
+Added to `server/src/config.ts` as booleans. No "edition" abstraction — each feature stands on its own.
 
 ## Billing Route Gating
 
-Billing routes (`server/src/routes/billing.ts`) only register when `isOfficial()` returns true:
+Billing routes (`server/src/routes/billing.ts`) only register when `config.billingEnabled` is `true`:
 
 ```typescript
-if (isOfficial()) {
-  registerBillingRoutes(app);
+if (config.billingEnabled) {
+  await app.register(billingRoutes);
 }
 ```
 
-The Stripe dependency stays in `package.json` but never gets used in community edition — no conditional dependency management needed.
+The Stripe dependency stays in `package.json` but never gets used when billing is disabled.
 
-The client hides billing/upgrade UI when the server reports `edition: "community"` via the instance info endpoint.
+The client hides billing/upgrade UI when the server reports `billing: false` via the public instance info endpoint.
 
 ## Standalone Admin Console
 
-A new `admin-console/` workspace at the monorepo root — a separate SvelteKit app deployed at `admin.sellserv.net` (official instance only).
+A new `admin-console/` workspace at the monorepo root — a separate SvelteKit app deployed at `admin.sellserv.net` (only when `STANDALONE_ADMIN_CONSOLE=true`).
 
 - **Shares types** from `@voip-server/shared`
 - **Talks to the same server API** — the existing admin endpoints in `server/src/routes/admin.ts` serve both the in-app admin and the standalone console
-- **Auth:** Uses the same API session/token system (cookie or token-based, matching the main app). The server's existing `requirePermission` middleware already enforces instance admin privileges on admin endpoints. CORS on the server is configured to allow the admin console origins (`admin.sellserv.net`, `admin-staging.sellserv.net`).
+- **Auth:** Uses the same API session/token system (cookie or token-based, matching the main app). The server's existing `requirePermission` middleware already enforces instance admin privileges on admin endpoints. CORS on the server is configured to allow the admin console origins (`admin.sellserv.net`, `admin-staging.sellserv.net`) via the existing `CORS_ORIGINS` env var.
 - **In-app admin stays:** Self-hosters keep the existing `/admin` route in the client. The standalone console is an alternative interface for the official instance, not a replacement.
-- **Official-only endpoints:** Any future endpoints exclusive to the standalone console are gated behind `isOfficial()`.
 
-## Exposing Edition to the Client
+## Exposing Feature Flags to the Client
 
-A public endpoint exposes edition and public instance settings:
+The existing `/api/public/instance/info` endpoint is extended with a `features` object:
 
 ```typescript
-GET /api/instance-info
 {
-  edition: 'community' | 'official',
-  instanceName: 'SellServ Voice',
-  allowRegistration: true,
-  // ...other public instance_settings
+  totalUsers: 42,
+  totalServers: 3,
+  // ...existing fields...
+  features: {
+    billing: false,
+    standaloneAdminConsole: false
+  }
 }
 ```
 
-No sensitive data exposed. The client uses this to:
+The client reads these flags on init and uses them to show/hide UI sections.
 
-- Hide billing/upgrade/Pro UI in community edition
-- Optionally show a "Community Edition" indicator
+## Deployment Matrix
 
-## CI/CD and Deployments
-
-Two build targets from the same repo, same branching model:
-
-### Community (default)
-- `npm run build` produces server + client, excludes `admin-console/`
-- Future Docker image sets `EDITION=community`
-
-### Official
-- Builds everything including `admin-console/`
-- `EDITION=official` set in deploy environment
-
-### Deployment Matrix
-
-| Environment | Main App | Admin Console | Edition |
+| Environment | Main App | Admin Console | Feature Flags |
 |---|---|---|---|
-| Staging | `staging.sellserv.net` | `admin-staging.sellserv.net` | `official` |
-| Production | `chat.sellserv.net` | `admin.sellserv.net` | `official` |
-
-The admin console follows the same staging-first deploy flow as the main app. Pushes to `staging` deploy both, merges to `main` deploy both.
+| Staging | `staging.sellserv.net` | `admin-staging.sellserv.net` | `BILLING_ENABLED=true`, `STANDALONE_ADMIN_CONSOLE=true` |
+| Production | `chat.sellserv.net` | `admin.sellserv.net` | `BILLING_ENABLED=true`, `STANDALONE_ADMIN_CONSOLE=true` |
+| Self-hosted | user's domain | N/A | defaults (`false`) |
 
 ## What Gets Gated
 
-| Feature | Community | Official |
+| Feature | Default (self-hosted) | Official |
 |---|---|---|
 | Core chat (voice/text/channels) | Yes | Yes |
 | In-app admin (`/admin` route) | Yes | Yes |
@@ -99,3 +83,4 @@ The admin console follows the same staging-first deploy flow as the main app. Pu
 - Staging/main branching model unchanged
 - Existing admin API endpoints unchanged — they serve both interfaces
 - Stripe dependency stays in `package.json`
+- Self-hosters could enable any flag if they want — features just need their backing services configured (e.g., Stripe keys for billing)

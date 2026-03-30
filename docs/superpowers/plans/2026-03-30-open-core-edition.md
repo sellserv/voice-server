@@ -1,79 +1,51 @@
-# Open Core Edition Separation Implementation Plan
+# Open Core Feature Toggles Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Gate billing routes and prepare for a standalone admin console behind an `EDITION` env var, with a public `/api/instance-info` endpoint so clients know what UI to show.
+**Goal:** Gate official-only features behind individual boolean env vars so self-hosters get a clean experience by default.
 
-**Architecture:** Add `edition` to server config (defaults to `community`). Billing routes only register when `edition` is `official`. A new public endpoint exposes edition + instance settings. Client hides billing UI in community edition. The standalone admin console workspace is scaffolded but implementation is a separate project.
+**Architecture:** Each official-only feature gets its own env var (`BILLING_ENABLED`, `STANDALONE_ADMIN_CONSOLE`), defaulting to `false`. The server exposes enabled features via the existing `/api/public/instance/info` endpoint. The client reads those flags to show/hide UI. No "edition" abstraction — just simple on/off toggles.
 
 **Tech Stack:** Fastify, SvelteKit, TypeScript, npm workspaces
 
 ---
 
-### Task 1: Add Edition to Server Config
+### Task 1: Add Feature Toggles to Server Config
 
 **Files:**
 - Modify: `server/src/config.ts:43-73`
-- Create: `server/src/edition.ts`
-- Modify: `shared/types.ts` (add Edition type)
 
-- [ ] **Step 1: Add Edition type to shared types**
+- [ ] **Step 1: Add feature toggle env vars**
 
-In `shared/types.ts`, add at the top of the file after the existing type aliases:
+In `server/src/config.ts`, add after the `host` line (line 45), before `jwtSecret`:
 
 ```typescript
-export type Edition = 'community' | 'official';
+billingEnabled: env('BILLING_ENABLED', 'false') === 'true',
+standaloneAdminConsole: env('STANDALONE_ADMIN_CONSOLE', 'false') === 'true',
 ```
 
-- [ ] **Step 2: Add edition to config**
-
-In `server/src/config.ts`, add `edition` to the config object after the `host` line (line 45):
-
-```typescript
-edition: (env('EDITION', 'community') as 'community' | 'official'),
-```
-
-- [ ] **Step 3: Create edition helper**
-
-Create `server/src/edition.ts`:
-
-```typescript
-import { config } from './config.js';
-
-export function isOfficial(): boolean {
-  return config.edition === 'official';
-}
-```
-
-- [ ] **Step 4: Verify server starts**
+- [ ] **Step 2: Verify server starts**
 
 Run: `npm run dev:server`
-Expected: Server starts without errors. No `EDITION` env var set, so it defaults to `community`.
+Expected: Server starts without errors. Both flags default to `false`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add shared/types.ts server/src/config.ts server/src/edition.ts
-git commit -m "feat: add edition config with community/official modes"
+git add server/src/config.ts
+git commit -m "feat: add BILLING_ENABLED and STANDALONE_ADMIN_CONSOLE config flags"
 ```
 
 ---
 
-### Task 2: Gate Billing Routes Behind Edition
+### Task 2: Gate Billing Routes Behind Toggle
 
 **Files:**
-- Modify: `server/src/index.ts:33,253`
-- Modify: `server/src/routes/billing.ts:35`
+- Modify: `server/src/index.ts:253`
 
 - [ ] **Step 1: Conditionally register billing routes**
 
-In `server/src/index.ts`, add the import at line 36 (after the other local imports):
-
-```typescript
-import { isOfficial } from './edition.js';
-```
-
-Then change line 253 from:
+In `server/src/index.ts`, change line 253 from:
 
 ```typescript
 await app.register(billingRoutes);
@@ -82,211 +54,221 @@ await app.register(billingRoutes);
 to:
 
 ```typescript
-if (isOfficial()) {
+if (config.billingEnabled) {
   await app.register(billingRoutes);
 }
 ```
 
-- [ ] **Step 2: Verify billing routes are hidden in community mode**
+Add `config` to the existing imports if not already imported (it's already imported via other modules — check the imports at the top; if `config` isn't directly imported, add):
+
+```typescript
+import { config } from './config.js';
+```
+
+- [ ] **Step 2: Verify billing routes are hidden by default**
 
 Run: `npm run dev:server`
 
-Then test:
 ```bash
 curl -s http://localhost:3000/api/billing/status
 ```
-Expected: `{"error":"Not found"}` (404) — billing routes are not registered.
 
-- [ ] **Step 3: Verify billing routes work in official mode**
+Expected: `{"error":"Not found"}` (404) — billing routes not registered.
+
+- [ ] **Step 3: Verify billing routes work when enabled**
 
 Stop server, then:
+
 ```bash
-EDITION=official npm run dev:server
+BILLING_ENABLED=true npm run dev:server
 ```
 
-Then test:
 ```bash
 curl -s http://localhost:3000/api/billing/status
 ```
-Expected: 401 (unauthorized, but the route exists — not 404).
+
+Expected: 401 (unauthorized — route exists but requires auth, not 404).
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add server/src/index.ts
-git commit -m "feat: gate billing routes behind official edition"
+git commit -m "feat: gate billing routes behind BILLING_ENABLED flag"
 ```
 
 ---
 
-### Task 3: Add Public Instance Info Endpoint
+### Task 3: Expose Feature Flags in Public Instance Info
 
 **Files:**
-- Modify: `server/src/index.ts:211-230` (add to existing public section)
+- Modify: `server/src/index.ts:212-230` (existing `/api/public/instance/info` endpoint)
 
-- [ ] **Step 1: Add the endpoint**
+- [ ] **Step 1: Add feature flags to existing endpoint**
 
-In `server/src/index.ts`, after the existing `/api/public/instance/info` endpoint (after line 230), add:
+In `server/src/index.ts`, modify the existing `/api/public/instance/info` handler to include the feature flags. Change the return block (lines 223-229) from:
 
 ```typescript
-// Public instance info with edition — used by client to show/hide features
-app.get('/api/instance-info', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async () => {
-  const settings = db.prepare(
-    'SELECT instance_name, allow_registration, allow_server_creation, terms_url, privacy_url FROM instance_settings WHERE id = 1'
-  ).get() as { instance_name: string; allow_registration: number; allow_server_creation: number; terms_url: string; privacy_url: string } | undefined;
-
-  return {
-    edition: config.edition,
-    instanceName: settings?.instance_name || 'SellServ Voice',
-    allowRegistration: settings ? !!settings.allow_registration : true,
-    allowServerCreation: settings ? !!settings.allow_server_creation : true,
-    termsUrl: settings?.terms_url || null,
-    privacyUrl: settings?.privacy_url || null,
-  };
-});
+return {
+  totalUsers,
+  totalServers,
+  totalMessages,
+  onlineCount,
+  registrationOpen,
+};
 ```
 
-- [ ] **Step 2: Verify endpoint works in community mode**
+to:
+
+```typescript
+return {
+  totalUsers,
+  totalServers,
+  totalMessages,
+  onlineCount,
+  registrationOpen,
+  features: {
+    billing: config.billingEnabled,
+    standaloneAdminConsole: config.standaloneAdminConsole,
+  },
+};
+```
+
+- [ ] **Step 2: Verify endpoint returns features**
 
 Run: `npm run dev:server`
 
 ```bash
-curl -s http://localhost:3000/api/instance-info | jq
+curl -s http://localhost:3000/api/public/instance/info | jq .features
 ```
 
 Expected:
+
 ```json
 {
-  "edition": "community",
-  "instanceName": "SellServ Voice",
-  "allowRegistration": true,
-  "allowServerCreation": true,
-  "termsUrl": null,
-  "privacyUrl": null
+  "billing": false,
+  "standaloneAdminConsole": false
 }
 ```
 
-- [ ] **Step 3: Verify endpoint works in official mode**
+- [ ] **Step 3: Verify with flags enabled**
 
 ```bash
-EDITION=official npm run dev:server
-curl -s http://localhost:3000/api/instance-info | jq
+BILLING_ENABLED=true STANDALONE_ADMIN_CONSOLE=true npm run dev:server
+curl -s http://localhost:3000/api/public/instance/info | jq .features
 ```
 
-Expected: Same but with `"edition": "official"`.
+Expected:
+
+```json
+{
+  "billing": true,
+  "standaloneAdminConsole": true
+}
+```
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add server/src/index.ts
-git commit -m "feat: add public /api/instance-info endpoint with edition"
+git commit -m "feat: expose feature flags in public instance info endpoint"
 ```
 
 ---
 
-### Task 4: Client — Fetch and Store Edition Info
+### Task 4: Client — Read Feature Flags
 
 **Files:**
-- Create: `client/src/lib/stores/instance.ts`
+- Create: `client/src/lib/stores/features.ts`
 
-- [ ] **Step 1: Create the instance store**
+- [ ] **Step 1: Create the features store**
 
-Create `client/src/lib/stores/instance.ts`:
+Create `client/src/lib/stores/features.ts`:
 
 ```typescript
 import { writable, derived } from 'svelte/store';
-import { api } from '$lib/api';
 
-interface InstanceInfo {
-  edition: 'community' | 'official';
-  instanceName: string;
-  allowRegistration: boolean;
-  allowServerCreation: boolean;
-  termsUrl: string | null;
-  privacyUrl: string | null;
+interface Features {
+  billing: boolean;
+  standaloneAdminConsole: boolean;
 }
 
-const defaultInfo: InstanceInfo = {
-  edition: 'community',
-  instanceName: 'SellServ Voice',
-  allowRegistration: true,
-  allowServerCreation: true,
-  termsUrl: null,
-  privacyUrl: null,
-};
+export const features = writable<Features>({
+  billing: false,
+  standaloneAdminConsole: false,
+});
 
-export const instanceInfo = writable<InstanceInfo>(defaultInfo);
-
-export const isOfficial = derived(instanceInfo, ($info) => $info.edition === 'official');
-
-export async function fetchInstanceInfo() {
-  try {
-    const info = await api.get<InstanceInfo>('/api/instance-info');
-    instanceInfo.set(info);
-  } catch {
-    // Fallback to defaults (community) if endpoint unavailable
-  }
-}
+export const billingEnabled = derived(features, ($f) => $f.billing);
 ```
 
-- [ ] **Step 2: Call fetchInstanceInfo on app init**
+- [ ] **Step 2: Populate features from instance info**
 
-Find where the app initializes (the root layout or main entry point) and add:
+Find where the app already fetches `/api/public/instance/info` (or where it initializes). After the fetch, update the features store:
 
 ```typescript
-import { fetchInstanceInfo } from '$lib/stores/instance';
+import { features } from '$lib/stores/features';
+
+// After fetching instance info:
+if (data.features) {
+  features.set(data.features);
+}
 ```
 
-Call `fetchInstanceInfo()` alongside any existing init calls (e.g., where auth check or WebSocket connect happens).
+If the app doesn't currently fetch this endpoint on init, add the fetch to the root layout or main entry point alongside existing init calls.
 
 - [ ] **Step 3: Verify in browser**
 
 Run: `npm run dev`
 
-Open browser devtools network tab, confirm `/api/instance-info` is called on load and the store has the correct edition.
+Open browser devtools console:
+
+```javascript
+// Check the store value in Svelte devtools or via a temporary $inspect
+```
+
+Confirm `billing` is `false` by default.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add client/src/lib/stores/instance.ts client/src/routes/+layout.svelte
-git commit -m "feat: add client instance info store with edition awareness"
+git add client/src/lib/stores/features.ts
+git commit -m "feat: add client features store for feature flag awareness"
 ```
 
 ---
 
-### Task 5: Client — Hide Billing UI in Community Edition
+### Task 5: Client — Hide Billing UI When Disabled
 
 **Files:**
-- Modify: `client/src/lib/components/SettingsModal.svelte` (billing section)
-- Modify: `client/src/routes/admin/+page.svelte` (alpha billing toggle)
+- Modify: `client/src/lib/components/SettingsModal.svelte`
+- Modify: `client/src/routes/admin/+page.svelte`
 
 - [ ] **Step 1: Hide billing section in SettingsModal**
 
 In `client/src/lib/components/SettingsModal.svelte`, import the store:
 
 ```typescript
-import { isOfficial } from '$lib/stores/instance';
+import { billingEnabled } from '$lib/stores/features';
 ```
 
-Wrap the billing/subscription section in an `{#if $isOfficial}` block so it only renders when edition is official. The billing status fetch call should also be gated behind this check.
+Wrap the billing/subscription section in `{#if $billingEnabled}` so it only renders when billing is enabled. Also gate the billing status fetch call behind the same check.
 
 - [ ] **Step 2: Hide alpha billing toggle in admin page**
 
 In `client/src/routes/admin/+page.svelte`, import the store:
 
 ```typescript
-import { isOfficial } from '$lib/stores/instance';
+import { billingEnabled } from '$lib/stores/features';
 ```
 
-Wrap the alpha billing toggle section (around lines 60-77) in `{#if $isOfficial}` so self-hosters don't see a toggle that does nothing for them.
+Wrap the alpha billing toggle section (around lines 60-77) in `{#if $billingEnabled}` so self-hosters don't see a toggle for a feature that isn't active.
 
 - [ ] **Step 3: Verify in browser**
 
-Run `npm run dev` (no EDITION set, defaults to community):
+Run `npm run dev` (flags default to false):
 - Open Settings modal — billing section should be hidden
 - Open /admin — alpha billing toggle should be hidden
 
-Run `EDITION=official npm run dev:server` (keep client running):
+Run `BILLING_ENABLED=true npm run dev:server` (keep client dev server running):
 - Reload — billing section should appear
 - Admin page — alpha billing toggle should appear
 
@@ -294,7 +276,7 @@ Run `EDITION=official npm run dev:server` (keep client running):
 
 ```bash
 git add client/src/lib/components/SettingsModal.svelte client/src/routes/admin/+page.svelte
-git commit -m "feat: hide billing UI in community edition"
+git commit -m "feat: hide billing UI when BILLING_ENABLED is false"
 ```
 
 ---
@@ -331,7 +313,7 @@ Create `admin-console/README.md`:
 ```markdown
 # Admin Console
 
-Standalone admin console for the official SellServ Voice instance. Deployed at `admin.sellserv.net`.
+Standalone admin console for the official instance. Deployed at `admin.sellserv.net`.
 
 This is a placeholder — the full SvelteKit app will be implemented separately.
 
@@ -370,60 +352,30 @@ git commit -m "feat: scaffold admin-console workspace"
 
 ---
 
-### Task 7: Update CORS for Admin Console Origins
+### Task 7: Document Feature Flags in .env.example
 
 **Files:**
-- Modify: `server/src/index.ts:56-73` (CORS config)
+- Modify or create: `.env.example`
 
-- [ ] **Step 1: CORS already handles this**
+- [ ] **Step 1: Add feature flag documentation**
 
-The existing CORS config reads from `CORS_ORIGINS` env var (comma-separated list). No code changes needed — just add the admin console origins to the env var on the VPS:
-
-```
-CORS_ORIGINS=https://chat.sellserv.net,https://staging.sellserv.net,https://admin.sellserv.net,https://admin-staging.sellserv.net
-```
-
-- [ ] **Step 2: Document the required env vars**
-
-Create or update a `.env.example` file (if one exists) to include:
+Add to `.env.example` (create if it doesn't exist, or append to existing):
 
 ```bash
-# Edition: 'community' (default) or 'official'
-EDITION=community
+# ── Feature Flags ──────────────────────────────────
+# Official-only features. Self-hosters can leave these as false.
 
-# CORS origins — add admin console domains for official edition
-# CORS_ORIGINS=https://chat.sellserv.net,https://admin.sellserv.net
+# Enable Stripe billing (also requires STRIPE_* vars below)
+BILLING_ENABLED=false
+
+# Enable standalone admin console (admin.sellserv.net)
+# The in-app /admin page is always available regardless of this setting.
+STANDALONE_ADMIN_CONSOLE=false
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Commit**
 
 ```bash
-git add -A
-git commit -m "docs: document edition and admin console CORS in env example"
+git add .env.example
+git commit -m "docs: document feature flags in .env.example"
 ```
-
----
-
-### Task 8: Update CI/CD for Edition
-
-**Files:**
-- Modify: `.github/workflows/deploy-staging.yml`
-- Modify: `.github/workflows/deploy.yml`
-
-- [ ] **Step 1: No workflow changes needed yet**
-
-The deploy workflows SSH into the VPS and run `npm run build`. The `EDITION` env var is set in the `.env` file on the VPS, not in the workflow. Since the admin console is just a placeholder workspace with no-op build scripts, there's nothing to change in CI yet.
-
-When the admin console is fully implemented, the workflows will need additional steps to:
-1. Build the admin console: `npm run build --workspace=admin-console`
-2. Deploy the admin console build output to its domain
-
-For now, just ensure `EDITION=official` is in the `.env` files on both staging and production VPS.
-
-- [ ] **Step 2: Verify staging deploy works**
-
-Push to staging and confirm the deploy succeeds with the new code. The health check should pass — billing routes are only gated, not broken.
-
-- [ ] **Step 3: Commit (if any changes were needed)**
-
-No commit needed for this task unless env example was updated in Task 7.
