@@ -21,6 +21,7 @@
   import GifPicker from './GifPicker.svelte';
   import Icon from './Icon.svelte';
   import { toast } from '$lib/stores/toast';
+  import { officialInstance } from '$lib/stores/features';
 
   let { onclose, onlogout }: { onclose: () => void; onlogout: () => void } = $props();
 
@@ -784,9 +785,11 @@
         <button class="sidebar-item" class:active={activeTab === 'my-account'} onclick={() => activeTab = 'my-account'}>My Account</button>
         <button class="sidebar-item" class:active={activeTab === 'profiles'} onclick={() => activeTab = 'profiles'}>Profiles</button>
         <button class="sidebar-item" class:active={activeTab === 'mfa'} onclick={() => activeTab = 'mfa'}>Two-Factor Authentication</button>
-        <button class="sidebar-item" class:active={activeTab === 'billing'} onclick={() => { activeTab = 'billing'; loadBillingStatus(); }}>
-          Billing
-        </button>
+        {#if $officialInstance}
+          <button class="sidebar-item" class:active={activeTab === 'billing'} onclick={() => { activeTab = 'billing'; loadBillingStatus(); }}>
+            Billing
+          </button>
+        {/if}
 
         <div class="sidebar-separator"></div>
         <h5 class="sidebar-title">App Settings</h5>
@@ -1532,7 +1535,7 @@
             {/if}
           </section>
 
-        {:else if activeTab === 'billing'}
+        {:else if activeTab === 'billing' && $officialInstance}
           <section class="section">
             <h3 class="content-title">Billing</h3>
             {#if billingLoading}

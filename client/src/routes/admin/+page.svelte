@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '$lib/api';
   import { confirm } from '$lib/stores/toast';
+  import { officialInstance } from '$lib/stores/features';
 
   let stats: any = $state(null);
   let loading = $state(true);
@@ -197,19 +198,21 @@
         <span class="toggle-knob"></span>
       </button>
     </div>
-    <div class="setting-row">
-      <div class="setting-info">
-        <span class="setting-name">Alpha Billing</span>
-        <span class="setting-desc">Give all users Pro features for free during alpha</span>
+    {#if $officialInstance}
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-name">Alpha Billing</span>
+          <span class="setting-desc">Give all users Pro features for free during alpha</span>
+        </div>
+        <button
+          class="toggle-btn"
+          class:active={alphaBilling}
+          onclick={toggleAlphaBilling}
+        >
+          <span class="toggle-knob"></span>
+        </button>
       </div>
-      <button
-        class="toggle-btn"
-        class:active={alphaBilling}
-        onclick={toggleAlphaBilling}
-      >
-        <span class="toggle-knob"></span>
-      </button>
-    </div>
+    {/if}
 
     <h4 class="section-title" style="margin-top: 24px;">Legal</h4>
     <div class="setting-row">

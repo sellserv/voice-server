@@ -1,5 +1,6 @@
 <script lang="ts">
   import { currentUser } from '$lib/stores/auth';
+  import { officialInstance } from '$lib/stores/features';
   import { resolveAsset } from '$lib/stores/server';
   import { servers, activeServerId, isDmView, switchServer, serverNotificationLevels, serverMutedUntil } from '$lib/stores/servers';
   import { serverUnreadCounts, homeUnreadCounts } from '$lib/stores/channels';
@@ -101,7 +102,7 @@
     </div>
   </div>
 
-  {#if $currentUser?.is_instance_admin}
+  {#if $currentUser?.is_instance_admin && !$officialInstance}
     <div class="admin-spacer"></div>
     <div class="nav-item">
       <a

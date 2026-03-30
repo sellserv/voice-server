@@ -98,6 +98,8 @@
   import QuickSwitcher from '$lib/components/QuickSwitcher.svelte';
   import AppPanels from '$lib/components/AppPanels.svelte';
   import TitleBar from '$lib/components/TitleBar.svelte';
+  import { api } from '$lib/api';
+  import { officialInstance } from '$lib/stores/features';
   import SettingsModal from '$lib/components/SettingsModal.svelte';
   import ServerSettings from '$lib/components/ServerSettings.svelte';
 
@@ -165,6 +167,15 @@
     initialized = true;
 
     await checkAuth();
+
+    // Fetch instance features (non-blocking, best-effort)
+    api.get<{ features?: { officialInstance?: boolean } }>('/api/public/instance/info')
+      .then(data => {
+        if (data.features) {
+          officialInstance.set(!!data.features.officialInstance);
+        }
+      })
+      .catch(() => {});
 
     if ($currentUser) {
       if (isCapacitor) {

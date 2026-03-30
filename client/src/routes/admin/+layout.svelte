@@ -2,9 +2,16 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { currentUser } from '$lib/stores/auth';
+  import { officialInstance } from '$lib/stores/features';
 
   $effect(() => {
     if ($currentUser && !$currentUser.is_instance_admin) {
+      goto('/');
+    }
+  });
+
+  $effect(() => {
+    if ($officialInstance) {
       goto('/');
     }
   });
