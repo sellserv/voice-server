@@ -1349,5 +1349,55 @@ export function initSchema() {
     db.exec('ALTER TABLE link_previews ADD COLUMN author TEXT');
   } catch {}
 
+  // Migration: add suppress_everyone to server_members
+  try {
+    db.exec('ALTER TABLE server_members ADD COLUMN suppress_everyone INTEGER NOT NULL DEFAULT 0');
+  } catch {}
+
+  // Migration: add muted_until to server_members
+  try {
+    db.exec('ALTER TABLE server_members ADD COLUMN muted_until TEXT');
+  } catch {}
+
+  // Migration: normalize 'default' notification_level to 'mentions'
+  try {
+    db.exec("UPDATE server_members SET notification_level = 'mentions' WHERE notification_level = 'default'");
+  } catch {}
+
+  // Channel notification overrides
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS channel_notification_overrides (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      level TEXT NOT NULL DEFAULT 'default',
+      muted_until TEXT,
+      PRIMARY KEY (user_id, channel_id)
+    );
+  `);
+
+  // DM notification overrides (mute only)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dm_notification_overrides (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      muted_until TEXT,
+      PRIMARY KEY (user_id, channel_id)
+    );
+  `);
+
+  // Pending notifications for data-only push
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pending_notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      data TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      fetched INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_pending_notifications_user ON pending_notifications(user_id);
+    CREATE INDEX IF NOT EXISTS idx_pending_notifications_created ON pending_notifications(created_at);
+  `);
+
   migrateDeviceTokens();
 }
