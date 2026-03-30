@@ -1,86 +1,125 @@
-# Open Core Feature Toggles Design
+# Open Core: Official Instance Toggle + Standalone Admin Console
 
 **Date:** 2026-03-30
 **Status:** Approved
 
 ## Overview
 
-Gate official-only features behind individual boolean env vars. Each feature is a simple `true`/`false` toggle, defaulting to `false`. Self-hosters don't need to configure anything — they get the full chat app with the integrated admin panel. The official instance sets the flags it needs.
+A single `OFFICIAL_INSTANCE` env var (defaults to `false`) controls whether official-only features are active: Stripe billing, OAuth2 provider, and the standalone admin console. Self-hosters leave it at `false` and get the full chat app with an in-app admin page. The official instance sets it to `true`, which removes the in-app admin page and enables the standalone admin console with OAuth2 authentication.
 
-## Feature Toggles
+## The Toggle
 
 ```bash
-BILLING_ENABLED=false
-STANDALONE_ADMIN_CONSOLE=false
+OFFICIAL_INSTANCE=false  # default
 ```
 
-Added to `server/src/config.ts` as booleans. No "edition" abstraction — each feature stands on its own.
-
-## Billing Route Gating
-
-Billing routes (`server/src/routes/billing.ts`) only register when `config.billingEnabled` is `true`:
-
+In `server/src/config.ts`:
 ```typescript
-if (config.billingEnabled) {
-  await app.register(billingRoutes);
-}
+officialInstance: env('OFFICIAL_INSTANCE', 'false') === 'true',
 ```
 
-The Stripe dependency stays in `package.json` but never gets used when billing is disabled.
+## ADMIN_USERS Fix: Switch to User IDs
 
-The client hides billing/upgrade UI when the server reports `billing: false` via the public instance info endpoint.
+`ADMIN_USERS` currently matches by username, which is a security risk since usernames can be changed. Switch to matching by user ID (UUIDs), which are immutable.
+
+Before:
+```bash
+ADMIN_USERS=carter,someuser
+```
+
+After:
+```bash
+ADMIN_USERS=550e8400-e29b-41d4-a716-446655440000,7c9e6679-7425-40de-944b-e07fc1f90ae7
+```
+
+Update `isInstanceAdmin()` and `requireAdmin` to check `request.user.userId` instead of `request.user.username`.
+
+## What Changes Per Toggle State
+
+| Feature | `false` (default/self-hosted) | `true` (official) |
+|---|---|---|
+| In-app `/admin` page | Available | Removed |
+| Standalone admin console | Not deployed | Deployed |
+| OAuth2 provider endpoints | Not registered | Registered |
+| Billing/Stripe routes | Not registered | Registered |
+| Admin API endpoints (`/api/admin/*`) | Available | Available |
+
+## OAuth2 Provider
+
+New endpoints on the server, only registered when `OFFICIAL_INSTANCE=true`:
+
+- `GET /oauth2/authorize` — consent screen ("Admin Console wants to access your account")
+- `POST /oauth2/token` — exchanges authorization code for access token
+- `GET /oauth2/userinfo` — returns user info (id, username, isAdmin)
+- `POST /oauth2/revoke` — revokes a token
+
+The admin console is a pre-registered OAuth2 client via env vars:
+
+```bash
+OAUTH2_CLIENT_ID=admin-console
+OAUTH2_CLIENT_SECRET=<random-secret>
+OAUTH2_REDIRECT_URI=https://admin.sellserv.net/auth/callback
+```
+
+- Authorization codes: short-lived (5 minutes), single-use, stored in database
+- Access tokens: JWTs with 1-hour expiry
+- Strict redirect URI validation (exact match, no wildcards)
+- State parameter required to prevent CSRF on callback
 
 ## Standalone Admin Console
 
-A new `admin-console/` workspace at the monorepo root — a separate SvelteKit app deployed at `admin.sellserv.net` (only when `STANDALONE_ADMIN_CONSOLE=true`).
+A SvelteKit app in the `admin-console/` workspace, deployed at `admin.sellserv.net`.
 
-- **Shares types** from `@voip-server/shared`
-- **Talks to the same server API** — the existing admin endpoints in `server/src/routes/admin.ts` serve both the in-app admin and the standalone console
-- **Auth:** Uses the same API session/token system (cookie or token-based, matching the main app). The server's existing `requirePermission` middleware already enforces instance admin privileges on admin endpoints. CORS on the server is configured to allow the admin console origins (`admin.sellserv.net`, `admin-staging.sellserv.net`) via the existing `CORS_ORIGINS` env var.
-- **In-app admin stays:** Self-hosters keep the existing `/admin` route in the client. The standalone console is an alternative interface for the official instance, not a replacement.
+### Pages
 
-## Exposing Feature Flags to the Client
+Mirrors the current in-app admin functionality:
 
-The existing `/api/public/instance/info` endpoint is extended with a `features` object:
+- **Dashboard** — stats (users, servers, messages, online count)
+- **Users** — list, ban/unban, view details, assign global roles
+- **Servers** — list, delete
+- **Reports** — content moderation (submit, resolve, dismiss)
+- **Audit Log** — viewer
+- **Instance Settings** — name, registration toggle, terms/privacy URLs, alpha billing toggle
 
-```typescript
-{
-  totalUsers: 42,
-  totalServers: 3,
-  // ...existing fields...
+All pages talk to the existing admin API endpoints (`/api/admin/*`). No new server-side admin logic needed.
+
+### Auth Flow
+
+1. Visit `admin.sellserv.net`
+2. Middleware checks for session cookie — none found
+3. Redirect to `chat.sellserv.net/oauth2/authorize?client_id=admin-console&scope=admin&state=<random>&redirect_uri=https://admin.sellserv.net/auth/callback`
+4. User logs in on main app (or already logged in), sees consent screen
+5. Main app verifies user is in `ADMIN_USERS` list (by user ID), redirects back with auth code
+6. Admin console exchanges code for access token via server-to-server call
+7. Stores token in encrypted HttpOnly session cookie (7-day expiry)
+8. Subsequent requests: admin console makes API calls with access token as Bearer token
+
+### Security
+
+- Encrypted HttpOnly session cookies with configurable secret key
+- CSRF protection on all state-changing requests
+- State parameter on OAuth2 flow
+- Strict redirect URI validation (exact match)
+- CORS configured for admin console domains via existing `CORS_ORIGINS` env var
+
+## Client Changes
+
+- When `OFFICIAL_INSTANCE=true`, the in-app `/admin` route is hidden/removed
+- Billing UI only shown when official instance (server exposes toggle via `/api/public/instance/info`)
+- Feature flags exposed in existing public instance info endpoint:
+  ```typescript
   features: {
-    billing: false,
-    standaloneAdminConsole: false
+    officialInstance: boolean,
+    billing: boolean,
   }
-}
-```
+  ```
 
-The client reads these flags on init and uses them to show/hide UI sections.
+## Deployments
 
-## Deployment Matrix
-
-| Environment | Main App | Admin Console | Feature Flags |
+| Environment | Main App | Admin Console | `OFFICIAL_INSTANCE` |
 |---|---|---|---|
-| Staging | `staging.sellserv.net` | `admin-staging.sellserv.net` | `BILLING_ENABLED=true`, `STANDALONE_ADMIN_CONSOLE=true` |
-| Production | `chat.sellserv.net` | `admin.sellserv.net` | `BILLING_ENABLED=true`, `STANDALONE_ADMIN_CONSOLE=true` |
-| Self-hosted | user's domain | N/A | defaults (`false`) |
+| Staging | `staging.sellserv.net` | `admin-staging.sellserv.net` | `true` |
+| Production | `chat.sellserv.net` | `admin.sellserv.net` | `true` |
+| Self-hosted | user's domain | N/A | `false` |
 
-## What Gets Gated
-
-| Feature | Default (self-hosted) | Official |
-|---|---|---|
-| Core chat (voice/text/channels) | Yes | Yes |
-| In-app admin (`/admin` route) | Yes | Yes |
-| Standalone admin console | No | Yes |
-| Stripe billing | No | Yes |
-| Alpha billing toggle | No | Yes |
-| Instance settings (name, registration, etc.) | Yes | Yes |
-
-## What Does NOT Change
-
-- Repo remains public and single
-- All code is visible to self-hosters
-- Staging/main branching model unchanged
-- Existing admin API endpoints unchanged — they serve both interfaces
-- Stripe dependency stays in `package.json`
-- Self-hosters could enable any flag if they want — features just need their backing services configured (e.g., Stripe keys for billing)
+Same branching model: `staging` deploys both apps to staging domains, `main` deploys both to production. CI workflows updated to build and deploy admin console alongside main app.
