@@ -79,3 +79,11 @@ export async function setServerNotificationLevel(serverId: string, level: string
 export async function updateServerMember(serverId: string, data: { nickname?: string | null; avatar_url?: string | null }): Promise<void> {
   await api.patch(`/api/servers/${serverId}/members/me`, data);
 }
+
+export async function setServerSuppressEveryone(serverId: string, suppress: boolean) {
+  await api.patch(`/api/servers/${serverId}/members/me/notifications`, { suppress_everyone: suppress });
+}
+
+export async function setServerMuted(serverId: string, muted_until: string | null) {
+  await api.patch(`/api/servers/${serverId}/members/me/notifications`, { muted_until });
+}
