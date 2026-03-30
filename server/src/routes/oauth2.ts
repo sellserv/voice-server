@@ -10,6 +10,10 @@ function generateCode(): string {
   return randomBytes(32).toString('hex');
 }
 
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function validateClient(clientId: string, redirectUri: string): boolean {
   return (
     clientId === config.oauth2.clientId &&
@@ -144,19 +148,19 @@ export default async function oauth2Routes(app: FastifyInstance) {
 <body>
   <div class="card">
     <h1><span class="app-name">Admin Console</span></h1>
-    <p>wants to access your account as <span class="user">${user.username}</span></p>
+    <p>wants to access your account as <span class="user">${escapeHtml(user.username)}</span></p>
     <div class="buttons">
       <form method="POST" action="/oauth2/authorize">
-        <input type="hidden" name="client_id" value="${client_id}" />
-        <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
-        <input type="hidden" name="scope" value="${scope || 'admin'}" />
-        <input type="hidden" name="state" value="${state || ''}" />
-        <input type="hidden" name="csrf_token" value="${csrfToken}" />
+        <input type="hidden" name="client_id" value="${escapeHtml(client_id)}" />
+        <input type="hidden" name="redirect_uri" value="${escapeHtml(redirect_uri)}" />
+        <input type="hidden" name="scope" value="${escapeHtml(scope || 'admin')}" />
+        <input type="hidden" name="state" value="${escapeHtml(state || '')}" />
+        <input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}" />
         <button type="submit" class="approve">Approve</button>
       </form>
-      <form method="GET" action="${redirect_uri}">
+      <form method="GET" action="${escapeHtml(redirect_uri)}">
         <input type="hidden" name="error" value="access_denied" />
-        <input type="hidden" name="state" value="${state || ''}" />
+        <input type="hidden" name="state" value="${escapeHtml(state || '')}" />
         <button type="submit" class="deny">Deny</button>
       </form>
     </div>
