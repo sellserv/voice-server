@@ -4,15 +4,13 @@
   import { servers, activeServerId, isDmView, switchServer, serverNotificationLevels, serverMutedUntil } from '$lib/stores/servers';
   import { serverUnreadCounts, homeUnreadCounts } from '$lib/stores/channels';
   import CreateServerModal from '$lib/components/CreateServerModal.svelte';
-  import InstanceAdminModal from '$lib/components/InstanceAdminModal.svelte';
+
   import ServerContextMenu from './ServerContextMenu.svelte';
   import Icon from './Icon.svelte';
 
   // Server modal
   let showCreateServerModal = $state(false);
 
-  // Admin panel
-  let showAdminPanel = $state(false);
 
   let contextMenu: { serverId: string; serverName: string; ownerId?: string; x: number; y: number } | null = $state(null);
 
@@ -106,16 +104,16 @@
   {#if $currentUser?.is_instance_admin}
     <div class="admin-spacer"></div>
     <div class="nav-item">
-      <button
+      <a
+        href="/admin"
         class="server-icon admin-btn"
         data-tooltip="Admin Panel"
         aria-label="Admin Panel"
-        onclick={() => showAdminPanel = true}
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="22" height="22">
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
         </svg>
-      </button>
+      </a>
     </div>
   {/if}
 
@@ -136,9 +134,7 @@
   <CreateServerModal onclose={() => showCreateServerModal = false} />
 {/if}
 
-{#if showAdminPanel}
-  <InstanceAdminModal onclose={() => showAdminPanel = false} />
-{/if}
+
 
 <style>
   .nav-dock {
@@ -394,6 +390,7 @@
     background: rgba(255, 255, 255, 0.03);
     color: var(--text-dim);
     margin-top: var(--space-3);
+    text-decoration: none;
   }
 
   .admin-btn:hover {
