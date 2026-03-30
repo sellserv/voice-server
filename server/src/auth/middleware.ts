@@ -1,6 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { verifyToken, type JwtPayload } from './jwt.js';
-import { verifyAdminToken } from './adminToken.js';
 import { getSessionByToken } from './sessions.js';
 import { hasPermission, hasChannelPermission, getUserRoleIds } from './permissions.js';
 import db from '../db/connection.js';
@@ -91,20 +90,6 @@ export function isInstanceAdmin(username: string): boolean {
 }
 
 export async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
-  // First, check for admin console token (Bearer token with admin: true)
-  const authHeader = request.headers.authorization;
-  if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.slice(7);
-    try {
-      verifyAdminToken(token);
-      request.user = { userId: 'admin-console', username: 'admin', role: 'admin', jti: '' };
-      return;
-    } catch {
-      // Not an admin console token — fall through to user-based check
-    }
-  }
-
-  // Fall back to existing user-based admin check
   await requireAuth(request, reply);
   if (reply.sent) return;
   if (!isInstanceAdmin(request.user.username)) {
