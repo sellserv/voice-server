@@ -50,7 +50,7 @@ export const config = {
   maxFileSize: envInt('MAX_FILE_SIZE', 20 * 1024 * 1024),
   maxDailyUploadPerUser: envInt('MAX_DAILY_UPLOAD_PER_USER', 100 * 1024 * 1024),
   maxTotalDisk: envInt('MAX_TOTAL_DISK', 5 * 1024 * 1024 * 1024),
-  adminUsers: env('ADMIN_USERS', '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+  adminUsers: env('ADMIN_USERS', '').split(',').map(s => s.trim()).filter(Boolean),
   giphyApiKey: env('GIPHY_API_KEY', ''),
   resendApiKey: env('RESEND_API_KEY', ''),
   emailFrom: env('EMAIL_FROM', ''),

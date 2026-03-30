@@ -148,14 +148,6 @@ export default async function authRoutes(app: FastifyInstance) {
       }
     }
 
-    // Block registration of reserved admin usernames
-    if (config.adminUsers.includes(username.toLowerCase())) {
-      const existingAdmin = db.prepare('SELECT id FROM users WHERE LOWER(username) = ?').get(username.toLowerCase());
-      if (!existingAdmin) {
-        return reply.code(403).send({ error: 'This username is reserved' });
-      }
-    }
-
     const existing = db.prepare('SELECT id, email_verified, created_at FROM users WHERE username = ? OR email = ?').get(username, email) as { id: string; email_verified: number; created_at: string } | undefined;
     if (existing) {
       if (!existing.email_verified) {
@@ -665,14 +657,6 @@ export default async function authRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: 'Username unavailable' });
       }
 
-      // Block reserved admin usernames
-      if (config.adminUsers.includes(username.toLowerCase())) {
-        const existingAdmin = db.prepare('SELECT id FROM users WHERE LOWER(username) = ?').get(username.toLowerCase());
-        if (!existingAdmin || (existingAdmin as any).id !== userId) {
-          return reply.code(403).send({ error: 'This username is reserved' });
-        }
-      }
-
       // Verify MFA
       const user = db.prepare('SELECT totp_enabled, totp_secret, mfa_method, email, email_verified FROM users WHERE id = ?').get(userId) as any;
       if (!user) {
@@ -1044,7 +1028,7 @@ export default async function authRoutes(app: FastifyInstance) {
     user.role_names = userRoles.map((r) => r.role_name);
     user.role_colors = userRoles.map((r) => r.role_color);
 
-    user.is_instance_admin = isInstanceAdmin(user.username);
+    user.is_instance_admin = isInstanceAdmin(user.id);
 
     // Include token and CSRF for desktop app
     // Bearer token auth: read from Authorization header since cross-origin cookies aren't sent

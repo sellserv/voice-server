@@ -111,7 +111,7 @@ export default async function serverRoutes(app: FastifyInstance) {
         .get() as { allow_server_creation: number } | undefined;
       if (settings && !settings.allow_server_creation) {
         // Only instance admins can create servers when disabled
-        if (!isInstanceAdmin(request.user.username) && !hasPermission(userId, 'administrator')) {
+        if (!isInstanceAdmin(request.user.userId) && !hasPermission(userId, 'administrator')) {
           return reply.code(403).send({ error: 'Server creation is disabled' });
         }
       }

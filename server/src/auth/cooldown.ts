@@ -14,11 +14,11 @@ interface CooldownResult {
  */
 export function checkNewUserCooldown(userId: string): CooldownResult {
   const user = db
-    .prepare('SELECT username, created_at FROM users WHERE id = ?')
-    .get(userId) as { username: string; created_at: string } | undefined;
+    .prepare('SELECT created_at FROM users WHERE id = ?')
+    .get(userId) as { created_at: string } | undefined;
 
   if (!user) return { restricted: false };
-  if (isInstanceAdmin(user.username)) return { restricted: false };
+  if (isInstanceAdmin(userId)) return { restricted: false };
 
   const createdAt = new Date(user.created_at + 'Z').getTime();
   const elapsed = Date.now() - createdAt;

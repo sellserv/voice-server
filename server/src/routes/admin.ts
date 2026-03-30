@@ -110,7 +110,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: 'User not found' });
       }
 
-      if (isInstanceAdmin(user.username)) {
+      if (isInstanceAdmin(user.id)) {
         return reply.code(400).send({ error: 'Cannot ban an instance admin' });
       }
 

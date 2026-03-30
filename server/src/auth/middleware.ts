@@ -85,14 +85,14 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply) 
 /**
  * Check if a user is an instance-level admin (configured via ADMIN_USERS env var).
  */
-export function isInstanceAdmin(username: string): boolean {
-  return config.adminUsers.includes(username.toLowerCase());
+export function isInstanceAdmin(userId: string): boolean {
+  return config.adminUsers.includes(userId);
 }
 
 export async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
   await requireAuth(request, reply);
   if (reply.sent) return;
-  if (!isInstanceAdmin(request.user.username)) {
+  if (!isInstanceAdmin(request.user.userId)) {
     reply.code(403).send({ error: 'Admin access required' });
   }
 }
