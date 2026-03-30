@@ -97,6 +97,15 @@ async function resolveAndValidate(urlStr: string): Promise<{ ip: string; family:
   }
 }
 
+function isRedditUrl(urlStr: string): boolean {
+  try {
+    const host = new URL(urlStr).hostname.replace(/^www\./, '');
+    return host === 'reddit.com' || host.endsWith('.reddit.com');
+  } catch {
+    return false;
+  }
+}
+
 function isYouTubeUrl(urlStr: string): { isYT: boolean; videoId?: string } {
   let parsed: URL;
   try {
@@ -267,6 +276,24 @@ export default async function linkPreviewRoutes(app: FastifyInstance) {
             siteName = 'YouTube';
             image = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
             favicon = 'https://www.youtube.com/favicon.ico';
+          }
+        } else if (isRedditUrl(url)) {
+          // Reddit serves no OG tags to bots — use their oEmbed API
+          const oembedUrl = `https://www.reddit.com/oembed?url=${encodeURIComponent(url)}`;
+          const res = await fetch(oembedUrl, {
+            signal: AbortSignal.timeout(5000),
+          });
+          if (res.ok) {
+            const data = (await res.json()) as {
+              title?: string;
+              author_name?: string;
+            };
+            title = data.title || null;
+            siteName = 'Reddit';
+            favicon = 'https://www.reddit.com/favicon.ico';
+            // Extract subreddit from path
+            const subMatch = parsed.pathname.match(/^\/r\/([^/]+)/);
+            if (subMatch) author = `r/${subMatch[1]}`;
           }
         } else {
           // Generic URL — fetch HTML (limit to ~50KB)
