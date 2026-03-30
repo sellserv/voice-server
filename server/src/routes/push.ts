@@ -45,4 +45,23 @@ export default async function pushRoutes(app: FastifyInstance) {
       return { ok: true };
     },
   );
+
+  // Fetch pending notification content (data-only push)
+  app.get<{ Params: { id: string } }>(
+    '/api/push/notification/:id',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { id } = request.params;
+      const userId = request.user.userId;
+
+      const { fetchAndDeletePending } = await import('../push/pending.js');
+      const notification = fetchAndDeletePending(id, userId);
+
+      if (!notification) {
+        return reply.code(404).send({ error: 'Notification not found or expired' });
+      }
+
+      return notification;
+    },
+  );
 }
