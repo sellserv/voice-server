@@ -4,6 +4,7 @@ import fastifyCors from '@fastify/cors';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebSocket from '@fastify/websocket';
 import fastifyMultipart from '@fastify/multipart';
+import fastifyFormbody from '@fastify/formbody';
 import fastifyStatic from '@fastify/static';
 import { resolve } from 'path';
 import { mkdirSync, readFileSync, existsSync } from 'fs';
@@ -31,6 +32,7 @@ import auditRoutes from './routes/audit.js';
 import serverRoutes from './routes/servers.js';
 import friendRoutes from './routes/friends.js';
 import billingRoutes from './routes/billing.js';
+import oauth2Routes from './routes/oauth2.js';
 import pushRoutes from './routes/push.js';
 import channelNotificationRoutes from './routes/channelNotifications.js';
 import { cleanupOldAuditEntries } from './audit/log.js';
@@ -89,6 +91,7 @@ await app.register(fastifyWebSocket, {
 await app.register(fastifyMultipart, {
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB max (pro limit); per-user checks enforce free tier limit
 });
+await app.register(fastifyFormbody);
 
 // Security headers
 app.addHook('onSend', async (request, reply, payload) => {
@@ -262,6 +265,7 @@ await app.register(serverRoutes);
 await app.register(friendRoutes);
 if (config.officialInstance) {
   await app.register(billingRoutes);
+  await app.register(oauth2Routes);
 }
 await app.register(pushRoutes);
 await app.register(channelNotificationRoutes);
