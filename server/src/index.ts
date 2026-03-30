@@ -32,7 +32,9 @@ import serverRoutes from './routes/servers.js';
 import friendRoutes from './routes/friends.js';
 import billingRoutes from './routes/billing.js';
 import pushRoutes from './routes/push.js';
+import channelNotificationRoutes from './routes/channelNotifications.js';
 import { cleanupOldAuditEntries } from './audit/log.js';
+import { startPendingCleanup } from './push/index.js';
 import { setupWebSocket } from './ws/index.js';
 import { createWorkers, setWorkerDiedCallback } from './media/worker.js';
 import { clearAllRooms } from './media/signaling.js';
@@ -250,6 +252,7 @@ await app.register(serverRoutes);
 await app.register(friendRoutes);
 await app.register(billingRoutes);
 await app.register(pushRoutes);
+await app.register(channelNotificationRoutes);
 
 // WebSocket
 setupWebSocket(app);
@@ -284,6 +287,7 @@ setInterval(cleanupOldAuditEntries, 24 * 60 * 60 * 1000);
 try {
   await app.listen({ port: config.port, host: config.host });
   console.log(`Voice Server running on http://${config.host}:${config.port}`);
+  startPendingCleanup();
 } catch (err) {
   app.log.error(err);
   process.exit(1);
