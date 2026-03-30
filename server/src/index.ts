@@ -186,7 +186,14 @@ function serveHtmlWithNonce(request: any, reply: any) {
 
 // Warn if no instance admins configured
 if (config.adminUsers.length === 0) {
-  console.warn('⚠ ADMIN_USERS is empty — no instance admins configured. Set ADMIN_USERS in .env to grant platform-level admin access.');
+  console.warn('⚠ ADMIN_USERS is empty — no instance admins configured. Set ADMIN_USERS in .env to a comma-separated list of user IDs to grant platform-level admin access.');
+}
+
+// Validate that ADMIN_USERS entries are valid UUIDs
+for (const id of config.adminUsers) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    console.warn(`⚠ ADMIN_USERS entry "${id}" does not look like a user ID (UUID). Did you mean to use a user ID instead of a username?`);
+  }
 }
 
 // Initialize database
