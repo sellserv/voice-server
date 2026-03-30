@@ -4,6 +4,8 @@ import type { Server } from '@voip-server/shared';
 
 export const servers = writable<Server[]>([]);
 export const serverNotificationLevels = writable<Map<string, string>>(new Map());
+export const serverSuppressEveryone = writable<Map<string, boolean>>(new Map());
+export const serverMutedUntil = writable<Map<string, string | null>>(new Map());
 export const activeServerId = writable<string | null>(null);
 export const activeServer = derived([servers, activeServerId], ([$servers, $id]) =>
   $servers.find(s => s.id === $id) ?? null
@@ -15,10 +17,16 @@ export async function loadServers(): Promise<Server[]> {
   servers.set(list);
 
   const levels = new Map<string, string>();
+  const suppress = new Map<string, boolean>();
+  const muted = new Map<string, string | null>();
   for (const s of list) {
     levels.set(s.id, (s as any).notification_level || 'default');
+    suppress.set(s.id, !!(s as any).suppress_everyone);
+    muted.set(s.id, (s as any).muted_until || null);
   }
   serverNotificationLevels.set(levels);
+  serverSuppressEveryone.set(suppress);
+  serverMutedUntil.set(muted);
 
   return list;
 }
@@ -82,8 +90,18 @@ export async function updateServerMember(serverId: string, data: { nickname?: st
 
 export async function setServerSuppressEveryone(serverId: string, suppress: boolean) {
   await api.patch(`/api/servers/${serverId}/members/me/notifications`, { suppress_everyone: suppress });
+  serverSuppressEveryone.update(map => {
+    const m = new Map(map);
+    m.set(serverId, suppress);
+    return m;
+  });
 }
 
 export async function setServerMuted(serverId: string, muted_until: string | null) {
   await api.patch(`/api/servers/${serverId}/members/me/notifications`, { muted_until });
+  serverMutedUntil.update(map => {
+    const m = new Map(map);
+    m.set(serverId, muted_until);
+    return m;
+  });
 }

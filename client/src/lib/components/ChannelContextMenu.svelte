@@ -2,7 +2,10 @@
   import { deleteChannel } from '$lib/stores/channels';
   import { confirm, toast } from '$lib/stores/toast';
   import { hasPermissionStore } from '$lib/stores/permissions';
+  import { activeServerId } from '$lib/stores/servers';
+  import { channelNotificationOverrides } from '$lib/stores/channelNotifications';
   import Icon from './Icon.svelte';
+  import NotificationSettingsMenu from './NotificationSettingsMenu.svelte';
 
   let {
     channelId,
@@ -23,6 +26,12 @@
   } = $props();
 
   const canManageChannels = hasPermissionStore('manage_channels');
+
+  let showNotificationSubmenu = $state(false);
+
+  const channelOverride = $derived($channelNotificationOverrides.get(channelId));
+  const channelLevel = $derived(channelOverride?.level || 'default');
+  const channelMutedUntil = $derived(channelOverride?.muted_until || null);
 
   async function handleDelete() {
     const name = channelName;
@@ -81,19 +90,19 @@
     <span class="header-text">{channelName}</span>
   </div>
 
-  <div class="menu-group">
-    <button
-      class="menu-item"
-      onclick={() => {
-        onrename(channelId);
-        onclose();
-      }}
-    >
-      <Icon name="edit" size={16} class="menu-icon" />
-      <span>Rename Channel</span>
-    </button>
+  {#if $canManageChannels}
+    <div class="menu-group">
+      <button
+        class="menu-item"
+        onclick={() => {
+          onrename(channelId);
+          onclose();
+        }}
+      >
+        <Icon name="edit" size={16} class="menu-icon" />
+        <span>Rename Channel</span>
+      </button>
 
-    {#if $canManageChannels}
       <button
         class="menu-item"
         onclick={() => {
@@ -104,17 +113,44 @@
         <Icon name="shield-check" size={16} class="menu-icon" />
         <span>Edit Permissions</span>
       </button>
-    {/if}
-  </div>
+    </div>
 
-  <div class="menu-separator"></div>
+    <div class="menu-separator"></div>
+  {/if}
 
   <div class="menu-group">
-    <button class="menu-item danger" onclick={handleDelete}>
-      <Icon name="trash" size={16} class="menu-icon" />
-      <span>Delete Channel</span>
+    <button
+      class="menu-item"
+      onclick={() => showNotificationSubmenu = !showNotificationSubmenu}
+    >
+      <Icon name="bell" size={16} class="menu-icon" />
+      <span>Notification Settings</span>
+      <Icon name="chevron-right" size={14} class="chevron-icon" />
     </button>
   </div>
+
+  {#if showNotificationSubmenu}
+    <div class="menu-separator"></div>
+    <NotificationSettingsMenu
+      type="channel"
+      serverId={$activeServerId || ''}
+      channelId={channelId}
+      currentLevel={channelLevel}
+      currentMutedUntil={channelMutedUntil}
+      onClose={onclose}
+    />
+  {/if}
+
+  {#if $canManageChannels}
+    <div class="menu-separator"></div>
+
+    <div class="menu-group">
+      <button class="menu-item danger" onclick={handleDelete}>
+        <Icon name="trash" size={16} class="menu-icon" />
+        <span>Delete Channel</span>
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -212,5 +248,10 @@
 
   .menu-item:hover .menu-icon {
     opacity: 1;
+  }
+
+  :global(.chevron-icon) {
+    margin-left: auto;
+    opacity: 0.5;
   }
 </style>

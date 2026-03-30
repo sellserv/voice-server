@@ -54,6 +54,7 @@
     loadGroupOverrides,
   } from '$lib/stores/permissions';
   import { get } from 'svelte/store';
+  import { loadChannelOverrides as loadChannelNotificationOverrides } from '$lib/stores/channelNotifications';
   import { fetchUsers, refreshUsers, resetUsersStore, allUsers } from '$lib/stores/users';
   import { addScreenShare, removeScreenShare, activeScreenShares } from '$lib/stores/screenShare';
   import {
@@ -316,6 +317,8 @@
               await loadChannelGroups().catch(e => console.warn('[App] Reconnect: loadChannelGroups failed:', e));
               await loadChannelOverrides().catch(e => console.warn('[App] Reconnect: loadChannelOverrides failed:', e));
               await loadGroupOverrides().catch(e => console.warn('[App] Reconnect: loadGroupOverrides failed:', e));
+              const sid = get(activeServerId);
+              if (sid) await loadChannelNotificationOverrides(sid).catch(e => console.warn('[App] Reconnect: loadChannelNotificationOverrides failed:', e));
               await loadFriends().catch(e => console.warn('[App] Reconnect: loadFriends failed:', e));
               await loadPendingRequests().catch(e => console.warn('[App] Reconnect: loadPendingRequests failed:', e));
             })();
@@ -848,6 +851,7 @@
           await loadServerSettings();
           await loadChannelOverrides();
           await loadGroupOverrides();
+          await loadChannelNotificationOverrides(id);
         } catch (e) {
           console.error('[App] Failed to load server data:', e);
         }

@@ -3,6 +3,7 @@
   import { pendingInvitations, acceptInvitation, declineInvitation, loadInvitations } from '$lib/stores/invitations';
   import { dmChannels, activeChannelId, openOrCreateDm } from '$lib/stores/channels';
   import { isDmView, servers, switchServer } from '$lib/stores/servers';
+  import { dmMutes } from '$lib/stores/channelNotifications';
   import { onlineUsers } from '$lib/stores/presence';
   import { currentUser } from '$lib/stores/auth';
   import { toast } from '$lib/stores/toast';
@@ -11,6 +12,7 @@
   import { resolveAsset } from '$lib/stores/server';
   import Avatar from './Avatar.svelte';
   import Icon from './Icon.svelte';
+  import NotificationSettingsMenu from './NotificationSettingsMenu.svelte';
   import SidebarFooter from './sidebar/SidebarFooter.svelte';
   import type { FriendInfo, FriendRequest, Channel, ServerInvitation } from '@voip-server/shared';
 
@@ -27,6 +29,49 @@
   let searchInputEl: HTMLInputElement | undefined = $state();
 
   let inviteProcessing = $state<string | null>(null);
+
+  // DM context menu
+  let dmContextMenu: { channelId: string; x: number; y: number } | null = $state(null);
+  let dmMenuEl: HTMLDivElement | undefined = $state();
+
+  function handleDmContextMenu(e: MouseEvent, channelId: string) {
+    e.preventDefault();
+    dmContextMenu = { channelId, x: e.clientX, y: e.clientY };
+  }
+
+  function closeDmMenu() {
+    dmContextMenu = null;
+  }
+
+  const dmMenuLeft = $derived.by(() => {
+    const w = dmMenuEl?.offsetWidth ?? 200;
+    return dmContextMenu ? Math.min(dmContextMenu.x, window.innerWidth - w - 8) : 0;
+  });
+  const dmMenuTop = $derived.by(() => {
+    const h = dmMenuEl?.offsetHeight ?? 200;
+    return dmContextMenu ? Math.min(dmContextMenu.y, window.innerHeight - h - 8) : 0;
+  });
+
+  function handleDmMenuClickOutside(e: MouseEvent) {
+    if (dmMenuEl && !dmMenuEl.contains(e.target as Node)) {
+      closeDmMenu();
+    }
+  }
+
+  function handleDmMenuKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') closeDmMenu();
+  }
+
+  $effect(() => {
+    if (dmContextMenu) {
+      document.addEventListener('mousedown', handleDmMenuClickOutside);
+      document.addEventListener('keydown', handleDmMenuKeydown);
+      return () => {
+        document.removeEventListener('mousedown', handleDmMenuClickOutside);
+        document.removeEventListener('keydown', handleDmMenuKeydown);
+      };
+    }
+  });
 
   let incomingRequests = $derived($pendingRequests.filter(r => r.direction === 'incoming'));
   let outgoingRequests = $derived($pendingRequests.filter(r => r.direction === 'outgoing'));
@@ -343,6 +388,7 @@
                 class="item-row"
                 class:active={$activeChannelId === channel.id}
                 onclick={() => { activeChannelId.set(channel.id); isDmView.set(true); }}
+                oncontextmenu={(e) => handleDmContextMenu(e, channel.id)}
               >
                 <div class="avatar-wrap">
                   <Avatar src={dmUser?.avatar_url} alt={dmUser?.display_name || dmUser?.username || channel.name || '?'} size={32} userId={dmUser?.id} showStatus />
@@ -569,6 +615,22 @@
   <!-- Footer (Pinned to bottom) -->
   <SidebarFooter onsettings={() => onopensettings?.()} />
 </aside>
+
+{#if dmContextMenu}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="dm-context-menu" bind:this={dmMenuEl} style="left: {dmMenuLeft}px; top: {dmMenuTop}px;">
+    <div class="dm-menu-header">
+      <Icon name="bell" size={14} class="dm-header-icon" />
+      <span class="dm-header-text">Notifications</span>
+    </div>
+    <NotificationSettingsMenu
+      type="dm"
+      channelId={dmContextMenu.channelId}
+      currentMutedUntil={$dmMutes.get(dmContextMenu.channelId) || null}
+      onClose={closeDmMenu}
+    />
+  </div>
+{/if}
 
 <style>
   .sidebar {
@@ -1098,5 +1160,45 @@
     margin-top: 8px;
     font-weight: 700;
     padding-left: 8px;
+  }
+
+  .dm-context-menu {
+    position: fixed;
+    z-index: 1000;
+    background: var(--glass-bg);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--glass-border-bright);
+    border-radius: var(--radius-md);
+    padding: 6px;
+    min-width: 200px;
+    box-shadow: var(--glass-shadow), var(--glass-glow);
+    animation: dmMenuIn 150ms var(--ease-out);
+  }
+
+  @keyframes dmMenuIn {
+    from { opacity: 0; transform: scale(0.95) translateY(4px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  .dm-menu-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  :global(.dm-header-icon) {
+    color: var(--text-dim);
+  }
+
+  .dm-header-text {
+    font-weight: 700;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 </style>

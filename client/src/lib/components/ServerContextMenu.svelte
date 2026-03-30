@@ -1,8 +1,9 @@
 <script lang="ts">
   import { currentUser } from '$lib/stores/auth';
-  import { serverNotificationLevels, setServerNotificationLevel, leaveServer } from '$lib/stores/servers';
+  import { serverNotificationLevels, serverSuppressEveryone, serverMutedUntil, leaveServer } from '$lib/stores/servers';
   import { toast, confirm } from '$lib/stores/toast';
   import Icon from './Icon.svelte';
+  import NotificationSettingsMenu from './NotificationSettingsMenu.svelte';
 
   let {
     serverId,
@@ -31,13 +32,18 @@
     return Math.min(anchorY, window.innerHeight - h - 8);
   });
 
+  let showNotificationSubmenu = $state(false);
+
   function getLevel(): string {
     return $serverNotificationLevels.get(serverId) || 'default';
   }
 
-  function setLevel(level: string) {
-    setServerNotificationLevel(serverId, level);
-    onclose();
+  function getSuppressEveryone(): boolean {
+    return $serverSuppressEveryone.get(serverId) || false;
+  }
+
+  function getMutedUntil(): string | null {
+    return $serverMutedUntil.get(serverId) || null;
   }
 
   async function handleLeave() {
@@ -92,29 +98,27 @@
   </div>
 
   <div class="menu-group">
-    <div class="group-label">Notifications</div>
-    <button class="menu-item" class:selected={getLevel() === 'all' || getLevel() === 'default'} onclick={() => setLevel('all')}>
+    <button
+      class="menu-item"
+      onclick={() => showNotificationSubmenu = !showNotificationSubmenu}
+    >
       <Icon name="bell" size={16} class="menu-icon" />
-      <span>All Messages</span>
-      {#if getLevel() === 'all' || getLevel() === 'default'}
-        <Icon name="check" size={14} class="check-icon" />
-      {/if}
-    </button>
-    <button class="menu-item" class:selected={getLevel() === 'mentions'} onclick={() => setLevel('mentions')}>
-      <Icon name="at-sign" size={16} class="menu-icon" />
-      <span>Mentions Only</span>
-      {#if getLevel() === 'mentions'}
-        <Icon name="check" size={14} class="check-icon" />
-      {/if}
-    </button>
-    <button class="menu-item" class:selected={getLevel() === 'nothing'} onclick={() => setLevel('nothing')}>
-      <Icon name="bell-off" size={16} class="menu-icon" />
-      <span>Nothing</span>
-      {#if getLevel() === 'nothing'}
-        <Icon name="check" size={14} class="check-icon" />
-      {/if}
+      <span>Notification Settings</span>
+      <Icon name="chevron-right" size={14} class="chevron-icon" />
     </button>
   </div>
+
+  {#if showNotificationSubmenu}
+    <div class="menu-separator"></div>
+    <NotificationSettingsMenu
+      type="server"
+      serverId={serverId}
+      currentLevel={getLevel()}
+      currentMutedUntil={getMutedUntil()}
+      currentSuppressEveryone={getSuppressEveryone()}
+      onClose={onclose}
+    />
+  {/if}
 
   <div class="menu-separator"></div>
 
@@ -247,5 +251,10 @@
   :global(.check-icon) {
     margin-left: auto;
     opacity: 0.8;
+  }
+
+  :global(.chevron-icon) {
+    margin-left: auto;
+    opacity: 0.5;
   }
 </style>

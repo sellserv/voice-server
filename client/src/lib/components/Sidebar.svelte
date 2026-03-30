@@ -59,7 +59,6 @@
   }
 
   function handleChannelContextMenu(e: MouseEvent, channelId: string, channelName: string) {
-    if (!$canManageChannels) return;
     e.preventDefault();
     channelContextTarget = { channelId, channelName, x: e.clientX, y: e.clientY };
   }

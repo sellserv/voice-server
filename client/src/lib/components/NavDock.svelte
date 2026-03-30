@@ -1,7 +1,7 @@
 <script lang="ts">
   import { currentUser } from '$lib/stores/auth';
   import { resolveAsset } from '$lib/stores/server';
-  import { servers, activeServerId, isDmView, switchServer, serverNotificationLevels } from '$lib/stores/servers';
+  import { servers, activeServerId, isDmView, switchServer, serverNotificationLevels, serverMutedUntil } from '$lib/stores/servers';
   import { serverUnreadCounts, homeUnreadCounts } from '$lib/stores/channels';
   import CreateServerModal from '$lib/components/CreateServerModal.svelte';
   import InstanceAdminModal from '$lib/components/InstanceAdminModal.svelte';
@@ -75,7 +75,7 @@
           {:else if badge?.unread}
             <span class="server-badge unread"></span>
           {/if}
-          {#if $serverNotificationLevels.get(server.id) === 'nothing'}
+          {#if $serverNotificationLevels.get(server.id) === 'nothing' || ($serverMutedUntil.get(server.id) && $serverMutedUntil.get(server.id) > new Date().toISOString())}
             <span class="muted-badge">
               <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5">
                 <path d="M13.73 21a2 2 0 0 1-3.46 0" />
