@@ -43,9 +43,17 @@ jobs:
             fi
 
             npm run build
+            # Build admin console if it exists
+            if [ -f admin-console/package.json ]; then
+              npm run build --workspace=admin-console 2>/dev/null || true
+            fi
             npm prune --omit=dev
 
             sudo systemctl restart voip-server-staging
+            # Restart admin console if service exists
+            if systemctl is-enabled voip-admin-staging 2>/dev/null; then
+              sudo systemctl restart voip-admin-staging
+            fi
             sleep 5
             for i in 1 2 3 4 5 6; do
               curl -sf http://localhost:3001/api/health && { echo "Staging deploy successful"; exit 0; }

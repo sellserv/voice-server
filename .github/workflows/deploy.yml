@@ -45,6 +45,10 @@ jobs:
             fi
 
             npm run build
+            # Build admin console if it exists
+            if [ -f admin-console/package.json ]; then
+              npm run build --workspace=admin-console 2>/dev/null || true
+            fi
             npm prune --omit=dev
 
             # Sync nginx config if it exists on this server and has changed
@@ -64,6 +68,10 @@ jobs:
 
             # Only restart after successful build
             sudo systemctl restart voip-server
+            # Restart admin console if service exists
+            if systemctl is-enabled voip-admin 2>/dev/null; then
+              sudo systemctl restart voip-admin
+            fi
             sleep 5
             for i in 1 2 3 4 5 6; do
               curl -sf http://localhost:3000/api/health && { echo "Deploy successful"; exit 0; }
