@@ -66,6 +66,11 @@ export const config = {
     priceId: env('STRIPE_PRO_PRICE_ID', ''),
     portalReturnUrl: env('STRIPE_PORTAL_RETURN_URL', ''),
   },
+  oauth2: {
+    clientId: env('OAUTH2_CLIENT_ID', 'admin-console'),
+    clientSecret: env('OAUTH2_CLIENT_SECRET', ''),
+    redirectUri: env('OAUTH2_REDIRECT_URI', ''),
+  },
   mediasoup: {
     announcedIp: env('MEDIASOUP_ANNOUNCED_IP', '127.0.0.1'),
     minPort: envInt('MEDIASOUP_MIN_PORT', 40000),
