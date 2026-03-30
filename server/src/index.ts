@@ -33,6 +33,8 @@ import friendRoutes from './routes/friends.js';
 import billingRoutes from './routes/billing.js';
 import pushRoutes from './routes/push.js';
 import channelNotificationRoutes from './routes/channelNotifications.js';
+import adminAuthRoutes from './routes/adminAuth.js';
+import { adminIpAllowlist } from './routes/adminAuth.js';
 import { cleanupOldAuditEntries } from './audit/log.js';
 import { startPendingCleanup } from './push/index.js';
 import { setupWebSocket } from './ws/index.js';
@@ -88,6 +90,13 @@ await app.register(fastifyWebSocket, {
 });
 await app.register(fastifyMultipart, {
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB max (pro limit); per-user checks enforce free tier limit
+});
+
+// IP allowlist for admin routes
+app.addHook('onRequest', async (request, reply) => {
+  if (request.url.startsWith('/api/admin/')) {
+    await adminIpAllowlist(request, reply);
+  }
 });
 
 // Security headers
@@ -253,6 +262,7 @@ await app.register(friendRoutes);
 await app.register(billingRoutes);
 await app.register(pushRoutes);
 await app.register(channelNotificationRoutes);
+await app.register(adminAuthRoutes);
 
 // WebSocket
 setupWebSocket(app);
