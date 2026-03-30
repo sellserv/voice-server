@@ -828,12 +828,16 @@
           >
             <h2 class="form-title">Security Check</h2>
             <p class="mfa-prompt">
-              Enter your 2FA code to continue.
+              {#if $mfaPending.mfaMethod === 'totp'}
+                Enter the authenticator code.
+              {:else}
+                Enter the code sent to your email.
+              {/if}
             </p>
 
             <div class="field-group">
               <label class="field">
-                <span>2FA Code</span>
+                <span>{$mfaPending.mfaMethod === 'totp' ? 'Authenticator Code' : 'Email Code'}</span>
                 <input
                   type="text"
                   bind:value={mfaCode}
