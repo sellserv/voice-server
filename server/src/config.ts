@@ -43,6 +43,7 @@ if (/^(.)\1+$/.test(jwtSecret)) {
 export const config = {
   port: envInt('PORT', 3000),
   host: env('HOST', '127.0.0.1'),
+  officialInstance: env('OFFICIAL_INSTANCE', 'false') === 'true',
   jwtSecret,
   corsOrigins: env('CORS_ORIGINS', '').split(',').filter(Boolean),
   dbPath: resolve(env('DB_PATH', './data/voip-server.db')),

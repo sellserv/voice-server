@@ -233,6 +233,9 @@ app.get('/api/public/instance/info', { config: { rateLimit: { max: 30, timeWindo
     totalMessages,
     onlineCount,
     registrationOpen,
+    features: {
+      officialInstance: config.officialInstance,
+    },
   };
 });
 
@@ -257,7 +260,9 @@ await app.register(linkPreviewRoutes);
 await app.register(auditRoutes);
 await app.register(serverRoutes);
 await app.register(friendRoutes);
-await app.register(billingRoutes);
+if (config.officialInstance) {
+  await app.register(billingRoutes);
+}
 await app.register(pushRoutes);
 await app.register(channelNotificationRoutes);
 
