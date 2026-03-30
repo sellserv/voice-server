@@ -46,9 +46,65 @@ export async function initPushNotifications(): Promise<void> {
     console.error('Push registration error:', err);
   });
 
-  PushNotifications.addListener('pushNotificationReceived', (notification) => {
-    // App is in foreground — suppress (WebSocket handles it)
-    console.log('Push received in foreground (suppressed):', notification);
+  PushNotifications.addListener('pushNotificationReceived', async (notification) => {
+    const notificationId = notification.data?.notificationId;
+    if (!notificationId) {
+      console.log('Push received in foreground (suppressed):', notification);
+      return;
+    }
+
+    // Data-only push: fetch content from server and show local notification
+    try {
+      const { api } = await import('./api.js');
+      const result = await api.get(`/api/push/notification/${notificationId}`) as {
+        type: string;
+        data: Record<string, string>;
+      };
+
+      const { LocalNotifications } = await import('@capacitor/local-notifications');
+
+      let title = 'SellServ Voice';
+      let body = 'New notification';
+
+      switch (result.type) {
+        case 'dm':
+          title = result.data.senderName || 'Direct Message';
+          body = 'Sent you a message';
+          break;
+        case 'mention':
+          title = result.data.senderName || 'Mention';
+          body = `Mentioned you in #${result.data.channelName || 'channel'}`;
+          break;
+        case 'everyone':
+          title = result.data.senderName || 'Announcement';
+          body = `@everyone in #${result.data.channelName || 'channel'}`;
+          break;
+        case 'channel_message':
+          title = result.data.senderName || 'New Message';
+          body = `Message in #${result.data.channelName || 'channel'}`;
+          break;
+        case 'incoming_call':
+          title = 'Incoming Call';
+          body = `${result.data.callerName || 'Someone'} is calling you`;
+          break;
+        case 'missed_call':
+          title = 'Missed Call';
+          body = `${result.data.callerName || 'Someone'} joined #${result.data.channelName || 'channel'}`;
+          break;
+      }
+
+      await LocalNotifications.schedule({
+        notifications: [{
+          id: Math.floor(Math.random() * 2147483647),
+          title,
+          body,
+          extra: result.data,
+          channelId: 'sellserv_messages',
+        }],
+      });
+    } catch (err) {
+      console.error('Failed to fetch/show notification:', err);
+    }
   });
 
   PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
@@ -58,6 +114,16 @@ export async function initPushNotifications(): Promise<void> {
       // Navigation will be handled by the app's routing
       console.log('Push tapped, channel:', data.channelId);
     }
+  });
+
+  // Handle taps on local notifications (from data-only push)
+  import('@capacitor/local-notifications').then(({ LocalNotifications }) => {
+    LocalNotifications.addListener('localNotificationActionPerformed', (action) => {
+      const data = action.notification.extra;
+      if (data?.channelId) {
+        console.log('Local notification tapped, channel:', data.channelId);
+      }
+    });
   });
 
   await PushNotifications.register();
