@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes } from 'crypto';
 import { getDb } from '../adapters/index.js';
 
 export interface Session {
@@ -15,7 +15,7 @@ export interface Session {
 
 export async function createSession(userId: string, ip: string | null, ua: string | null): Promise<string> {
   const sessionId = randomUUID();
-  const token = randomUUID();
+  const token = randomBytes(32).toString('hex');
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
 
   await getDb().run(`
