@@ -1,15 +1,17 @@
 # Build stage — install deps and build client
 FROM node:22-slim AS build
 
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
 WORKDIR /app
 
 # Copy package files first for better caching
-COPY package.json package-lock.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY shared/package.json shared/
 COPY server/package.json server/
 COPY client/package.json client/
 
-RUN npm ci
+RUN pnpm install --frozen-lockfile
 
 # Copy source
 COPY shared/ shared/
@@ -17,7 +19,7 @@ COPY server/ server/
 COPY client/ client/
 
 # Build the SvelteKit client
-RUN npm run build
+RUN pnpm run build
 
 # Production stage — slim image with only what's needed
 FROM node:22-slim
@@ -25,15 +27,17 @@ FROM node:22-slim
 # mediasoup needs python3 and build tools for native compilation
 RUN apt-get update && apt-get install -y python3 build-essential && rm -rf /var/lib/apt/lists/*
 
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
 WORKDIR /app
 
 # Copy package files
-COPY package.json package-lock.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY shared/package.json shared/
 COPY server/package.json server/
 
-# Install production deps only (skip client/desktop/mobile)
-RUN npm ci --workspace=shared --workspace=server --production
+# Install production deps only
+RUN pnpm install --frozen-lockfile --prod --filter @voip-server/shared --filter @voip-server/server
 
 # Copy shared types
 COPY shared/ shared/

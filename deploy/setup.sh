@@ -63,10 +63,11 @@ useradd -r -m -d "$APP_DIR" -s /bin/false voip-server || true
 # 9. Setup directories
 mkdir -p "$APP_DIR/data" "$APP_DIR/uploads"
 
-# 10. Install dependencies & build
+# 10. Install pnpm and dependencies & build
+npm install -g pnpm
 cd "$APP_DIR"
-npm ci
-npm run build
+pnpm install --frozen-lockfile
+pnpm run build
 
 # 11. Set ownership
 chown -R voip-server:voip-server "$APP_DIR"

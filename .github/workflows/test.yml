@@ -12,14 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
-      - run: npm test
+      - run: pnpm test
         env:
           JWT_SECRET: test-secret-that-is-at-least-32-characters-long-for-ci
           DB_PATH: ':memory:'

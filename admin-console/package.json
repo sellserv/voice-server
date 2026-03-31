@@ -12,7 +12,7 @@
   "dependencies": {
     "@sveltejs/adapter-node": "^5.0.0",
     "@sveltejs/kit": "^2.0.0",
-    "@voip-server/shared": "*",
+    "@voip-server/shared": "workspace:*",
     "svelte": "^5.0.0"
   },
   "devDependencies": {
