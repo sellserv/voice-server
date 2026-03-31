@@ -1,5 +1,4 @@
-import Database from 'better-sqlite3';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 
 export type AuditEventType =
   | 'failed_login'
@@ -19,52 +18,38 @@ export type AuditEventType =
   | 'platform_unban'
   | 'report_submitted'
   | 'report_resolved'
-  | 'server_deleted';
+  | 'server_deleted'
+  | 'username_change';
 
-let insertStmt: Database.Statement | null = null;
-let insertStmtWithServer: Database.Statement | null = null;
-
-function getInsertStmt() {
-  if (!insertStmt) {
-    insertStmt = db.prepare(
-      'INSERT INTO audit_log (event_type, user_id, target_id, ip, details) VALUES (?, ?, ?, ?, ?)',
-    );
-  }
-  return insertStmt;
-}
-
-function getInsertStmtWithServer() {
-  if (!insertStmtWithServer) {
-    insertStmtWithServer = db.prepare(
-      'INSERT INTO audit_log (event_type, user_id, target_id, ip, details, server_id) VALUES (?, ?, ?, ?, ?, ?)',
-    );
-  }
-  return insertStmtWithServer;
-}
-
-export function logAuditEvent(
+export async function logAuditEvent(
   eventType: AuditEventType,
   userId: string | null,
   targetId: string | null,
   ip: string | null,
   details?: Record<string, unknown>,
   serverId?: string,
-) {
+): Promise<void> {
   const detailsJson = details ? JSON.stringify(details) : null;
   if (serverId) {
-    getInsertStmtWithServer().run(eventType, userId, targetId, ip, detailsJson, serverId);
+    await getDb().run(
+      'INSERT INTO audit_log (event_type, user_id, target_id, ip, details, server_id) VALUES (?, ?, ?, ?, ?, ?)',
+      [eventType, userId, targetId, ip, detailsJson, serverId],
+    );
   } else {
-    getInsertStmt().run(eventType, userId, targetId, ip, detailsJson);
+    await getDb().run(
+      'INSERT INTO audit_log (event_type, user_id, target_id, ip, details) VALUES (?, ?, ?, ?, ?)',
+      [eventType, userId, targetId, ip, detailsJson],
+    );
   }
 }
 
-export function getAuditLog(opts: {
+export async function getAuditLog(opts: {
   page?: number;
   limit?: number;
   eventType?: string;
   userId?: string;
   serverId?: string;
-}) {
+}): Promise<{ entries: any[]; total: number; page: number; limit: number }> {
   const { page = 1, limit = 50, eventType, userId, serverId } = opts;
   const offset = (page - 1) * limit;
   const conditions: string[] = [];
@@ -85,27 +70,27 @@ export function getAuditLog(opts: {
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const rows = db
-    .prepare(
-      `SELECT a.*, u.username as actor_name,
-            COALESCE(t.username, r.name, ch.name, cg.name) as target_name
-     FROM audit_log a
-     LEFT JOIN users u ON u.id = a.user_id
-     LEFT JOIN users t ON t.id = a.target_id
-     LEFT JOIN roles r ON r.id = a.target_id
-     LEFT JOIN channels ch ON ch.id = a.target_id
-     LEFT JOIN channel_groups cg ON cg.id = a.target_id
-     ${where} ORDER BY a.created_at DESC LIMIT ? OFFSET ?`,
-    )
-    .all(...params, limit, offset);
+  const rows = await getDb().query(
+    `SELECT a.*, u.username as actor_name,
+          COALESCE(t.username, r.name, ch.name, cg.name) as target_name
+   FROM audit_log a
+   LEFT JOIN users u ON u.id = a.user_id
+   LEFT JOIN users t ON t.id = a.target_id
+   LEFT JOIN roles r ON r.id = a.target_id
+   LEFT JOIN channels ch ON ch.id = a.target_id
+   LEFT JOIN channel_groups cg ON cg.id = a.target_id
+   ${where} ORDER BY a.created_at DESC LIMIT ? OFFSET ?`,
+    [...params, limit, offset],
+  );
 
-  const countRow = db
-    .prepare(`SELECT COUNT(*) as count FROM audit_log ${where}`)
-    .get(...params) as { count: number };
+  const countRow = await getDb().queryOne<{ count: number }>(
+    `SELECT COUNT(*) as count FROM audit_log a ${where}`,
+    params,
+  );
 
-  return { entries: rows, total: countRow.count, page, limit };
+  return { entries: rows, total: countRow?.count ?? 0, page, limit };
 }
 
-export function cleanupOldAuditEntries() {
-  db.prepare("DELETE FROM audit_log WHERE created_at < datetime('now', '-90 days')").run();
+export async function cleanupOldAuditEntries(): Promise<void> {
+  await getDb().run("DELETE FROM audit_log WHERE created_at < datetime('now', '-90 days')");
 }

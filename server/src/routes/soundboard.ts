@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'crypto';
 import { openSync, readSync, closeSync } from 'fs';
 import { resolve } from 'path';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { config } from '../config.js';
 import { requireAuth, requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
@@ -19,19 +19,18 @@ export default async function soundboardRoutes(app: FastifyInstance) {
         if (reply.sent) return;
         await requireServerMember(request, reply, () => {});
         if (reply.sent) return;
-        if (!hasPermission(request.user.userId, 'use_apps')) {
+        if (!await hasPermission(request.user.userId, 'use_apps')) {
           return reply.code(403).send({ error: 'Missing permission: use_apps' });
         }
-        if (!isAppEnabled('soundboard')) {
+        if (!await isAppEnabled('soundboard')) {
           return reply.code(403).send({ error: 'This app is not enabled on this server' });
         }
       },
     },
     async (request) => {
       const serverId = getServerId(request);
-      return db
-        .prepare(
-          `SELECT s.*, f.stored_name, f.original_name, f.mime_type,
+      return await getDb().query(
+        `SELECT s.*, f.stored_name, f.original_name, f.mime_type,
               ef.stored_name AS emoji_stored_name
        FROM soundboard_sounds s
        JOIN files f ON f.id = s.file_id
@@ -39,8 +38,8 @@ export default async function soundboardRoutes(app: FastifyInstance) {
        LEFT JOIN files ef ON ef.id = ce.file_id
        WHERE s.server_id = ?
        ORDER BY s.created_at DESC`,
-        )
-        .all(serverId);
+        [serverId],
+      );
     },
   );
 
@@ -56,9 +55,10 @@ export default async function soundboardRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Sound name must be 1-64 characters' });
       }
 
-      const file = db
-        .prepare('SELECT id, mime_type, stored_name FROM files WHERE id = ?')
-        .get(file_id) as any;
+      const file = await getDb().queryOne<{ id: string; mime_type: string; stored_name: string }>(
+        'SELECT id, mime_type, stored_name FROM files WHERE id = ?',
+        [file_id],
+      );
       if (!file) {
         return reply.code(400).send({ error: 'File not found' });
       }
@@ -68,8 +68,8 @@ export default async function soundboardRoutes(app: FastifyInstance) {
 
       // Validate emoji_id if provided
       if (emoji_id) {
-        const emoji = db.prepare('SELECT id FROM custom_emojis WHERE id = ?').get(emoji_id);
-        if (!emoji) {
+        const emojiRow = await getDb().queryOne('SELECT id FROM custom_emojis WHERE id = ?', [emoji_id]);
+        if (!emojiRow) {
           return reply.code(400).send({ error: 'Custom emoji not found' });
         }
       }
@@ -103,21 +103,21 @@ export default async function soundboardRoutes(app: FastifyInstance) {
       }
 
       const id = randomUUID();
-      db.prepare(
+      await getDb().run(
         'INSERT INTO soundboard_sounds (id, name, file_id, uploaded_by, emoji_id, emoji, server_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      ).run(id, name, file_id, request.user.userId, emoji_id || null, emoji || null, serverId);
+        [id, name, file_id, request.user.userId, emoji_id || null, emoji || null, serverId],
+      );
 
-      const sound = db
-        .prepare(
-          `SELECT s.*, f.stored_name, f.original_name, f.mime_type,
+      const sound = await getDb().queryOne(
+        `SELECT s.*, f.stored_name, f.original_name, f.mime_type,
                 ef.stored_name AS emoji_stored_name
          FROM soundboard_sounds s
          JOIN files f ON f.id = s.file_id
          LEFT JOIN custom_emojis ce ON ce.id = s.emoji_id
          LEFT JOIN files ef ON ef.id = ce.file_id
          WHERE s.id = ?`,
-        )
-        .get(id);
+        [id],
+      );
 
       broadcastToServer(serverId, { type: 'soundboard:created', sound });
       return reply.code(201).send(sound);
@@ -131,7 +131,7 @@ export default async function soundboardRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const serverId = getServerId(request);
       const soundId = request.params.id;
-      const result = db.prepare('DELETE FROM soundboard_sounds WHERE id = ? AND server_id = ?').run(soundId, serverId);
+      const result = await getDb().run('DELETE FROM soundboard_sounds WHERE id = ? AND server_id = ?', [soundId, serverId]);
       if (result.changes === 0) {
         return reply.code(404).send({ error: 'Sound not found' });
       }

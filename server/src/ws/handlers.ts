@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import {
   broadcast,
   sendTo,
@@ -69,13 +69,13 @@ function getCurrentPlaybackTime(session: WatchSessionData): number {
   return session.playbackTime + (Date.now() - session.stateUpdatedAt) / 1000;
 }
 
-function getChannelServerId(channelId: string): string | null {
-  const row = db.prepare('SELECT server_id FROM channels WHERE id = ?').get(channelId) as { server_id: string | null } | undefined;
+async function getChannelServerId(channelId: string): Promise<string | null> {
+  const row = await getDb().queryOne<{ server_id: string | null }>('SELECT server_id FROM channels WHERE id = ?', [channelId]);
   return row?.server_id ?? null;
 }
 
-function isServerMember(userId: string, serverId: string): boolean {
-  return !!db.prepare('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?').get(serverId, userId);
+async function isServerMember(userId: string, serverId: string): Promise<boolean> {
+  return !!await getDb().queryOne<any>('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, userId]);
 }
 
 // Active soundboard playbacks: userId → Set of playbackIds
@@ -97,14 +97,14 @@ interface CallSession {
 }
 const activeCalls = new Map<string, CallSession>();
 
-function insertCallMessage(
+async function insertCallMessage(
   callerId: string,
   recipientId: string,
   callType: 'voice' | 'video',
   callStatus: 'missed' | 'rejected' | 'completed',
   duration?: number,
 ) {
-  const channelId = ensureDmChannel(callerId, recipientId);
+  const channelId = await ensureDmChannel(callerId, recipientId);
   const id = randomUUID();
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
   const metadata = JSON.stringify({
@@ -113,13 +113,15 @@ function insertCallMessage(
     ...(duration != null ? { duration } : {}),
   });
 
-  db.prepare(
+  await getDb().run(
     "INSERT INTO messages (id, channel_id, user_id, content, type, metadata, created_at) VALUES (?, ?, ?, '', 'call', ?, ?)",
-  ).run(id, channelId, callerId, metadata, now);
+    [id, channelId, callerId, metadata, now],
+  );
 
-  const callerRow = db
-    .prepare('SELECT u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ?')
-    .get(callerId) as any;
+  const callerRow = await getDb().queryOne<any>(
+    'SELECT u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ?',
+    [callerId],
+  );
 
   const message: Message = {
     id,
@@ -139,16 +141,17 @@ function insertCallMessage(
     metadata,
   };
 
-  const participantIds = getDmParticipantIds(channelId);
+  const participantIds = await getDmParticipantIds(channelId);
   sendToMany(participantIds, { type: 'chat:message', message });
 
   // Notify dm:created if channel is new (no prior messages)
-  const msgCount = db
-    .prepare('SELECT COUNT(*) as cnt FROM messages WHERE channel_id = ?')
-    .get(channelId) as { cnt: number };
-  if (msgCount.cnt <= 1) {
+  const msgCount = await getDb().queryOne<{ cnt: number }>(
+    'SELECT COUNT(*) as cnt FROM messages WHERE channel_id = ?',
+    [channelId],
+  );
+  if (msgCount && msgCount.cnt <= 1) {
     for (const uid of participantIds) {
-      notifyDmCreated(uid, channelId);
+      await notifyDmCreated(uid, channelId);
     }
   }
 }
@@ -162,34 +165,34 @@ function enqueueForUser(userId: string, fn: () => Promise<void>) {
   userQueues.set(userId, next);
 }
 
-export function handleMessage(user: JwtPayload, event: ClientEvent) {
+export async function handleMessage(user: JwtPayload, event: ClientEvent) {
   switch (event.type) {
     case 'chat:send':
-      handleChatSend(user, event.channelId, event.content, event.fileId, event.replyToId);
+      await handleChatSend(user, event.channelId, event.content, event.fileId, event.replyToId);
       break;
     case 'chat:edit':
-      handleChatEdit(user, event.messageId, event.content);
+      await handleChatEdit(user, event.messageId, event.content);
       break;
     case 'chat:delete':
-      handleChatDelete(user, event.messageId);
+      await handleChatDelete(user, event.messageId);
       break;
     case 'typing:start':
-      handleTyping(user, event.channelId, true);
+      await handleTyping(user, event.channelId, true);
       break;
     case 'typing:stop':
-      handleTyping(user, event.channelId, false);
+      await handleTyping(user, event.channelId, false);
       break;
     case 'message:react':
-      handleReact(user, event.messageId, event.emoji);
+      await handleReact(user, event.messageId, event.emoji);
       break;
     case 'message:unreact':
-      handleUnreact(user, event.messageId, event.emoji);
+      await handleUnreact(user, event.messageId, event.emoji);
       break;
     case 'dm:open':
-      handleDmOpen(user, event.targetUserId);
+      await handleDmOpen(user, event.targetUserId);
       break;
     case 'presence:setStatus':
-      setClientStatus(user.userId, event.status);
+      await setClientStatus(user.userId, event.status);
       break;
     case 'presence:activity':
       handlePresenceActivity(user, event.game, event.visibility, event.serverIds);
@@ -200,19 +203,19 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
     case 'voice:join':
       clearAfkTimer(user.userId);
       if (!event.channelId.startsWith('call:')) {
-        const voiceServerId = getChannelServerId(event.channelId);
-        if (voiceServerId && !isServerMember(user.userId, voiceServerId)) {
+        const voiceServerId = await getChannelServerId(event.channelId);
+        if (voiceServerId && !await isServerMember(user.userId, voiceServerId)) {
           sendTo(user.userId, { type: 'error', message: 'You are not a member of this server' });
           break;
         }
-        if (!hasChannelPermission(user.userId, event.channelId, 'connect_voice')) {
+        if (!await hasChannelPermission(user.userId, event.channelId, 'connect_voice')) {
           sendTo(user.userId, {
             type: 'error',
             message: 'You do not have permission to join voice channels',
           });
           break;
         }
-        if (!hasChannelPermission(user.userId, event.channelId, 'view_channel')) {
+        if (!await hasChannelPermission(user.userId, event.channelId, 'view_channel')) {
           sendTo(user.userId, { type: 'error', message: 'You do not have access to this channel' });
           break;
         }
@@ -228,7 +231,7 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
               type: 'watch:started',
               channelId: joinedChannel,
               hostUserId: session.hostUserId,
-              hostUsername: getHostUsername(session.hostUserId),
+              hostUsername: await getHostUsername(session.hostUserId),
               videoId: session.currentVideoId,
             });
             sendTo(user.userId, {
@@ -240,7 +243,7 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
             sendTo(user.userId, {
               type: 'watch:viewersUpdated',
               channelId: joinedChannel,
-              viewers: getViewerDetails(session.viewers),
+              viewers: await getViewerDetails(session.viewers),
             });
             // Send current playback position so late joiner can seek
             sendTo(user.userId, {
@@ -253,14 +256,14 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
           // Missed call push notifications for recently departed users
           const recentlyLeft = voiceChannelDepartures.get(joinedChannel) || [];
           const fiveMinAgo = Date.now() - 5 * 60 * 1000;
-          const ch = db.prepare('SELECT name, server_id FROM channels WHERE id = ?').get(joinedChannel) as { name: string; server_id: string | null } | undefined;
+          const ch = await getDb().queryOne<{ name: string; server_id: string | null }>('SELECT name, server_id FROM channels WHERE id = ?', [joinedChannel]);
           if (ch) {
             for (const departure of recentlyLeft) {
               if (departure.leftAt > fiveMinAgo && departure.userId !== user.userId && !isUserOnline(departure.userId)) {
                 sendDataPush(departure.userId, 'missed_call', {
                   channelId: joinedChannel,
                   serverId: ch.server_id || '',
-                  callerName: getDisplayName(user.userId) || user.username,
+                  callerName: await getDisplayName(user.userId) || user.username,
                   channelName: ch.name,
                 }).catch(() => {});
               }
@@ -271,7 +274,7 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
       break;
     case 'screen:start': {
       const screenChannelId = userVoiceChannels.get(user.userId);
-      if (!screenChannelId || !hasChannelPermission(user.userId, screenChannelId, 'share_screen')) {
+      if (!screenChannelId || !await hasChannelPermission(user.userId, screenChannelId, 'share_screen')) {
         sendTo(user.userId, {
           type: 'error',
           message: 'You do not have permission to share your screen',
@@ -290,7 +293,7 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
       break;
     }
     case 'voice:disconnect':
-      if (!hasPermission(user.userId, 'administrator')) {
+      if (!await hasPermission(user.userId, 'administrator')) {
         sendTo(user.userId, {
           type: 'error',
           message: 'You do not have permission to disconnect users',
@@ -314,7 +317,7 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
       enqueueForUser(user.userId, () => handleVoiceEvent(user, event));
       break;
     case 'watch:start':
-      handleWatchStart(user, event.videoUrl);
+      await handleWatchStart(user, event.videoUrl);
       break;
     case 'watch:sync':
       handleWatchSync(user, event.state, event.time, event.pingMs);
@@ -323,7 +326,7 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
       handleWatchStop(user);
       break;
     case 'watch:queue':
-      handleWatchQueue(user, event.videoUrl);
+      await handleWatchQueue(user, event.videoUrl);
       break;
     case 'watch:skip':
       handleWatchSkip(user);
@@ -332,41 +335,41 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
       handleWatchNext(user);
       break;
     case 'watch:join':
-      handleWatchJoin(user);
+      await handleWatchJoin(user);
       break;
     case 'watch:leave':
       handleWatchLeave(user);
       break;
     case 'watch:transferHost':
-      handleWatchTransferHost(user, event.targetUserId);
+      await handleWatchTransferHost(user, event.targetUserId);
       break;
     case 'call:initiate':
-      handleCallInitiate(user, event.targetUserId, !!event.video);
+      await handleCallInitiate(user, event.targetUserId, !!event.video);
       break;
     case 'call:accept':
       handleCallAccept(user, event.callId);
       break;
     case 'call:reject':
-      handleCallReject(user, event.callId);
+      await handleCallReject(user, event.callId);
       break;
     case 'call:end':
-      handleCallEnd(user, event.callId);
+      await handleCallEnd(user, event.callId);
       break;
     case 'message:pin':
-      handleMessagePin(user, event.messageId);
+      await handleMessagePin(user, event.messageId);
       break;
     case 'message:unpin':
-      handleMessageUnpin(user, event.messageId);
+      await handleMessageUnpin(user, event.messageId);
       break;
     case 'effect:send':
-      handleEffectSend(user, event.channelId, event.effect);
+      await handleEffectSend(user, event.channelId, event.effect);
       break;
     case 'poll:vote':
-      handlePollVote(user, event.pollId, event.optionIds);
+      await handlePollVote(user, event.pollId, event.optionIds);
       break;
     default:
       if (event.type === 'soundboard:play') {
-        handleSoundboardPlay(user, event.soundId);
+        await handleSoundboardPlay(user, event.soundId);
       } else if (event.type === 'screen:stop') {
         enqueueForUser(user.userId, () => handleVoiceEvent(user, event));
       } else {
@@ -375,18 +378,18 @@ export function handleMessage(user: JwtPayload, event: ClientEvent) {
   }
 }
 
-function handleChatSend(
+async function handleChatSend(
   user: JwtPayload,
   channelId: string,
   content: string,
   fileId?: string,
   replyToId?: string,
 ) {
-  if (!hasChannelPermission(user.userId, channelId, 'send_messages')) {
+  if (!await hasChannelPermission(user.userId, channelId, 'send_messages')) {
     sendTo(user.userId, { type: 'error', message: 'You do not have permission to send messages' });
     return;
   }
-  if (fileId && !hasChannelPermission(user.userId, channelId, 'upload_files')) {
+  if (fileId && !await hasChannelPermission(user.userId, channelId, 'upload_files')) {
     sendTo(user.userId, { type: 'error', message: 'You do not have permission to upload files' });
     return;
   }
@@ -396,7 +399,7 @@ function handleChatSend(
   }
 
   // Validate message content length (#13)
-  const maxLen = isPremium(user.userId) ? PRO_MAX_MESSAGE_LENGTH : FREE_MAX_MESSAGE_LENGTH;
+  const maxLen = await isPremium(user.userId) ? PRO_MAX_MESSAGE_LENGTH : FREE_MAX_MESSAGE_LENGTH;
   if (content && content.length > maxLen) {
     sendTo(user.userId, {
       type: 'error',
@@ -405,36 +408,38 @@ function handleChatSend(
     return;
   }
 
-  const channel = db.prepare('SELECT id, type, server_id, name FROM channels WHERE id = ?').get(channelId) as
-    | { id: string; type: string; server_id: string | null; name: string }
-    | undefined;
+  const channel = await getDb().queryOne<{ id: string; type: string; server_id: string | null; name: string }>(
+    'SELECT id, type, server_id, name FROM channels WHERE id = ?',
+    [channelId],
+  );
   if (!channel || channel.type === 'voice') {
     sendTo(user.userId, { type: 'error', message: 'Text channel not found' });
     return;
   }
 
   // Verify server membership for server channels
-  if (channel.server_id && !isServerMember(user.userId, channel.server_id)) {
+  if (channel.server_id && !await isServerMember(user.userId, channel.server_id)) {
     sendTo(user.userId, { type: 'error', message: 'You are not a member of this server' });
     return;
   }
 
   // Channel access control check
-  if (channel.type !== 'dm' && !hasChannelPermission(user.userId, channelId, 'view_channel')) {
+  if (channel.type !== 'dm' && !await hasChannelPermission(user.userId, channelId, 'view_channel')) {
     sendTo(user.userId, { type: 'error', message: 'You do not have access to this channel' });
     return;
   }
 
   // For DM channels, verify sender is a participant and enforce new-user cooldown
   if (channel.type === 'dm') {
-    const participant = db
-      .prepare('SELECT 1 FROM dm_participants WHERE channel_id = ? AND user_id = ?')
-      .get(channelId, user.userId);
+    const participant = await getDb().queryOne<any>(
+      'SELECT 1 FROM dm_participants WHERE channel_id = ? AND user_id = ?',
+      [channelId, user.userId],
+    );
     if (!participant) {
       sendTo(user.userId, { type: 'error', message: 'Not a participant of this DM' });
       return;
     }
-    const cooldown = checkNewUserCooldown(user.userId);
+    const cooldown = await checkNewUserCooldown(user.userId);
     if (cooldown.restricted) {
       sendTo(user.userId, {
         type: 'error',
@@ -446,9 +451,10 @@ function handleChatSend(
 
   // Validate file ownership (#9)
   if (fileId) {
-    const file = db.prepare('SELECT user_id FROM files WHERE id = ?').get(fileId) as
-      | { user_id: string }
-      | undefined;
+    const file = await getDb().queryOne<{ user_id: string }>(
+      'SELECT user_id FROM files WHERE id = ?',
+      [fileId],
+    );
     if (!file || file.user_id !== user.userId) {
       sendTo(user.userId, { type: 'error', message: 'Invalid file attachment' });
       return;
@@ -461,33 +467,35 @@ function handleChatSend(
   // Validate reply reference — must be in the same channel
   let validReplyToId: string | null = null;
   if (replyToId) {
-    const replyMsg = db
-      .prepare('SELECT id FROM messages WHERE id = ? AND channel_id = ?')
-      .get(replyToId, channelId);
+    const replyMsg = await getDb().queryOne<any>(
+      'SELECT id FROM messages WHERE id = ? AND channel_id = ?',
+      [replyToId, channelId],
+    );
     if (replyMsg) validReplyToId = replyToId;
   }
 
-  db.prepare(
+  await getDb().run(
     'INSERT INTO messages (id, channel_id, user_id, content, file_id, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ).run(id, channelId, user.userId, content?.trim() || '', fileId || null, validReplyToId, now);
+    [id, channelId, user.userId, content?.trim() || '', fileId || null, validReplyToId, now],
+  );
 
   // Resolve file MIME type for attachments
   let fileMimeType: string | null = null;
   if (fileId) {
-    const fileRow = db.prepare('SELECT mime_type FROM files WHERE id = ?').get(fileId) as
-      | { mime_type: string }
-      | undefined;
+    const fileRow = await getDb().queryOne<{ mime_type: string }>(
+      'SELECT mime_type FROM files WHERE id = ?',
+      [fileId],
+    );
     fileMimeType = fileRow?.mime_type ?? null;
   }
 
   // Resolve reply preview data
   let replyData: Record<string, string | undefined> = {};
   if (validReplyToId) {
-    const replyRow = db
-      .prepare(
-        'SELECT rm.content, ru.username, ru.display_name FROM messages rm JOIN users ru ON ru.id = rm.user_id WHERE rm.id = ?',
-      )
-      .get(validReplyToId) as any;
+    const replyRow = await getDb().queryOne<any>(
+      'SELECT rm.content, ru.username, ru.display_name FROM messages rm JOIN users ru ON ru.id = rm.user_id WHERE rm.id = ?',
+      [validReplyToId],
+    );
     if (replyRow) {
       replyData = {
         reply_to_username: replyRow.username,
@@ -497,11 +505,10 @@ function handleChatSend(
     }
   }
 
-  const userRow = db
-    .prepare(
-      'SELECT u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ?',
-    )
-    .get(user.userId) as any;
+  const userRow = await getDb().queryOne<any>(
+    'SELECT u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ?',
+    [user.userId],
+  );
 
   const message: Message = {
     id,
@@ -525,28 +532,28 @@ function handleChatSend(
 
   // Bot processing (#14 Automod, etc)
   if (channel.server_id) {
-    const shouldDelete = processMessageForBots(channel.server_id, message);
+    const shouldDelete = await processMessageForBots(channel.server_id, message);
     if (shouldDelete) {
-      db.prepare('DELETE FROM messages WHERE id = ?').run(id);
+      await getDb().run('DELETE FROM messages WHERE id = ?', [id]);
       return;
     }
   }
 
   // Scope delivery: DM channels send only to participants, restricted channels to allowed users
   if (channel.type === 'dm') {
-    const participantIds = getDmParticipantIds(channelId);
+    const participantIds = await getDmParticipantIds(channelId);
     // On first message, notify the other participant so the DM appears in their list
-    const msgCount = db
-      .prepare('SELECT COUNT(*) as count FROM messages WHERE channel_id = ?')
-      .get(channelId) as { count: number };
-    if (msgCount.count <= 1) {
-      const dmChannel = db.prepare('SELECT * FROM channels WHERE id = ?').get(channelId) as any;
+    const msgCount = await getDb().queryOne<{ count: number }>(
+      'SELECT COUNT(*) as count FROM messages WHERE channel_id = ?',
+      [channelId],
+    );
+    if (msgCount && msgCount.count <= 1) {
+      const dmChannel = await getDb().queryOne<any>('SELECT * FROM channels WHERE id = ?', [channelId]);
       dmChannel.dm_participant_ids = participantIds;
-      dmChannel.dm_participants = db
-        .prepare(
-          'SELECT u.id, u.username, u.display_name, u.avatar_url FROM dm_participants dp JOIN users u ON u.id = dp.user_id WHERE dp.channel_id = ?',
-        )
-        .all(channelId);
+      dmChannel.dm_participants = await getDb().query(
+        'SELECT u.id, u.username, u.display_name, u.avatar_url FROM dm_participants dp JOIN users u ON u.id = dp.user_id WHERE dp.channel_id = ?',
+        [channelId],
+      );
       for (const pid of participantIds) {
         if (pid !== user.userId) {
           sendTo(pid, { type: 'dm:created', channel: dmChannel });
@@ -557,7 +564,7 @@ function handleChatSend(
 
     // Push notifications for offline DM participants
     for (const pid of participantIds) {
-      if (pid !== user.userId && !isUserOnline(pid) && shouldNotifyUser(pid, channelId, null, 'dm')) {
+      if (pid !== user.userId && !isUserOnline(pid) && await shouldNotifyUser(pid, channelId, null, 'dm')) {
         sendDataPush(pid, 'dm', {
           channelId,
           senderId: user.userId,
@@ -566,7 +573,7 @@ function handleChatSend(
       }
     }
   } else {
-    broadcastToChannel(channelId, { type: 'chat:message', message, ...(channel.server_id ? { serverId: channel.server_id } : {}) });
+    await broadcastToChannel(channelId, { type: 'chat:message', message, ...(channel.server_id ? { serverId: channel.server_id } : {}) });
 
     // Push notifications for @mentions to offline users
     const mentionRegex = /<@([^>]+)>/g;
@@ -574,7 +581,7 @@ function handleChatSend(
     const mentionedUserIds = new Set<string>();
     while ((mentionMatch = mentionRegex.exec(content || '')) !== null) {
       const mentionedUserId = mentionMatch[1];
-      if (mentionedUserId !== user.userId && !mentionedUserIds.has(mentionedUserId) && !isUserOnline(mentionedUserId) && shouldNotifyUser(mentionedUserId, channelId, channel.server_id, 'mention')) {
+      if (mentionedUserId !== user.userId && !mentionedUserIds.has(mentionedUserId) && !isUserOnline(mentionedUserId) && await shouldNotifyUser(mentionedUserId, channelId, channel.server_id, 'mention')) {
         mentionedUserIds.add(mentionedUserId);
         sendDataPush(mentionedUserId, 'mention', {
           channelId,
@@ -587,9 +594,9 @@ function handleChatSend(
 
     // Push notifications for @everyone/@here
     if (content && (content.includes('@everyone') || content.includes('@here'))) {
-      const serverMembers = db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(channel.server_id) as { user_id: string }[];
+      const serverMembers = await getDb().query<{ user_id: string }>('SELECT user_id FROM server_members WHERE server_id = ?', [channel.server_id]);
       for (const { user_id: memberId } of serverMembers) {
-        if (memberId !== user.userId && !mentionedUserIds.has(memberId) && !isUserOnline(memberId) && shouldNotifyUser(memberId, channelId, channel.server_id, 'everyone')) {
+        if (memberId !== user.userId && !mentionedUserIds.has(memberId) && !isUserOnline(memberId) && await shouldNotifyUser(memberId, channelId, channel.server_id, 'everyone')) {
           sendDataPush(memberId, 'everyone', {
             channelId,
             serverId: channel.server_id || '',
@@ -602,9 +609,9 @@ function handleChatSend(
 
     // Push notifications for guild channel messages (users with 'all' notification level)
     if (channel.server_id) {
-      const serverMembers = db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(channel.server_id) as { user_id: string }[];
+      const serverMembers = await getDb().query<{ user_id: string }>('SELECT user_id FROM server_members WHERE server_id = ?', [channel.server_id]);
       for (const { user_id: memberId } of serverMembers) {
-        if (memberId !== user.userId && !mentionedUserIds.has(memberId) && !isUserOnline(memberId) && shouldNotifyUser(memberId, channelId, channel.server_id, 'channel_message')) {
+        if (memberId !== user.userId && !mentionedUserIds.has(memberId) && !isUserOnline(memberId) && await shouldNotifyUser(memberId, channelId, channel.server_id, 'channel_message')) {
           sendDataPush(memberId, 'channel_message', {
             channelId,
             serverId: channel.server_id || '',
@@ -617,11 +624,11 @@ function handleChatSend(
   }
 
   // Clear typing for this user in this channel
-  handleTyping(user, channelId, false);
+  await handleTyping(user, channelId, false);
 }
 
-function handleChatEdit(user: JwtPayload, messageId: string, content: string) {
-  const editMaxLen = isPremium(user.userId) ? PRO_MAX_MESSAGE_LENGTH : FREE_MAX_MESSAGE_LENGTH;
+async function handleChatEdit(user: JwtPayload, messageId: string, content: string) {
+  const editMaxLen = await isPremium(user.userId) ? PRO_MAX_MESSAGE_LENGTH : FREE_MAX_MESSAGE_LENGTH;
   if (!content || content.length > editMaxLen) {
     sendTo(user.userId, {
       type: 'error',
@@ -630,36 +637,35 @@ function handleChatEdit(user: JwtPayload, messageId: string, content: string) {
     return;
   }
 
-  const msg = db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId) as any;
+  const msg = await getDb().queryOne<any>('SELECT * FROM messages WHERE id = ?', [messageId]);
   if (!msg) return;
 
   // Verify server membership
-  const editServerId = getChannelServerId(msg.channel_id);
-  if (editServerId && !isServerMember(user.userId, editServerId)) {
+  const editServerId = await getChannelServerId(msg.channel_id);
+  if (editServerId && !await isServerMember(user.userId, editServerId)) {
     sendTo(user.userId, { type: 'error', message: 'You are not a member of this server' });
     return;
   }
 
   if (
     msg.user_id !== user.userId &&
-    !hasChannelPermission(user.userId, msg.channel_id, 'manage_messages')
+    !await hasChannelPermission(user.userId, msg.channel_id, 'manage_messages')
   ) {
     sendTo(user.userId, { type: 'error', message: "Cannot edit others' messages" });
     return;
   }
 
   const now = new Date().toISOString();
-  db.prepare('UPDATE messages SET content = ?, edited_at = ? WHERE id = ?').run(
+  await getDb().run('UPDATE messages SET content = ?, edited_at = ? WHERE id = ?', [
     content.trim(),
     now,
     messageId,
-  );
+  ]);
 
-  const userRow = db
-    .prepare(
-      'SELECT u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ?',
-    )
-    .get(msg.user_id) as any;
+  const userRow = await getDb().queryOne<any>(
+    'SELECT u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ?',
+    [msg.user_id],
+  );
 
   const updated: Message = {
     ...msg,
@@ -673,23 +679,21 @@ function handleChatEdit(user: JwtPayload, messageId: string, content: string) {
     name_color: userRow.name_color,
   };
 
-  const ch = db.prepare('SELECT type FROM channels WHERE id = ?').get(msg.channel_id) as
-    | { type: string }
-    | undefined;
+  const ch = await getDb().queryOne<{ type: string }>('SELECT type FROM channels WHERE id = ?', [msg.channel_id]);
   if (ch?.type === 'dm') {
-    sendToMany(getDmParticipantIds(msg.channel_id), { type: 'chat:edited', message: updated });
+    sendToMany(await getDmParticipantIds(msg.channel_id), { type: 'chat:edited', message: updated });
   } else {
-    broadcastToChannel(msg.channel_id, { type: 'chat:edited', message: updated, ...(editServerId ? { serverId: editServerId } : {}) });
+    await broadcastToChannel(msg.channel_id, { type: 'chat:edited', message: updated, ...(editServerId ? { serverId: editServerId } : {}) });
   }
 }
 
-function handleChatDelete(user: JwtPayload, messageId: string) {
-  const msg = db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId) as any;
+async function handleChatDelete(user: JwtPayload, messageId: string) {
+  const msg = await getDb().queryOne<any>('SELECT * FROM messages WHERE id = ?', [messageId]);
   if (!msg) return;
 
   // Verify server membership
-  const deleteServerId = getChannelServerId(msg.channel_id);
-  if (deleteServerId && !isServerMember(user.userId, deleteServerId)) {
+  const deleteServerId = await getChannelServerId(msg.channel_id);
+  if (deleteServerId && !await isServerMember(user.userId, deleteServerId)) {
     sendTo(user.userId, { type: 'error', message: 'You are not a member of this server' });
     return;
   }
@@ -697,25 +701,23 @@ function handleChatDelete(user: JwtPayload, messageId: string) {
   // Users with manage_messages or administrators can delete any message, users can delete their own
   if (
     msg.user_id !== user.userId &&
-    !hasChannelPermission(user.userId, msg.channel_id, 'manage_messages')
+    !await hasChannelPermission(user.userId, msg.channel_id, 'manage_messages')
   ) {
     sendTo(user.userId, { type: 'error', message: "Cannot delete others' messages" });
     return;
   }
 
-  db.prepare('DELETE FROM messages WHERE id = ?').run(messageId);
+  await getDb().run('DELETE FROM messages WHERE id = ?', [messageId]);
 
-  const ch = db.prepare('SELECT type FROM channels WHERE id = ?').get(msg.channel_id) as
-    | { type: string }
-    | undefined;
+  const ch = await getDb().queryOne<{ type: string }>('SELECT type FROM channels WHERE id = ?', [msg.channel_id]);
   if (ch?.type === 'dm') {
-    sendToMany(getDmParticipantIds(msg.channel_id), {
+    sendToMany(await getDmParticipantIds(msg.channel_id), {
       type: 'chat:deleted',
       messageId,
       channelId: msg.channel_id,
     });
   } else {
-    broadcastToChannel(msg.channel_id, {
+    await broadcastToChannel(msg.channel_id, {
       type: 'chat:deleted',
       messageId,
       channelId: msg.channel_id,
@@ -724,9 +726,9 @@ function handleChatDelete(user: JwtPayload, messageId: string) {
   }
 }
 
-function handleTyping(user: JwtPayload, channelId: string, isTyping: boolean) {
+async function handleTyping(user: JwtPayload, channelId: string, isTyping: boolean) {
   // Verify channel access
-  if (!hasChannelPermission(user.userId, channelId, 'view_channel')) return;
+  if (!await hasChannelPermission(user.userId, channelId, 'view_channel')) return;
 
   if (isTyping) {
     if (!typingUsers.has(channelId)) typingUsers.set(channelId, new Set());
@@ -735,17 +737,15 @@ function handleTyping(user: JwtPayload, channelId: string, isTyping: boolean) {
     typingUsers.get(channelId)?.delete(user.userId);
   }
 
-  const ch = db.prepare('SELECT type FROM channels WHERE id = ?').get(channelId) as
-    | { type: string }
-    | undefined;
+  const ch = await getDb().queryOne<{ type: string }>('SELECT type FROM channels WHERE id = ?', [channelId]);
   if (ch?.type === 'dm') {
     sendToMany(
-      getDmParticipantIds(channelId),
+      await getDmParticipantIds(channelId),
       { type: 'typing:update', channelId, userId: user.userId, username: user.username, isTyping },
       user.userId,
     );
   } else {
-    broadcastToChannel(
+    await broadcastToChannel(
       channelId,
       { type: 'typing:update', channelId, userId: user.userId, username: user.username, isTyping },
       user.userId,
@@ -753,34 +753,32 @@ function handleTyping(user: JwtPayload, channelId: string, isTyping: boolean) {
   }
 }
 
-function handleReact(user: JwtPayload, messageId: string, emoji: string) {
+async function handleReact(user: JwtPayload, messageId: string, emoji: string) {
   if (!emoji || emoji.length > MAX_EMOJI_LENGTH) {
     sendTo(user.userId, { type: 'error', message: 'Invalid emoji' });
     return;
   }
 
-  const msg = db.prepare('SELECT channel_id FROM messages WHERE id = ?').get(messageId) as any;
+  const msg = await getDb().queryOne<any>('SELECT channel_id FROM messages WHERE id = ?', [messageId]);
   if (!msg) return;
 
   // Verify channel access
-  if (!hasChannelPermission(user.userId, msg.channel_id, 'view_channel')) return;
+  if (!await hasChannelPermission(user.userId, msg.channel_id, 'view_channel')) return;
 
-  if (!hasChannelPermission(user.userId, msg.channel_id, 'add_reactions')) {
+  if (!await hasChannelPermission(user.userId, msg.channel_id, 'add_reactions')) {
     sendTo(user.userId, { type: 'error', message: 'You do not have permission to add reactions' });
     return;
   }
 
-  db.prepare('INSERT OR IGNORE INTO reactions (message_id, user_id, emoji) VALUES (?, ?, ?)').run(
+  await getDb().run('INSERT OR IGNORE INTO reactions (message_id, user_id, emoji) VALUES (?, ?, ?)', [
     messageId,
     user.userId,
     emoji,
-  );
+  ]);
 
-  const ch = db.prepare('SELECT type FROM channels WHERE id = ?').get(msg.channel_id) as
-    | { type: string }
-    | undefined;
+  const ch = await getDb().queryOne<{ type: string }>('SELECT type FROM channels WHERE id = ?', [msg.channel_id]);
   if (ch?.type === 'dm') {
-    sendToMany(getDmParticipantIds(msg.channel_id), {
+    sendToMany(await getDmParticipantIds(msg.channel_id), {
       type: 'message:reacted',
       messageId,
       channelId: msg.channel_id,
@@ -788,7 +786,7 @@ function handleReact(user: JwtPayload, messageId: string, emoji: string) {
       userId: user.userId,
     });
   } else {
-    broadcastToChannel(msg.channel_id, {
+    await broadcastToChannel(msg.channel_id, {
       type: 'message:reacted',
       messageId,
       channelId: msg.channel_id,
@@ -798,24 +796,22 @@ function handleReact(user: JwtPayload, messageId: string, emoji: string) {
   }
 }
 
-function handleUnreact(user: JwtPayload, messageId: string, emoji: string) {
-  const msg = db.prepare('SELECT channel_id FROM messages WHERE id = ?').get(messageId) as any;
+async function handleUnreact(user: JwtPayload, messageId: string, emoji: string) {
+  const msg = await getDb().queryOne<any>('SELECT channel_id FROM messages WHERE id = ?', [messageId]);
   if (!msg) return;
 
   // Verify channel access
-  if (!hasChannelPermission(user.userId, msg.channel_id, 'view_channel')) return;
+  if (!await hasChannelPermission(user.userId, msg.channel_id, 'view_channel')) return;
 
-  db.prepare('DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(
+  await getDb().run('DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?', [
     messageId,
     user.userId,
     emoji,
-  );
+  ]);
 
-  const ch = db.prepare('SELECT type FROM channels WHERE id = ?').get(msg.channel_id) as
-    | { type: string }
-    | undefined;
+  const ch = await getDb().queryOne<{ type: string }>('SELECT type FROM channels WHERE id = ?', [msg.channel_id]);
   if (ch?.type === 'dm') {
-    sendToMany(getDmParticipantIds(msg.channel_id), {
+    sendToMany(await getDmParticipantIds(msg.channel_id), {
       type: 'message:unreacted',
       messageId,
       channelId: msg.channel_id,
@@ -823,7 +819,7 @@ function handleUnreact(user: JwtPayload, messageId: string, emoji: string) {
       userId: user.userId,
     });
   } else {
-    broadcastToChannel(msg.channel_id, {
+    await broadcastToChannel(msg.channel_id, {
       type: 'message:unreacted',
       messageId,
       channelId: msg.channel_id,
@@ -833,29 +829,28 @@ function handleUnreact(user: JwtPayload, messageId: string, emoji: string) {
   }
 }
 
-function handleSoundboardPlay(user: JwtPayload, soundId: string) {
+async function handleSoundboardPlay(user: JwtPayload, soundId: string) {
   const channelId = userVoiceChannels.get(user.userId);
   if (!channelId) return;
 
-  const serverId = getChannelServerId(channelId);
-  if (!hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !isAppEnabled('soundboard', serverId ?? undefined)) {
+  const serverId = await getChannelServerId(channelId);
+  if (!await hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !await isAppEnabled('soundboard', serverId ?? undefined)) {
     sendTo(user.userId, { type: 'error', message: 'Soundboard is not available' });
     return;
   }
 
-  const sound = db
-    .prepare(
-      'SELECT s.*, f.stored_name FROM soundboard_sounds s JOIN files f ON f.id = s.file_id WHERE s.id = ?',
-    )
-    .get(soundId) as any;
+  const sound = await getDb().queryOne<any>(
+    'SELECT s.*, f.stored_name FROM soundboard_sounds s JOIN files f ON f.id = s.file_id WHERE s.id = ?',
+    [soundId],
+  );
   if (!sound) {
     sendTo(user.userId, { type: 'error', message: 'Sound not found' });
     return;
   }
 
   // Verify server membership for the voice channel
-  const sbServerId = getChannelServerId(channelId);
-  if (sbServerId && !isServerMember(user.userId, sbServerId)) {
+  const sbServerId = await getChannelServerId(channelId);
+  if (sbServerId && !await isServerMember(user.userId, sbServerId)) {
     sendTo(user.userId, { type: 'error', message: 'You are not a member of this server' });
     return;
   }
@@ -929,7 +924,7 @@ function extractYouTubeVideoId(url: string): string | null {
   return null;
 }
 
-function handleWatchStart(user: JwtPayload, videoUrl?: string) {
+async function handleWatchStart(user: JwtPayload, videoUrl?: string) {
   const channelId = userVoiceChannels.get(user.userId);
   if (!channelId) {
     sendTo(user.userId, {
@@ -939,8 +934,8 @@ function handleWatchStart(user: JwtPayload, videoUrl?: string) {
     return;
   }
 
-  const serverId = getChannelServerId(channelId);
-  if (!hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !isAppEnabled('watch-party', serverId ?? undefined)) {
+  const serverId = await getChannelServerId(channelId);
+  if (!await hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !await isAppEnabled('watch-party', serverId ?? undefined)) {
     sendTo(user.userId, { type: 'error', message: 'Watch Party is not available' });
     return;
   }
@@ -1048,8 +1043,8 @@ async function handleWatchQueue(user: JwtPayload, videoUrl: string) {
   const channelId = userVoiceChannels.get(user.userId);
   if (!channelId) return;
 
-  const serverId = getChannelServerId(channelId);
-  if (!hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !isAppEnabled('watch-party', serverId ?? undefined)) {
+  const serverId = await getChannelServerId(channelId);
+  if (!await hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !await isAppEnabled('watch-party', serverId ?? undefined)) {
     sendTo(user.userId, { type: 'error', message: 'Watch Party is not available' });
     return;
   }
@@ -1112,12 +1107,12 @@ function advanceQueue(channelId: string) {
   broadcastQueue(channelId);
 }
 
-function handleWatchJoin(user: JwtPayload) {
+async function handleWatchJoin(user: JwtPayload) {
   const channelId = userVoiceChannels.get(user.userId);
   if (!channelId) return;
 
-  const serverId = getChannelServerId(channelId);
-  if (!hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !isAppEnabled('watch-party', serverId ?? undefined)) {
+  const serverId = await getChannelServerId(channelId);
+  if (!await hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !await isAppEnabled('watch-party', serverId ?? undefined)) {
     sendTo(user.userId, { type: 'error', message: 'Watch Party is not available' });
     return;
   }
@@ -1148,7 +1143,7 @@ function handleWatchLeave(user: JwtPayload) {
   broadcastViewers(channelId);
 }
 
-function handleWatchTransferHost(user: JwtPayload, targetUserId: string) {
+async function handleWatchTransferHost(user: JwtPayload, targetUserId: string) {
   const channelId = userVoiceChannels.get(user.userId);
   if (!channelId) return;
 
@@ -1162,9 +1157,7 @@ function handleWatchTransferHost(user: JwtPayload, targetUserId: string) {
     return;
   }
 
-  const targetRow = db.prepare('SELECT username FROM users WHERE id = ?').get(targetUserId) as
-    | { username: string }
-    | undefined;
+  const targetRow = await getDb().queryOne<{ username: string }>('SELECT username FROM users WHERE id = ?', [targetUserId]);
   if (!targetRow) return;
 
   session.hostUserId = targetUserId;
@@ -1173,11 +1166,11 @@ function handleWatchTransferHost(user: JwtPayload, targetUserId: string) {
   broadcastSessionUpdated(channelId);
 }
 
-function broadcastViewers(channelId: string) {
+async function broadcastViewers(channelId: string) {
   const session = watchSessions.get(channelId);
   if (!session) return;
 
-  const viewers = getViewerDetails(session.viewers);
+  const viewers = await getViewerDetails(session.viewers);
 
   const peers = getPeersInChannel(channelId);
   for (const peerId of peers) {
@@ -1226,41 +1219,36 @@ function removeWatchViewer(userId: string) {
   }
 }
 
-function getHostUsername(hostUserId: string): string {
-  const row = db.prepare('SELECT username FROM users WHERE id = ?').get(hostUserId) as
-    | { username: string }
-    | undefined;
+async function getHostUsername(hostUserId: string): Promise<string> {
+  const row = await getDb().queryOne<{ username: string }>('SELECT username FROM users WHERE id = ?', [hostUserId]);
   return row?.username ?? 'Unknown';
 }
 
-function getViewerDetails(
+async function getViewerDetails(
   viewers: Set<string>,
-): { userId: string; username: string; display_name?: string; avatar_url?: string | null }[] {
-  return Array.from(viewers)
-    .map((userId) => {
-      // Use cached client data when available, fall back to DB for offline users
-      const client = getClient(userId);
-      if (client) {
-        return {
-          userId,
-          username: client.user.username,
-          display_name: client.display_name,
-          avatar_url: client.avatar_url,
-        };
-      }
-      const row = db
-        .prepare('SELECT id, username, display_name, avatar_url FROM users WHERE id = ?')
-        .get(userId) as any;
-      return row
-        ? {
-            userId: row.id,
-            username: row.username,
-            display_name: row.display_name,
-            avatar_url: row.avatar_url,
-          }
-        : null;
-    })
-    .filter((v): v is NonNullable<typeof v> => v !== null);
+): Promise<{ userId: string; username: string; display_name?: string; avatar_url?: string | null }[]> {
+  const results = await Promise.all(Array.from(viewers).map(async (userId) => {
+    // Use cached client data when available, fall back to DB for offline users
+    const client = getClient(userId);
+    if (client) {
+      return {
+        userId,
+        username: client.user.username,
+        display_name: client.display_name,
+        avatar_url: client.avatar_url,
+      };
+    }
+    const row = await getDb().queryOne<any>('SELECT id, username, display_name, avatar_url FROM users WHERE id = ?', [userId]);
+    return row
+      ? {
+          userId: row.id,
+          username: row.username,
+          display_name: row.display_name,
+          avatar_url: row.avatar_url,
+        }
+      : null;
+  }));
+  return results.filter((v): v is NonNullable<typeof v> => v !== null);
 }
 
 export function cleanupWatchSession(userId: string) {
@@ -1277,9 +1265,9 @@ export function cleanupWatchSession(userId: string) {
   }
 }
 
-function handleEffectSend(user: JwtPayload, channelId: string, effect: string) {
-  const serverId = getChannelServerId(channelId);
-  if (!hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !isAppEnabled('effects', serverId ?? undefined)) {
+async function handleEffectSend(user: JwtPayload, channelId: string, effect: string) {
+  const serverId = await getChannelServerId(channelId);
+  if (!await hasPermission(user.userId, 'use_apps', serverId ?? undefined) || !await isAppEnabled('effects', serverId ?? undefined)) {
     sendTo(user.userId, { type: 'error', message: 'Effects are not available' });
     return;
   }
@@ -1290,13 +1278,13 @@ function handleEffectSend(user: JwtPayload, channelId: string, effect: string) {
   }
 
   // Verify server membership
-  const effectServerId = getChannelServerId(channelId);
-  if (effectServerId && !isServerMember(user.userId, effectServerId)) {
+  const effectServerId = await getChannelServerId(channelId);
+  if (effectServerId && !await isServerMember(user.userId, effectServerId)) {
     sendTo(user.userId, { type: 'error', message: 'You are not a member of this server' });
     return;
   }
 
-  if (!hasChannelPermission(user.userId, channelId, 'view_channel')) {
+  if (!await hasChannelPermission(user.userId, channelId, 'view_channel')) {
     sendTo(user.userId, { type: 'error', message: 'You do not have access to this channel' });
     return;
   }
@@ -1314,7 +1302,7 @@ function handleEffectSend(user: JwtPayload, channelId: string, effect: string) {
     return;
   }
 
-  broadcastToChannel(channelId, {
+  await broadcastToChannel(channelId, {
     type: 'effect:play',
     channelId,
     effect,
@@ -1323,21 +1311,21 @@ function handleEffectSend(user: JwtPayload, channelId: string, effect: string) {
   });
 }
 
-function handleMessagePin(user: JwtPayload, messageId: string) {
-  const msg = db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId) as any;
+async function handleMessagePin(user: JwtPayload, messageId: string) {
+  const msg = await getDb().queryOne<any>('SELECT * FROM messages WHERE id = ?', [messageId]);
   if (!msg) return;
 
-  if (!hasChannelPermission(user.userId, msg.channel_id, 'pin_messages')) {
+  if (!await hasChannelPermission(user.userId, msg.channel_id, 'pin_messages')) {
     sendTo(user.userId, { type: 'error', message: 'You do not have permission to pin messages' });
     return;
   }
 
-  db.prepare('UPDATE messages SET pinned = 1, pinned_by = ? WHERE id = ?').run(
+  await getDb().run('UPDATE messages SET pinned = 1, pinned_by = ? WHERE id = ?', [
     user.userId,
     messageId,
-  );
+  ]);
 
-  broadcastToChannel(msg.channel_id, {
+  await broadcastToChannel(msg.channel_id, {
     type: 'message:pinned',
     messageId,
     channelId: msg.channel_id,
@@ -1345,38 +1333,38 @@ function handleMessagePin(user: JwtPayload, messageId: string) {
   });
 }
 
-function handleMessageUnpin(user: JwtPayload, messageId: string) {
-  const msg = db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId) as any;
+async function handleMessageUnpin(user: JwtPayload, messageId: string) {
+  const msg = await getDb().queryOne<any>('SELECT * FROM messages WHERE id = ?', [messageId]);
   if (!msg) return;
 
-  if (!hasChannelPermission(user.userId, msg.channel_id, 'pin_messages')) {
+  if (!await hasChannelPermission(user.userId, msg.channel_id, 'pin_messages')) {
     sendTo(user.userId, { type: 'error', message: 'You do not have permission to unpin messages' });
     return;
   }
 
-  db.prepare('UPDATE messages SET pinned = 0, pinned_by = NULL WHERE id = ?').run(messageId);
+  await getDb().run('UPDATE messages SET pinned = 0, pinned_by = NULL WHERE id = ?', [messageId]);
 
-  broadcastToChannel(msg.channel_id, {
+  await broadcastToChannel(msg.channel_id, {
     type: 'message:unpinned',
     messageId,
     channelId: msg.channel_id,
   });
 }
 
-function handleDmOpen(user: JwtPayload, targetUserId: string) {
+async function handleDmOpen(user: JwtPayload, targetUserId: string) {
   if (!targetUserId || targetUserId === user.userId) {
     sendTo(user.userId, { type: 'error', message: 'Invalid DM target' });
     return;
   }
 
-  const targetUser = db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId);
+  const targetUser = await getDb().queryOne<any>('SELECT id FROM users WHERE id = ?', [targetUserId]);
   if (!targetUser) {
     sendTo(user.userId, { type: 'error', message: 'User not found' });
     return;
   }
 
   // New-user cooldown: block DM creation for accounts < 1 hour old
-  const cooldown = checkNewUserCooldown(user.userId);
+  const cooldown = await checkNewUserCooldown(user.userId);
   if (cooldown.restricted) {
     sendTo(user.userId, {
       type: 'error',
@@ -1386,8 +1374,8 @@ function handleDmOpen(user: JwtPayload, targetUserId: string) {
   }
 
   try {
-    const channelId = ensureDmChannel(user.userId, targetUserId);
-    notifyDmCreated(user.userId, channelId);
+    const channelId = await ensureDmChannel(user.userId, targetUserId);
+    await notifyDmCreated(user.userId, channelId);
   } catch (err) {
     console.error('Failed to open DM:', err);
     sendTo(user.userId, { type: 'error', message: 'Failed to open DM' });
@@ -1396,9 +1384,9 @@ function handleDmOpen(user: JwtPayload, targetUserId: string) {
 
 // ===== Call Handlers =====
 
-function handleCallInitiate(user: JwtPayload, targetUserId: string, video = false) {
+async function handleCallInitiate(user: JwtPayload, targetUserId: string, video = false) {
   // New-user cooldown: block calls for accounts < 1 hour old
-  const cooldown = checkNewUserCooldown(user.userId);
+  const cooldown = await checkNewUserCooldown(user.userId);
   if (cooldown.restricted) {
     sendTo(user.userId, {
       type: 'error',
@@ -1419,7 +1407,7 @@ function handleCallInitiate(user: JwtPayload, targetUserId: string, video = fals
   }
 
   // Check if target is a bot
-  const targetUser = db.prepare('SELECT is_bot FROM users WHERE id = ?').get(targetUserId) as { is_bot: number } | undefined;
+  const targetUser = await getDb().queryOne<{ is_bot: number }>('SELECT is_bot FROM users WHERE id = ?', [targetUserId]);
   if (targetUser?.is_bot) {
     sendTo(user.userId, { type: 'call:ended', callId: '', reason: 'busy' });
     return;
@@ -1441,19 +1429,18 @@ function handleCallInitiate(user: JwtPayload, targetUserId: string, video = fals
   }
 
   const callId = randomUUID();
-  const callerRow = db
-    .prepare('SELECT display_name, username, avatar_url FROM users WHERE id = ?')
-    .get(user.userId) as
-    | { display_name: string; username: string; avatar_url: string | null }
-    | undefined;
+  const callerRow = await getDb().queryOne<{ display_name: string; username: string; avatar_url: string | null }>(
+    'SELECT display_name, username, avatar_url FROM users WHERE id = ?',
+    [user.userId],
+  );
 
-  const timeout = setTimeout(() => {
+  const timeout = setTimeout(async () => {
     const call = activeCalls.get(callId);
     if (call && call.status === 'ringing') {
       activeCalls.delete(callId);
       sendTo(call.callerId, { type: 'call:ended', callId, reason: 'timeout' });
       sendTo(call.recipientId, { type: 'call:ended', callId, reason: 'timeout' });
-      insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'missed');
+      await insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'missed');
     }
   }, 15000);
 
@@ -1504,17 +1491,17 @@ function handleCallAccept(user: JwtPayload, callId: string) {
   sendTo(call.recipientId, { type: 'call:accepted', callId, channelId });
 }
 
-function handleCallReject(user: JwtPayload, callId: string) {
+async function handleCallReject(user: JwtPayload, callId: string) {
   const call = activeCalls.get(callId);
   if (!call || call.recipientId !== user.userId) return;
 
   clearTimeout(call.timeout);
   activeCalls.delete(callId);
   sendTo(call.callerId, { type: 'call:ended', callId, reason: 'rejected' });
-  insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'rejected');
+  await insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'rejected');
 }
 
-function handleCallEnd(user: JwtPayload, callId: string) {
+async function handleCallEnd(user: JwtPayload, callId: string) {
   const call = activeCalls.get(callId);
   if (!call) return;
   if (call.callerId !== user.userId && call.recipientId !== user.userId) return;
@@ -1526,13 +1513,13 @@ function handleCallEnd(user: JwtPayload, callId: string) {
 
   if (call.status === 'active' && call.startedAt) {
     const duration = Math.round((Date.now() - call.startedAt) / 1000);
-    insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'completed', duration);
+    await insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'completed', duration);
   } else {
-    insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'missed');
+    await insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'missed');
   }
 }
 
-function cleanupCallsForUser(userId: string) {
+async function cleanupCallsForUser(userId: string) {
   for (const [callId, call] of activeCalls) {
     if (call.callerId === userId || call.recipientId === userId) {
       clearTimeout(call.timeout);
@@ -1542,25 +1529,25 @@ function cleanupCallsForUser(userId: string) {
 
       if (call.status === 'active' && call.startedAt) {
         const duration = Math.round((Date.now() - call.startedAt) / 1000);
-        insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'completed', duration);
+        await insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'completed', duration);
       } else {
-        insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'missed');
+        await insertCallMessage(call.callerId, call.recipientId, call.video ? 'video' : 'voice', 'missed');
       }
     }
   }
 }
 
-export function handleDisconnect(user: JwtPayload) {
+export async function handleDisconnect(user: JwtPayload) {
   clearAfkTimer(user.userId);
 
   // Clean up active calls
-  cleanupCallsForUser(user.userId);
+  await cleanupCallsForUser(user.userId);
 
   // Clean up typing state and broadcast stop for each channel they were typing in
   for (const [channelId, users] of typingUsers) {
     if (users.has(user.userId)) {
       users.delete(user.userId);
-      broadcastToChannel(
+      await broadcastToChannel(
         channelId,
         {
           type: 'typing:update',
@@ -1588,56 +1575,52 @@ export function handleDisconnect(user: JwtPayload) {
   leaveVoiceChannel(user.userId);
 }
 
-function handlePollVote(user: JwtPayload, pollId: string, optionIds: string[]) {
-  const poll = db.prepare('SELECT server_id, is_active, allow_multiple, ends_at FROM polls WHERE id = ?').get(pollId) as any;
+async function handlePollVote(user: JwtPayload, pollId: string, optionIds: string[]) {
+  const poll = await getDb().queryOne<any>('SELECT server_id, is_active, allow_multiple, ends_at FROM polls WHERE id = ?', [pollId]);
   if (!poll || !poll.is_active) return;
 
   // On-the-fly expiry check
   if (poll.ends_at && new Date(poll.ends_at) <= new Date()) {
-    db.prepare('UPDATE polls SET is_active = 0 WHERE id = ?').run(pollId);
+    await getDb().run('UPDATE polls SET is_active = 0 WHERE id = ?', [pollId]);
     return;
   }
 
-  if (!isServerMember(user.userId, poll.server_id)) return;
+  if (!await isServerMember(user.userId, poll.server_id)) return;
 
-  db.transaction(() => {
-    // Clear existing votes for this user in this poll
-    db.prepare('DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?').run(pollId, user.userId);
+  // Clear existing votes for this user in this poll
+  await getDb().run('DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?', [pollId, user.userId]);
 
-    const insertVote = db.prepare('INSERT INTO poll_votes (poll_id, user_id, option_id) VALUES (?, ?, ?)');
-    
-    if (poll.allow_multiple) {
-      for (const oid of optionIds) {
-        insertVote.run(pollId, user.userId, oid);
-      }
-    } else if (optionIds.length > 0) {
-      insertVote.run(pollId, user.userId, optionIds[0]);
+  if (poll.allow_multiple) {
+    for (const oid of optionIds) {
+      await getDb().run('INSERT INTO poll_votes (poll_id, user_id, option_id) VALUES (?, ?, ?)', [pollId, user.userId, oid]);
     }
-  })();
+  } else if (optionIds.length > 0) {
+    await getDb().run('INSERT INTO poll_votes (poll_id, user_id, option_id) VALUES (?, ?, ?)', [pollId, user.userId, optionIds[0]]);
+  }
 
   // Get updated stats
-  const options = db.prepare(`
-    SELECT o.id, 
+  const options = await getDb().query<any>(`
+    SELECT o.id,
            (SELECT COUNT(*) FROM poll_votes WHERE option_id = o.id) as vote_count
     FROM poll_options o
     WHERE o.poll_id = ?
-  `).all(pollId) as any[];
+  `, [pollId]);
 
-  const totalVotes = db.prepare('SELECT COUNT(DISTINCT user_id) as c FROM poll_votes WHERE poll_id = ?').get(pollId).c;
+  const totalVotesRow = await getDb().queryOne<any>('SELECT COUNT(DISTINCT user_id) as c FROM poll_votes WHERE poll_id = ?', [pollId]);
 
   // Broadcast update
-  const memberIds = getServerMemberUserIds(poll.server_id);
+  const memberIds = await getServerMemberUserIds(poll.server_id);
   sendToMany(memberIds, {
     type: 'poll:updated',
     serverId: poll.server_id,
     pollId,
     options: options.map(o => ({ id: o.id, vote_count: o.vote_count })),
-    totalVotes
+    totalVotes: totalVotesRow.c
   } as any);
 }
 
-function getServerMemberUserIds(serverId: string): string[] {
-  return (db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(serverId) as { user_id: string }[])
+async function getServerMemberUserIds(serverId: string): Promise<string[]> {
+  return (await getDb().query<{ user_id: string }>('SELECT user_id FROM server_members WHERE server_id = ?', [serverId]))
     .map(r => r.user_id);
 }
 

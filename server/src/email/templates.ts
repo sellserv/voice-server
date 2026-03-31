@@ -1,14 +1,14 @@
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 
-function getServerName(): string {
-  const row = db.prepare('SELECT name FROM server_settings WHERE id = 1').get() as
-    | { name: string }
-    | undefined;
+async function getServerName(): Promise<string> {
+  const row = await getDb().queryOne<{ name: string }>(
+    'SELECT name FROM server_settings WHERE id = 1',
+  );
   return row?.name || 'SellServ Voice';
 }
 
-export function verificationEmail(code: string): { subject: string; html: string } {
-  const name = getServerName();
+export async function verificationEmail(code: string): Promise<{ subject: string; html: string }> {
+  const name = await getServerName();
   return {
     subject: `Verify your email — ${name}`,
     html: `
@@ -22,8 +22,8 @@ export function verificationEmail(code: string): { subject: string; html: string
   };
 }
 
-export function mfaEmail(code: string): { subject: string; html: string } {
-  const name = getServerName();
+export async function mfaEmail(code: string): Promise<{ subject: string; html: string }> {
+  const name = await getServerName();
   return {
     subject: `Your login code — ${name}`,
     html: `
@@ -37,8 +37,8 @@ export function mfaEmail(code: string): { subject: string; html: string } {
   };
 }
 
-export function accountLockedEmail(code: string): { subject: string; html: string } {
-  const name = getServerName();
+export async function accountLockedEmail(code: string): Promise<{ subject: string; html: string }> {
+  const name = await getServerName();
   return {
     subject: `Your account has been locked — ${name}`,
     html: `
@@ -52,8 +52,8 @@ export function accountLockedEmail(code: string): { subject: string; html: strin
   };
 }
 
-export function passwordResetEmail(code: string): { subject: string; html: string } {
-  const name = getServerName();
+export async function passwordResetEmail(code: string): Promise<{ subject: string; html: string }> {
+  const name = await getServerName();
   return {
     subject: `Password reset code — ${name}`,
     html: `

@@ -1,28 +1,29 @@
 import { randomUUID } from 'crypto';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { broadcastToChannel, sendTo, sendToMany } from '../ws/index.js';
 
 /**
  * Send welcome messages (channel + DM) for a user joining a specific server.
  * Safe to call multiple times — skips if bot is disabled or unconfigured.
  */
-export function sendWelcomeMessages(userId: string, serverId: string) {
-  const welcomeBot = db
-    .prepare(
-      `SELECT b.id, b.user_id, b.name, b.greeting, b.channel_id, b.dm_enabled, b.dm_greeting, b.server_id
-       FROM bots b
-       WHERE b.type = 'welcome' AND b.enabled = 1 AND b.server_id = ?`,
-    )
-    .get(serverId) as any;
+export async function sendWelcomeMessages(userId: string, serverId: string) {
+  const welcomeBot = await getDb().queryOne<any>(
+    `SELECT b.id, b.user_id, b.name, b.greeting, b.channel_id, b.dm_enabled, b.dm_greeting, b.server_id
+     FROM bots b
+     WHERE b.type = 'welcome' AND b.enabled = 1 AND b.server_id = ?`,
+    [serverId],
+  );
 
   if (!welcomeBot) return;
 
-  const newUser = db
-    .prepare('SELECT username, display_name, avatar_url FROM users WHERE id = ?')
-    .get(userId) as any;
-  const botUser = db
-    .prepare('SELECT username, avatar_url FROM users WHERE id = ?')
-    .get(welcomeBot.user_id) as any;
+  const newUser = await getDb().queryOne<any>(
+    'SELECT username, display_name, avatar_url FROM users WHERE id = ?',
+    [userId],
+  );
+  const botUser = await getDb().queryOne<any>(
+    'SELECT username, avatar_url FROM users WHERE id = ?',
+    [welcomeBot.user_id],
+  );
 
   if (!newUser || !botUser) return;
 
@@ -30,14 +31,18 @@ export function sendWelcomeMessages(userId: string, serverId: string) {
 
   // Channel greeting
   if (welcomeBot.channel_id) {
-    const channel = db.prepare('SELECT id FROM channels WHERE id = ?').get(welcomeBot.channel_id);
+    const channel = await getDb().queryOne<{ id: string }>(
+      'SELECT id FROM channels WHERE id = ?',
+      [welcomeBot.channel_id],
+    );
     if (channel) {
       const greeting = welcomeBot.greeting.replace(/\{user\}/g, `<@${userId}>`);
       const msgId = randomUUID();
-      db.prepare(
+      await getDb().run(
         'INSERT INTO messages (id, channel_id, user_id, content, created_at) VALUES (?, ?, ?, ?, ?)',
-      ).run(msgId, welcomeBot.channel_id, welcomeBot.user_id, greeting, now);
-      broadcastToChannel(welcomeBot.channel_id, {
+        [msgId, welcomeBot.channel_id, welcomeBot.user_id, greeting, now],
+      );
+      await broadcastToChannel(welcomeBot.channel_id, {
         type: 'chat:message',
         message: {
           id: msgId,
@@ -66,22 +71,24 @@ export function sendWelcomeMessages(userId: string, serverId: string) {
       const dmChannelId = randomUUID();
       const dmMsgId = randomUUID();
 
-      db.transaction(() => {
-        db.prepare(
+      await getDb().transaction(async (tx) => {
+        await tx.run(
           "INSERT INTO channels (id, name, type, sort_order) VALUES (?, '', 'dm', 0)",
-        ).run(dmChannelId);
-        db.prepare('INSERT INTO dm_participants (channel_id, user_id) VALUES (?, ?)').run(
+          [dmChannelId],
+        );
+        await tx.run('INSERT INTO dm_participants (channel_id, user_id) VALUES (?, ?)', [
           dmChannelId,
           welcomeBot.user_id,
-        );
-        db.prepare('INSERT INTO dm_participants (channel_id, user_id) VALUES (?, ?)').run(
+        ]);
+        await tx.run('INSERT INTO dm_participants (channel_id, user_id) VALUES (?, ?)', [
           dmChannelId,
           userId,
-        );
-        db.prepare(
+        ]);
+        await tx.run(
           'INSERT INTO messages (id, channel_id, user_id, content, created_at) VALUES (?, ?, ?, ?, ?)',
-        ).run(dmMsgId, dmChannelId, welcomeBot.user_id, dmGreeting, now);
-      })();
+          [dmMsgId, dmChannelId, welcomeBot.user_id, dmGreeting, now],
+        );
+      });
 
       const dmChannel = {
         id: dmChannelId,

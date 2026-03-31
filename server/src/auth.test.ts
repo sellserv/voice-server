@@ -1,27 +1,27 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createHash } from 'crypto';
+import { createHmac } from 'crypto';
 import Fastify from 'fastify';
 import fastifyCookie from '@fastify/cookie';
-import { initSchema } from './db/schema.js';
 import authRoutes from './routes/auth.js';
-import db from './db/connection.js';
+import { config } from './config.js';
+import { setupTestDb, getTestRawDb } from './test-helpers.js';
 
 function hashCode(code: string): string {
-  return createHash('sha256').update(code).digest('hex');
+  return createHmac('sha256', config.jwtSecret).update(code).digest('hex');
 }
 
 describe('Auth Integration', () => {
   const app = Fastify();
-  
+
   beforeAll(async () => {
+    await setupTestDb();
     await app.register(fastifyCookie);
-    // Register routes with the correct prefix if needed, but the routes file seems to use /api/auth
     await app.register(authRoutes);
-    initSchema();
-    db.exec('PRAGMA foreign_keys = OFF');
-    db.prepare('DELETE FROM users').run();
-    db.prepare('DELETE FROM auth_sessions').run();
-    db.exec('PRAGMA foreign_keys = ON');
+    const raw = getTestRawDb();
+    raw.exec('PRAGMA foreign_keys = OFF');
+    raw.prepare('DELETE FROM users').run();
+    raw.prepare('DELETE FROM auth_sessions').run();
+    raw.exec('PRAGMA foreign_keys = ON');
   });
 
   afterAll(async () => {
@@ -34,7 +34,7 @@ describe('Auth Integration', () => {
       url: '/api/auth/register',
       payload: {
         username: 'user_reg',
-        password: 'Password12345678', // > 15 chars
+        password: 'TestPassword123!',
         email: 'reg@example.com',
         display_name: 'Test User',
       },
@@ -46,28 +46,31 @@ describe('Auth Integration', () => {
     expect(body.user_id).toBeDefined();
 
     // Manually verify email in DB for next tests
-    db.prepare('UPDATE users SET email_verified = 1 WHERE username = ?').run('user_reg');
+    const raw = getTestRawDb();
+    raw.prepare('UPDATE users SET email_verified = 1 WHERE username = ?').run('user_reg');
   });
 
   it('should login and create a session in auth_sessions table', async () => {
+    const raw = getTestRawDb();
+
     // Register first
     await app.inject({
       method: 'POST',
       url: '/api/auth/register',
       payload: {
         username: 'user_login',
-        password: 'Password12345678',
+        password: 'TestPassword123!',
         email: 'login@example.com',
       },
     });
-    db.prepare('UPDATE users SET email_verified = 1 WHERE username = ?').run('user_login');
+    raw.prepare('UPDATE users SET email_verified = 1 WHERE username = ?').run('user_login');
 
     const loginRes = await app.inject({
       method: 'POST',
       url: '/api/auth/login',
       payload: {
         username: 'user_login',
-        password: 'Password12345678',
+        password: 'TestPassword123!',
       },
     });
 
@@ -75,12 +78,12 @@ describe('Auth Integration', () => {
     const loginBody = JSON.parse(loginRes.body);
     expect(loginBody.mfa_required).toBe(true);
 
-    const user = db.prepare('SELECT id FROM users WHERE username = ?').get('user_login') as { id: string };
+    const user = raw.prepare('SELECT id FROM users WHERE username = ?').get('user_login') as { id: string };
 
     // Overwrite MFA code with a known one for testing
     const testCode = '123456';
-    db.prepare("UPDATE email_codes SET code = ? WHERE user_id = ? AND type = 'mfa'").run(hashCode(testCode), user.id);
-    
+    raw.prepare("UPDATE email_codes SET code = ? WHERE user_id = ? AND type = 'mfa'").run(hashCode(testCode), user.id);
+
     // Verify MFA
     const mfaRes = await app.inject({
       method: 'POST',
@@ -92,39 +95,41 @@ describe('Auth Integration', () => {
     });
 
     expect(mfaRes.statusCode).toBe(200);
-    
+
     // Check if a session was created in auth_sessions table
-    const session = db.prepare('SELECT * FROM auth_sessions WHERE user_id = ?').get(user.id);
+    const session = raw.prepare('SELECT * FROM auth_sessions WHERE user_id = ?').get(user.id);
     expect(session).toBeDefined();
   });
 
   it('should revoke session on logout', async () => {
+    const raw = getTestRawDb();
+
     // Register & login
     await app.inject({
       method: 'POST',
       url: '/api/auth/register',
       payload: {
         username: 'user_logout',
-        password: 'Password12345678',
+        password: 'TestPassword123!',
         email: 'logout@example.com',
       },
     });
-    db.prepare('UPDATE users SET email_verified = 1 WHERE username = ?').run('user_logout');
+    raw.prepare('UPDATE users SET email_verified = 1 WHERE username = ?').run('user_logout');
 
     const loginRes = await app.inject({
       method: 'POST',
       url: '/api/auth/login',
       payload: {
         username: 'user_logout',
-        password: 'Password12345678',
+        password: 'TestPassword123!',
       },
     });
-    const user = db.prepare('SELECT id FROM users WHERE username = ?').get('user_logout') as { id: string };
+    const user = raw.prepare('SELECT id FROM users WHERE username = ?').get('user_logout') as { id: string };
 
     // Overwrite MFA code
     const testCode = '123456';
-    db.prepare("UPDATE email_codes SET code = ? WHERE user_id = ? AND type = 'mfa'").run(hashCode(testCode), user.id);
-    
+    raw.prepare("UPDATE email_codes SET code = ? WHERE user_id = ? AND type = 'mfa'").run(hashCode(testCode), user.id);
+
     const mfaRes = await app.inject({
       method: 'POST',
       url: '/api/auth/login/mfa',
@@ -134,7 +139,7 @@ describe('Auth Integration', () => {
       },
     });
 
-    const sessionsBefore = db.prepare('SELECT COUNT(*) as count FROM auth_sessions WHERE user_id = ?').get(user.id) as { count: number };
+    const sessionsBefore = raw.prepare('SELECT COUNT(*) as count FROM auth_sessions WHERE user_id = ?').get(user.id) as { count: number };
     expect(sessionsBefore.count).toBeGreaterThan(0);
 
     // Logout
@@ -145,7 +150,7 @@ describe('Auth Integration', () => {
     });
 
     // Check if session was removed from DB
-    const sessionsAfter = db.prepare('SELECT COUNT(*) as count FROM auth_sessions WHERE user_id = ?').get(user.id) as { count: number };
+    const sessionsAfter = raw.prepare('SELECT COUNT(*) as count FROM auth_sessions WHERE user_id = ?').get(user.id) as { count: number };
     expect(sessionsAfter.count).toBe(0);
   });
 });

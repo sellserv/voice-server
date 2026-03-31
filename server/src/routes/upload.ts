@@ -5,7 +5,7 @@ import { unlink } from 'fs/promises';
 import { pipeline } from 'stream/promises';
 import { extname, basename, relative } from 'path';
 import { resolve } from 'path';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { config } from '../config.js';
 import { requireAuth } from '../auth/middleware.js';
 import { checkNewUserCooldown } from '../auth/cooldown.js';
@@ -58,7 +58,7 @@ export default async function uploadRoutes(app: FastifyInstance) {
     }
 
     // New-user cooldown: block uploads for accounts < 1 hour old
-    const cooldown = checkNewUserCooldown(request.user.userId);
+    const cooldown = await checkNewUserCooldown(request.user.userId);
     if (cooldown.restricted) {
       return reply.code(403).send({
         error: `New accounts cannot upload files yet. Try again in ${cooldown.minutesRemaining} minute(s).`,
@@ -71,23 +71,22 @@ export default async function uploadRoutes(app: FastifyInstance) {
 
     // Check daily upload limit
     const today = new Date().toISOString().split('T')[0];
-    const dailyUsage = db
-      .prepare(
-        `SELECT COALESCE(SUM(size_bytes), 0) as total FROM files
+    const dailyUsage = await getDb().queryOne<{ total: number }>(
+      `SELECT COALESCE(SUM(size_bytes), 0) as total FROM files
        WHERE user_id = ? AND created_at >= ?`,
-      )
-      .get(request.user.userId, today) as { total: number };
+      [request.user.userId, today],
+    );
 
-    if (dailyUsage.total >= config.maxDailyUploadPerUser) {
+    if ((dailyUsage?.total ?? 0) >= config.maxDailyUploadPerUser) {
       return reply.code(429).send({ error: 'Daily upload limit reached' });
     }
 
     // Check total disk usage
-    const totalDisk = db
-      .prepare('SELECT COALESCE(SUM(size_bytes), 0) as total FROM files')
-      .get() as { total: number };
+    const totalDisk = await getDb().queryOne<{ total: number }>(
+      'SELECT COALESCE(SUM(size_bytes), 0) as total FROM files',
+    );
 
-    if (totalDisk.total >= config.maxTotalDisk) {
+    if ((totalDisk?.total ?? 0) >= config.maxTotalDisk) {
       return reply.code(507).send({ error: 'Server storage full' });
     }
 
@@ -118,22 +117,24 @@ export default async function uploadRoutes(app: FastifyInstance) {
     }
 
     const sizeBytes = data.file.bytesRead;
-    const maxSize = isPremium(request.user.userId) ? PRO_FILE_SIZE : FREE_FILE_SIZE;
+    const userIsPremium = await isPremium(request.user.userId);
+    const maxSize = userIsPremium ? PRO_FILE_SIZE : FREE_FILE_SIZE;
     if (sizeBytes > maxSize) {
       await unlink(filePath).catch(() => {});
       const limitMB = Math.round(maxSize / (1024 * 1024));
       return reply.code(413).send({
-        error: `File too large. ${isPremium(request.user.userId) ? 'Pro' : 'Free'} limit is ${limitMB}MB.`,
-        premiumRequired: !isPremium(request.user.userId),
+        error: `File too large. ${userIsPremium ? 'Pro' : 'Free'} limit is ${limitMB}MB.`,
+        premiumRequired: !userIsPremium,
       });
     }
 
-    db.prepare(
+    await getDb().run(
       `INSERT INTO files (id, user_id, original_name, stored_name, mime_type, size_bytes)
        VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(id, request.user.userId, safeOriginalName, storedName, data.mimetype, sizeBytes);
+      [id, request.user.userId, safeOriginalName, storedName, data.mimetype, sizeBytes],
+    );
 
-    const file = db.prepare('SELECT * FROM files WHERE id = ?').get(id) as FileRecord;
+    const file = await getDb().queryOne<FileRecord>('SELECT * FROM files WHERE id = ?', [id]);
     return reply.code(201).send(file);
   });
 
@@ -142,9 +143,10 @@ export default async function uploadRoutes(app: FastifyInstance) {
     '/api/files/:id',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const file = db.prepare('SELECT * FROM files WHERE id = ?').get(request.params.id) as
-        | FileRecord
-        | undefined;
+      const file = await getDb().queryOne<FileRecord>(
+        'SELECT * FROM files WHERE id = ?',
+        [request.params.id],
+      );
       if (!file) {
         return reply.code(404).send({ error: 'File not found' });
       }

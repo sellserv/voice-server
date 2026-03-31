@@ -1,4 +1,4 @@
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import type { RolePermissions, ChannelOverridablePermission } from '@voip-server/shared';
 
 const DEFAULT_PERMISSIONS: RolePermissions = {
@@ -41,39 +41,39 @@ const CHANNEL_OVERRIDABLE: ChannelOverridablePermission[] = [
   'share_screen',
 ];
 
-export function getUserRoleIds(userId: string, serverId?: string): string[] {
+export async function getUserRoleIds(userId: string, serverId?: string): Promise<string[]> {
   if (serverId) {
     // Include both server-specific roles AND global roles (server_id IS NULL)
-    const rows = db
-      .prepare(
-        `SELECT ur.role_id FROM user_roles ur
+    const rows = await getDb().query<{ role_id: string }>(
+      `SELECT ur.role_id FROM user_roles ur
          JOIN roles r ON r.id = ur.role_id
          WHERE ur.user_id = ? AND (r.server_id = ? OR r.server_id IS NULL)`,
-      )
-      .all(userId, serverId) as { role_id: string }[];
+      [userId, serverId],
+    );
     return rows.map((r) => r.role_id);
   }
-  const rows = db.prepare('SELECT role_id FROM user_roles WHERE user_id = ?').all(userId) as {
-    role_id: string;
-  }[];
+  const rows = await getDb().query<{ role_id: string }>(
+    'SELECT role_id FROM user_roles WHERE user_id = ?',
+    [userId],
+  );
   if (rows.length > 0) return rows.map((r) => r.role_id);
   // Fallback: use single role_id from users table (for users not yet in user_roles)
-  const user = db.prepare('SELECT role_id FROM users WHERE id = ?').get(userId) as
-    | { role_id: string | null }
-    | undefined;
+  const user = await getDb().queryOne<{ role_id: string | null }>(
+    'SELECT role_id FROM users WHERE id = ?',
+    [userId],
+  );
   return user?.role_id ? [user.role_id] : [];
 }
 
-export function getUserPermissions(userId: string, serverId?: string): RolePermissions {
+export async function getUserPermissions(userId: string, serverId?: string): Promise<RolePermissions> {
   if (serverId) {
     // Server-scoped: consider roles belonging to this server AND global roles (server_id IS NULL)
-    const rows = db
-      .prepare(
-        `SELECT r.permissions FROM user_roles ur
+    const rows = await getDb().query<{ permissions: string }>(
+      `SELECT r.permissions FROM user_roles ur
          JOIN roles r ON r.id = ur.role_id
          WHERE ur.user_id = ? AND (r.server_id = ? OR r.server_id IS NULL)`,
-      )
-      .all(userId, serverId) as { permissions: string }[];
+      [userId, serverId],
+    );
 
     const merged = { ...DEFAULT_PERMISSIONS };
     for (const row of rows) {
@@ -91,27 +91,25 @@ export function getUserPermissions(userId: string, serverId?: string): RolePermi
   }
 
   // Legacy: OR-merge permissions across all assigned roles
-  const rows = db
-    .prepare(
-      `
+  const rows = await getDb().query<{ permissions: string }>(
+    `
     SELECT r.permissions FROM user_roles ur
     JOIN roles r ON r.id = ur.role_id
     WHERE ur.user_id = ?
   `,
-    )
-    .all(userId) as { permissions: string }[];
+    [userId],
+  );
 
   if (rows.length === 0) {
     // Fallback: try single role_id on users table
-    const row = db
-      .prepare(
-        `
+    const row = await getDb().queryOne<{ permissions: string }>(
+      `
       SELECT r.permissions FROM users u
       JOIN roles r ON r.id = u.role_id
       WHERE u.id = ?
     `,
-      )
-      .get(userId) as { permissions: string } | undefined;
+      [userId],
+    );
 
     if (!row) return { ...DEFAULT_PERMISSIONS };
     try {
@@ -142,13 +140,16 @@ export function getUserPermissions(userId: string, serverId?: string): RolePermi
   return merged;
 }
 
-export function hasPermission(userId: string, perm: keyof RolePermissions, serverId?: string): boolean {
+export async function hasPermission(userId: string, perm: keyof RolePermissions, serverId?: string): Promise<boolean> {
   // Server owner always has all permissions
   if (serverId) {
-    const server = db.prepare('SELECT owner_id FROM servers WHERE id = ?').get(serverId) as { owner_id: string } | undefined;
+    const server = await getDb().queryOne<{ owner_id: string }>(
+      'SELECT owner_id FROM servers WHERE id = ?',
+      [serverId],
+    );
     if (server?.owner_id === userId) return true;
   }
-  const perms = getUserPermissions(userId, serverId);
+  const perms = await getUserPermissions(userId, serverId);
   if (perms.administrator) return true;
   return !!perms[perm];
 }
@@ -157,27 +158,27 @@ export function hasPermission(userId: string, perm: keyof RolePermissions, serve
  * Get resolved permissions for a user in a specific channel,
  * applying role and user overrides on top of base role permissions.
  */
-export function getChannelPermissions(userId: string, channelId: string): RolePermissions {
-  const channelRow = db.prepare('SELECT server_id FROM channels WHERE id = ?').get(channelId) as
-    | { server_id: string | null }
-    | undefined;
+export async function getChannelPermissions(userId: string, channelId: string): Promise<RolePermissions> {
+  const channelRow = await getDb().queryOne<{ server_id: string | null }>(
+    'SELECT server_id FROM channels WHERE id = ?',
+    [channelId],
+  );
   const serverId = channelRow?.server_id ?? undefined;
-  const base = getUserPermissions(userId, serverId);
+  const base = await getUserPermissions(userId, serverId);
   if (base.administrator) return base;
 
   const resolved = { ...base };
 
   // Get all user role_ids (scoped to server)
-  const roleIds = getUserRoleIds(userId, serverId);
+  const roleIds = await getUserRoleIds(userId, serverId);
 
   // Apply role overrides — "allow wins": if ANY role override grants, it's granted
   if (roleIds.length > 0) {
     const placeholders = roleIds.map(() => '?').join(',');
-    const roleOverrides = db
-      .prepare(
-        `SELECT * FROM channel_permission_overrides WHERE channel_id = ? AND target_type = 'role' AND target_id IN (${placeholders})`,
-      )
-      .all(channelId, ...roleIds) as Record<string, unknown>[];
+    const roleOverrides = await getDb().query<Record<string, unknown>>(
+      `SELECT * FROM channel_permission_overrides WHERE channel_id = ? AND target_type = 'role' AND target_id IN (${placeholders})`,
+      [channelId, ...roleIds],
+    );
 
     for (const perm of CHANNEL_OVERRIDABLE) {
       let hasExplicit = false;
@@ -196,11 +197,10 @@ export function getChannelPermissions(userId: string, channelId: string): RolePe
   }
 
   // Apply user override (higher priority than role override)
-  const userOverride = db
-    .prepare(
-      'SELECT * FROM channel_permission_overrides WHERE channel_id = ? AND target_type = ? AND target_id = ?',
-    )
-    .get(channelId, 'user', userId) as Record<string, unknown> | undefined;
+  const userOverride = await getDb().queryOne<Record<string, unknown>>(
+    'SELECT * FROM channel_permission_overrides WHERE channel_id = ? AND target_type = ? AND target_id = ?',
+    [channelId, 'user', userId],
+  );
 
   if (userOverride) {
     for (const perm of CHANNEL_OVERRIDABLE) {
@@ -213,22 +213,23 @@ export function getChannelPermissions(userId: string, channelId: string): RolePe
 
   // Apply group overrides (highest priority — override channel-level overrides)
   // Only if the group has permissions_enabled = 1
-  const channel = db.prepare('SELECT group_id FROM channels WHERE id = ?').get(channelId) as
-    | { group_id: string | null }
-    | undefined;
+  const channel = await getDb().queryOne<{ group_id: string | null }>(
+    'SELECT group_id FROM channels WHERE id = ?',
+    [channelId],
+  );
   if (channel?.group_id) {
-    const groupRow = db
-      .prepare('SELECT permissions_enabled FROM channel_groups WHERE id = ?')
-      .get(channel.group_id) as { permissions_enabled: number } | undefined;
+    const groupRow = await getDb().queryOne<{ permissions_enabled: number }>(
+      'SELECT permissions_enabled FROM channel_groups WHERE id = ?',
+      [channel.group_id],
+    );
     if (groupRow?.permissions_enabled) {
       // Group role overrides — "allow wins" across all user roles
       if (roleIds.length > 0) {
         const placeholders = roleIds.map(() => '?').join(',');
-        const groupRoleOverrides = db
-          .prepare(
-            `SELECT * FROM group_permission_overrides WHERE group_id = ? AND target_type = 'role' AND target_id IN (${placeholders})`,
-          )
-          .all(channel.group_id, ...roleIds) as Record<string, unknown>[];
+        const groupRoleOverrides = await getDb().query<Record<string, unknown>>(
+          `SELECT * FROM group_permission_overrides WHERE group_id = ? AND target_type = 'role' AND target_id IN (${placeholders})`,
+          [channel.group_id, ...roleIds],
+        );
 
         for (const perm of CHANNEL_OVERRIDABLE) {
           let hasExplicit = false;
@@ -247,11 +248,10 @@ export function getChannelPermissions(userId: string, channelId: string): RolePe
       }
 
       // Group user override (highest priority of all)
-      const groupUserOverride = db
-        .prepare(
-          'SELECT * FROM group_permission_overrides WHERE group_id = ? AND target_type = ? AND target_id = ?',
-        )
-        .get(channel.group_id, 'user', userId) as Record<string, unknown> | undefined;
+      const groupUserOverride = await getDb().queryOne<Record<string, unknown>>(
+        'SELECT * FROM group_permission_overrides WHERE group_id = ? AND target_type = ? AND target_id = ?',
+        [channel.group_id, 'user', userId],
+      );
 
       if (groupUserOverride) {
         for (const perm of CHANNEL_OVERRIDABLE) {
@@ -272,30 +272,32 @@ export function getChannelPermissions(userId: string, channelId: string): RolePe
  * For channel-overridable permissions, applies override resolution.
  * For server-only permissions, uses base role permissions.
  */
-export function hasChannelPermission(
+export async function hasChannelPermission(
   userId: string,
   channelId: string,
   perm: keyof RolePermissions,
-): boolean {
-  const channel = db.prepare('SELECT server_id FROM channels WHERE id = ?').get(channelId) as
-    | { server_id: string | null }
-    | undefined;
+): Promise<boolean> {
+  const channel = await getDb().queryOne<{ server_id: string | null }>(
+    'SELECT server_id FROM channels WHERE id = ?',
+    [channelId],
+  );
   const serverId = channel?.server_id ?? undefined;
-  const basePerms = getUserPermissions(userId, serverId);
+  const basePerms = await getUserPermissions(userId, serverId);
   if (basePerms.administrator) return true;
 
   if (!CHANNEL_OVERRIDABLE.includes(perm as ChannelOverridablePermission)) {
     return !!basePerms[perm];
   }
 
-  const resolved = getChannelPermissions(userId, channelId);
+  const resolved = await getChannelPermissions(userId, channelId);
   return !!resolved[perm];
 }
 
-export function hasChannelAccess(userId: string, channelId: string): boolean {
-  const channel = db.prepare('SELECT id, type FROM channels WHERE id = ?').get(channelId) as
-    | { id: string; type: string }
-    | undefined;
+export async function hasChannelAccess(userId: string, channelId: string): Promise<boolean> {
+  const channel = await getDb().queryOne<{ id: string; type: string }>(
+    'SELECT id, type FROM channels WHERE id = ?',
+    [channelId],
+  );
   if (!channel) return false;
   if (channel.type === 'dm') return true;
 
@@ -306,12 +308,12 @@ export function hasChannelAccess(userId: string, channelId: string): boolean {
 const channelAccessCache = new Map<string, { users: string[]; expiresAt: number }>();
 const CHANNEL_ACCESS_CACHE_TTL = 5000; // 5 seconds
 
-export function getCachedChannelAccess(channelId: string): string[] {
+export async function getCachedChannelAccess(channelId: string): Promise<string[]> {
   const cached = channelAccessCache.get(channelId);
   if (cached && Date.now() < cached.expiresAt) {
     return cached.users;
   }
-  const users = getUsersWithChannelAccess(channelId);
+  const users = await getUsersWithChannelAccess(channelId);
   channelAccessCache.set(channelId, { users, expiresAt: Date.now() + CHANNEL_ACCESS_CACHE_TTL });
   return users;
 }
@@ -328,30 +330,30 @@ export function invalidateChannelAccessCache(channelId?: string) {
  * Get all user IDs who can view a channel.
  * Returns empty array if channel has no view_channel overrides (meaning everyone can see it).
  */
-export function getUsersWithChannelAccess(channelId: string): string[] {
+export async function getUsersWithChannelAccess(channelId: string): Promise<string[]> {
   // Check if any overrides affect view_channel for this channel
-  const hasViewOverrides = db
-    .prepare(
-      'SELECT 1 FROM channel_permission_overrides WHERE channel_id = ? AND view_channel IS NOT NULL',
-    )
-    .get(channelId);
+  const hasViewOverrides = await getDb().queryOne(
+    'SELECT 1 FROM channel_permission_overrides WHERE channel_id = ? AND view_channel IS NOT NULL',
+    [channelId],
+  );
 
   // Also check group-level view_channel overrides (only if group has permissions_enabled)
-  const channel = db.prepare('SELECT group_id, server_id FROM channels WHERE id = ?').get(channelId) as
-    | { group_id: string | null; server_id: string | null }
-    | undefined;
+  const channel = await getDb().queryOne<{ group_id: string | null; server_id: string | null }>(
+    'SELECT group_id, server_id FROM channels WHERE id = ?',
+    [channelId],
+  );
   const serverId = channel?.server_id ?? undefined;
   let hasGroupViewOverrides: unknown = null;
   if (channel?.group_id) {
-    const groupRow = db
-      .prepare('SELECT permissions_enabled FROM channel_groups WHERE id = ?')
-      .get(channel.group_id) as { permissions_enabled: number } | undefined;
+    const groupRow = await getDb().queryOne<{ permissions_enabled: number }>(
+      'SELECT permissions_enabled FROM channel_groups WHERE id = ?',
+      [channel.group_id],
+    );
     if (groupRow?.permissions_enabled) {
-      hasGroupViewOverrides = db
-        .prepare(
-          'SELECT 1 FROM group_permission_overrides WHERE group_id = ? AND view_channel IS NOT NULL',
-        )
-        .get(channel.group_id);
+      hasGroupViewOverrides = await getDb().queryOne(
+        'SELECT 1 FROM group_permission_overrides WHERE group_id = ? AND view_channel IS NOT NULL',
+        [channel.group_id],
+      );
     }
   }
 
@@ -359,37 +361,32 @@ export function getUsersWithChannelAccess(channelId: string): string[] {
 
   // Batch: get all users with their role permissions in one query
   const allUsers = serverId
-    ? (db
-        .prepare(
-          `SELECT u.id, GROUP_CONCAT(r.permissions, '|||') as all_perms
+    ? await getDb().query<{ id: string; all_perms: string | null }>(
+        `SELECT u.id, GROUP_CONCAT(r.permissions, '|||') as all_perms
            FROM users u
            JOIN server_members sm ON sm.user_id = u.id AND sm.server_id = ?
            LEFT JOIN user_roles ur ON ur.user_id = u.id
            LEFT JOIN roles r ON r.id = ur.role_id AND r.server_id = ?
            GROUP BY u.id`,
-        )
-        .all(serverId, serverId) as { id: string; all_perms: string | null }[])
-    : (db
-        .prepare(
-          `SELECT u.id, GROUP_CONCAT(r.permissions, '|||') as all_perms
+        [serverId, serverId],
+      )
+    : await getDb().query<{ id: string; all_perms: string | null }>(
+        `SELECT u.id, GROUP_CONCAT(r.permissions, '|||') as all_perms
            FROM users u
            LEFT JOIN user_roles ur ON ur.user_id = u.id
            LEFT JOIN roles r ON r.id = ur.role_id
            GROUP BY u.id`,
-        )
-        .all() as { id: string; all_perms: string | null }[]);
+      );
 
   // Pre-fetch all channel overrides for this channel (2 queries total)
-  const channelRoleOverrides = db
-    .prepare(
-      `SELECT * FROM channel_permission_overrides WHERE channel_id = ? AND target_type = 'role'`,
-    )
-    .all(channelId) as Record<string, unknown>[];
-  const channelUserOverrides = db
-    .prepare(
-      `SELECT * FROM channel_permission_overrides WHERE channel_id = ? AND target_type = 'user'`,
-    )
-    .all(channelId) as Record<string, unknown>[];
+  const channelRoleOverrides = await getDb().query<Record<string, unknown>>(
+    `SELECT * FROM channel_permission_overrides WHERE channel_id = ? AND target_type = 'role'`,
+    [channelId],
+  );
+  const channelUserOverrides = await getDb().query<Record<string, unknown>>(
+    `SELECT * FROM channel_permission_overrides WHERE channel_id = ? AND target_type = 'user'`,
+    [channelId],
+  );
   const userOverrideMap = new Map(
     channelUserOverrides.map((o) => [o.target_id as string, o]),
   );
@@ -398,20 +395,19 @@ export function getUsersWithChannelAccess(channelId: string): string[] {
   let groupRoleOverrides: Record<string, unknown>[] = [];
   let groupUserOverrideMap = new Map<string, Record<string, unknown>>();
   if (channel?.group_id) {
-    const groupRow = db
-      .prepare('SELECT permissions_enabled FROM channel_groups WHERE id = ?')
-      .get(channel.group_id) as { permissions_enabled: number } | undefined;
+    const groupRow = await getDb().queryOne<{ permissions_enabled: number }>(
+      'SELECT permissions_enabled FROM channel_groups WHERE id = ?',
+      [channel.group_id],
+    );
     if (groupRow?.permissions_enabled) {
-      groupRoleOverrides = db
-        .prepare(
-          `SELECT * FROM group_permission_overrides WHERE group_id = ? AND target_type = 'role'`,
-        )
-        .all(channel.group_id) as Record<string, unknown>[];
-      const groupUserOverrides = db
-        .prepare(
-          `SELECT * FROM group_permission_overrides WHERE group_id = ? AND target_type = 'user'`,
-        )
-        .all(channel.group_id) as Record<string, unknown>[];
+      groupRoleOverrides = await getDb().query<Record<string, unknown>>(
+        `SELECT * FROM group_permission_overrides WHERE group_id = ? AND target_type = 'role'`,
+        [channel.group_id],
+      );
+      const groupUserOverrides = await getDb().query<Record<string, unknown>>(
+        `SELECT * FROM group_permission_overrides WHERE group_id = ? AND target_type = 'user'`,
+        [channel.group_id],
+      );
       groupUserOverrideMap = new Map(
         groupUserOverrides.map((o) => [o.target_id as string, o]),
       );
@@ -420,16 +416,15 @@ export function getUsersWithChannelAccess(channelId: string): string[] {
 
   // Pre-fetch all user role mappings (scoped to server when available)
   const allUserRoles = serverId
-    ? (db
-        .prepare(
-          `SELECT user_id, role_id FROM user_roles ur
+    ? await getDb().query<{ user_id: string; role_id: string }>(
+        `SELECT user_id, role_id FROM user_roles ur
            JOIN roles r ON r.id = ur.role_id
            WHERE r.server_id = ?`,
-        )
-        .all(serverId) as { user_id: string; role_id: string }[])
-    : (db
-        .prepare('SELECT user_id, role_id FROM user_roles')
-        .all() as { user_id: string; role_id: string }[]);
+        [serverId],
+      )
+    : await getDb().query<{ user_id: string; role_id: string }>(
+        'SELECT user_id, role_id FROM user_roles',
+      );
   const userRolesMap = new Map<string, string[]>();
   for (const ur of allUserRoles) {
     const list = userRolesMap.get(ur.user_id) || [];
@@ -512,28 +507,32 @@ export function getUsersWithChannelAccess(channelId: string): string[] {
   return result;
 }
 
-export function isAlphaPhase(): boolean {
-  const row = db.prepare('SELECT alpha_billing FROM instance_settings WHERE id = 1').get() as { alpha_billing: number } | undefined;
+export async function isAlphaPhase(): Promise<boolean> {
+  const row = await getDb().queryOne<{ alpha_billing: number }>(
+    'SELECT alpha_billing FROM instance_settings WHERE id = 1',
+  );
   return !!row?.alpha_billing;
 }
 
-export function isPremium(userId: string): boolean {
-  if (isAlphaPhase()) return true;
+export async function isPremium(userId: string): Promise<boolean> {
+  if (await isAlphaPhase()) return true;
 
-  const row = db.prepare(
+  const row = await getDb().queryOne(
     `SELECT 1 FROM user_roles ur
      JOIN roles r ON r.id = ur.role_id
      WHERE ur.user_id = ? AND r.pro = 1`,
-  ).get(userId);
+    [userId],
+  );
   return !!row;
 }
 
-export function isAppEnabled(appId: string, serverId?: string): boolean {
+export async function isAppEnabled(appId: string, serverId?: string): Promise<boolean> {
   // 1. Check per-server settings if serverId provided
   if (serverId) {
-    const row = db.prepare('SELECT enabled_apps FROM servers WHERE id = ?').get(serverId) as
-      | { enabled_apps: string }
-      | undefined;
+    const row = await getDb().queryOne<{ enabled_apps: string }>(
+      'SELECT enabled_apps FROM servers WHERE id = ?',
+      [serverId],
+    );
     if (row) {
       try {
         const apps: string[] = JSON.parse(row.enabled_apps);
@@ -545,9 +544,9 @@ export function isAppEnabled(appId: string, serverId?: string): boolean {
   }
 
   // 2. Fallback to instance-wide settings
-  const row = db.prepare('SELECT enabled_apps FROM server_settings WHERE id = 1').get() as
-    | { enabled_apps: string }
-    | undefined;
+  const row = await getDb().queryOne<{ enabled_apps: string }>(
+    'SELECT enabled_apps FROM server_settings WHERE id = 1',
+  );
   if (!row) return false;
   try {
     const apps: string[] = JSON.parse(row.enabled_apps);

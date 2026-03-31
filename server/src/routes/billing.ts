@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'crypto';
 import Stripe from 'stripe';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { config } from '../config.js';
 import { requireAuth } from '../auth/middleware.js';
 import { isAlphaPhase } from '../auth/permissions.js';
@@ -20,18 +20,6 @@ function getStripe(): Stripe {
   return stripe;
 }
 
-function getOrCreateCustomerId(userId: string, email?: string): string {
-  // Check if user already has a Stripe customer ID
-  const existing = db.prepare(
-    'SELECT stripe_customer_id FROM subscriptions WHERE user_id = ? AND stripe_customer_id IS NOT NULL LIMIT 1',
-  ).get(userId) as { stripe_customer_id: string } | undefined;
-
-  if (existing) return existing.stripe_customer_id;
-
-  // Look up from Stripe by metadata
-  return ''; // Will be created during checkout
-}
-
 export default async function billingRoutes(app: FastifyInstance) {
   const stripeConfigured = !!config.stripe.secretKey;
 
@@ -41,15 +29,17 @@ export default async function billingRoutes(app: FastifyInstance) {
     { preHandler: requireAuth },
     async (request) => {
       const userId = request.user.userId;
-      const user = db.prepare('SELECT premium_tier FROM users WHERE id = ?').get(userId) as
-        | { premium_tier: string }
-        | undefined;
-      const sub = db.prepare(
+      const user = await getDb().queryOne<{ premium_tier: string }>(
+        'SELECT premium_tier FROM users WHERE id = ?',
+        [userId],
+      );
+      const sub = await getDb().queryOne<{ status: string; tier: string; current_period_end: string | null }>(
         "SELECT status, tier, current_period_end FROM subscriptions WHERE user_id = ? AND status != 'canceled' ORDER BY created_at DESC LIMIT 1",
-      ).get(userId) as { status: string; tier: string; current_period_end: string | null } | undefined;
+        [userId],
+      );
 
       let tier = user?.premium_tier || 'free';
-      if (isAlphaPhase()) {
+      if (await isAlphaPhase()) {
         tier = 'pro';
       }
 
@@ -73,15 +63,16 @@ export default async function billingRoutes(app: FastifyInstance) {
     { preHandler: requireAuth },
     async (request, reply) => {
       const userId = request.user.userId;
-      const user = db.prepare('SELECT id, email, username, premium_tier FROM users WHERE id = ?').get(userId) as
-        | { id: string; email: string | null; username: string; premium_tier: string }
-        | undefined;
+      const user = await getDb().queryOne<{ id: string; email: string | null; username: string; premium_tier: string }>(
+        'SELECT id, email, username, premium_tier FROM users WHERE id = ?',
+        [userId],
+      );
 
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
       }
 
-      if (isAlphaPhase() || user.premium_tier === 'pro') {
+      if (await isAlphaPhase() || user.premium_tier === 'pro') {
         return reply.code(400).send({ error: 'Already subscribed to Pro' });
       }
 
@@ -114,9 +105,10 @@ export default async function billingRoutes(app: FastifyInstance) {
     { preHandler: requireAuth },
     async (request, reply) => {
       const userId = request.user.userId;
-      const sub = db.prepare(
+      const sub = await getDb().queryOne<{ stripe_customer_id: string }>(
         "SELECT stripe_customer_id FROM subscriptions WHERE user_id = ? AND status != 'canceled' LIMIT 1",
-      ).get(userId) as { stripe_customer_id: string } | undefined;
+        [userId],
+      );
 
       if (!sub?.stripe_customer_id) {
         return reply.code(400).send({ error: 'No active subscription found' });
@@ -185,51 +177,56 @@ export default async function billingRoutes(app: FastifyInstance) {
             const sub = await s.subscriptions.retrieve(subId) as any;
             const periodEnd = sub.current_period_end || sub.items?.data?.[0]?.current_period_end;
 
-            db.prepare(
+            await getDb().run(
               `INSERT INTO subscriptions (id, user_id, stripe_subscription_id, stripe_customer_id, status, tier, current_period_end)
                VALUES (?, ?, ?, ?, 'active', 'pro', ?)`,
-            ).run(randomUUID(), userId, subId, custId, periodEnd ? new Date(periodEnd * 1000).toISOString() : null);
+              [randomUUID(), userId, subId, custId, periodEnd ? new Date(periodEnd * 1000).toISOString() : null],
+            );
 
             // Assign Pro role
-            assignProRole(userId);
-            logAuditEvent('role_change', userId, userId, '', { action: 'add', role: 'Pro', source: 'stripe' });
+            await assignProRole(userId);
+            await logAuditEvent('role_change', userId, userId, '', { action: 'add', role: 'Pro', source: 'stripe' });
             break;
           }
 
           case 'customer.subscription.updated': {
             const sub = event.data.object as any;
-            const existing = db.prepare(
+            const existing = await getDb().queryOne<{ user_id: string }>(
               'SELECT user_id FROM subscriptions WHERE stripe_subscription_id = ?',
-            ).get(sub.id) as { user_id: string } | undefined;
+              [sub.id],
+            );
             if (!existing) break;
 
             const status = sub.status === 'active' ? 'active' : sub.status === 'past_due' ? 'past_due' : 'canceled';
             const updatedPeriodEnd = sub.current_period_end || sub.items?.data?.[0]?.current_period_end;
-            db.prepare(
+            await getDb().run(
               'UPDATE subscriptions SET status = ?, current_period_end = ? WHERE stripe_subscription_id = ?',
-            ).run(status, updatedPeriodEnd ? new Date(updatedPeriodEnd * 1000).toISOString() : null, sub.id);
+              [status, updatedPeriodEnd ? new Date(updatedPeriodEnd * 1000).toISOString() : null, sub.id],
+            );
 
             if (status === 'active') {
-              assignProRole(existing.user_id);
+              await assignProRole(existing.user_id);
             } else if (status === 'canceled') {
-              removeProRole(existing.user_id);
+              await removeProRole(existing.user_id);
             }
             break;
           }
 
           case 'customer.subscription.deleted': {
             const sub = event.data.object as Stripe.Subscription;
-            const existing = db.prepare(
+            const existing = await getDb().queryOne<{ user_id: string }>(
               'SELECT user_id FROM subscriptions WHERE stripe_subscription_id = ?',
-            ).get(sub.id) as { user_id: string } | undefined;
+              [sub.id],
+            );
             if (!existing) break;
 
-            db.prepare(
+            await getDb().run(
               "UPDATE subscriptions SET status = 'canceled' WHERE stripe_subscription_id = ?",
-            ).run(sub.id);
+              [sub.id],
+            );
 
-            removeProRole(existing.user_id);
-            logAuditEvent('role_change', existing.user_id, existing.user_id, '', { action: 'remove', role: 'Pro', source: 'stripe' });
+            await removeProRole(existing.user_id);
+            await logAuditEvent('role_change', existing.user_id, existing.user_id, '', { action: 'remove', role: 'Pro', source: 'stripe' });
             break;
           }
         }
@@ -244,31 +241,32 @@ export default async function billingRoutes(app: FastifyInstance) {
   });
 }
 
-function assignProRole(userId: string) {
-  const proRole = db.prepare(
+async function assignProRole(userId: string) {
+  const proRole = await getDb().queryOne<{ id: string }>(
     "SELECT id FROM roles WHERE server_id IS NULL AND pro = 1 LIMIT 1",
-  ).get() as { id: string } | undefined;
+  );
   if (!proRole) return;
 
-  db.prepare('INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)').run(userId, proRole.id);
-  db.prepare("UPDATE users SET premium_tier = 'pro' WHERE id = ?").run(userId);
+  await getDb().run('INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)', [userId, proRole.id]);
+  await getDb().run("UPDATE users SET premium_tier = 'pro' WHERE id = ?", [userId]);
   broadcast({ type: 'user:updated', userId });
 }
 
-function removeProRole(userId: string) {
-  const proRole = db.prepare(
+async function removeProRole(userId: string) {
+  const proRole = await getDb().queryOne<{ id: string }>(
     "SELECT id FROM roles WHERE server_id IS NULL AND pro = 1 LIMIT 1",
-  ).get() as { id: string } | undefined;
+  );
   if (!proRole) return;
 
-  db.prepare('DELETE FROM user_roles WHERE user_id = ? AND role_id = ?').run(userId, proRole.id);
+  await getDb().run('DELETE FROM user_roles WHERE user_id = ? AND role_id = ?', [userId, proRole.id]);
 
   // Check if user still has any other pro role
-  const stillPro = db.prepare(
+  const stillPro = await getDb().queryOne(
     `SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ? AND r.pro = 1`,
-  ).get(userId);
+    [userId],
+  );
   if (!stillPro) {
-    db.prepare("UPDATE users SET premium_tier = 'free' WHERE id = ?").run(userId);
+    await getDb().run("UPDATE users SET premium_tier = 'free' WHERE id = ?", [userId]);
   }
   broadcast({ type: 'user:updated', userId });
 }

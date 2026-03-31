@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'crypto';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { requireAuth } from '../auth/middleware.js';
 import { sendTo, getClient } from '../ws/index.js';
 import type { FriendInfo, FriendRequest, Friendship } from '@voip-server/shared';
@@ -16,9 +16,10 @@ export default async function friendRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'username query parameter is required' });
       }
 
-      const user = db.prepare(
-        'SELECT id, username, display_name, avatar_url FROM users WHERE LOWER(username) = ? AND email_verified = 1'
-      ).get(username.toLowerCase()) as any;
+      const user = await getDb().queryOne(
+        'SELECT id, username, display_name, avatar_url FROM users WHERE LOWER(username) = ? AND email_verified = 1',
+        [username.toLowerCase()],
+      );
 
       if (!user) {
         return reply.status(404).send({ error: 'User not found' });
@@ -31,17 +32,18 @@ export default async function friendRoutes(app: FastifyInstance) {
   app.get('/api/friends', { preHandler: requireAuth }, async (request) => {
     const userId = request.user.userId;
 
-    const rows = db.prepare(
+    const rows = await getDb().query(
       `SELECT f.id as friendship_id, u.id, u.username, u.display_name, u.avatar_url
        FROM friendships f
        JOIN users u ON (CASE WHEN f.user_id = ? THEN f.target_id ELSE f.user_id END) = u.id
-       WHERE (f.user_id = ? OR f.target_id = ?) AND f.status = 'accepted'`
-    ).all(userId, userId, userId) as any[];
+       WHERE (f.user_id = ? OR f.target_id = ?) AND f.status = 'accepted'`,
+      [userId, userId, userId],
+    );
 
     // Deduplicate by user id (bidirectional rows may produce duplicates)
     const seen = new Set<string>();
     const friends: FriendInfo[] = [];
-    for (const row of rows) {
+    for (const row of rows as any[]) {
       if (seen.has(row.id)) continue;
       seen.add(row.id);
       const client = getClient(row.id);
@@ -63,22 +65,24 @@ export default async function friendRoutes(app: FastifyInstance) {
   app.get('/api/friends/pending', { preHandler: requireAuth }, async (request) => {
     const userId = request.user.userId;
 
-    const incoming = db.prepare(
+    const incoming = await getDb().query(
       `SELECT f.id, f.created_at, u.id as user_id, u.username, u.display_name, u.avatar_url
        FROM friendships f
        JOIN users u ON f.user_id = u.id
-       WHERE f.target_id = ? AND f.status = 'pending'`
-    ).all(userId) as any[];
+       WHERE f.target_id = ? AND f.status = 'pending'`,
+      [userId],
+    );
 
-    const outgoing = db.prepare(
+    const outgoing = await getDb().query(
       `SELECT f.id, f.created_at, u.id as user_id, u.username, u.display_name, u.avatar_url
        FROM friendships f
        JOIN users u ON f.target_id = u.id
-       WHERE f.user_id = ? AND f.status = 'pending'`
-    ).all(userId) as any[];
+       WHERE f.user_id = ? AND f.status = 'pending'`,
+      [userId],
+    );
 
     const requests: FriendRequest[] = [
-      ...incoming.map((r: any) => ({
+      ...(incoming as any[]).map((r: any) => ({
         id: r.id,
         user: {
           id: r.user_id,
@@ -89,7 +93,7 @@ export default async function friendRoutes(app: FastifyInstance) {
         direction: 'incoming' as const,
         created_at: r.created_at,
       })),
-      ...outgoing.map((r: any) => ({
+      ...(outgoing as any[]).map((r: any) => ({
         id: r.id,
         user: {
           id: r.user_id,
@@ -109,14 +113,15 @@ export default async function friendRoutes(app: FastifyInstance) {
   app.get('/api/friends/blocked', { preHandler: requireAuth }, async (request) => {
     const userId = request.user.userId;
 
-    const rows = db.prepare(
+    const rows = await getDb().query(
       `SELECT u.id, u.username, u.display_name, u.avatar_url
        FROM friendships f
        JOIN users u ON f.target_id = u.id
-       WHERE f.user_id = ? AND f.status = 'blocked'`
-    ).all(userId) as any[];
+       WHERE f.user_id = ? AND f.status = 'blocked'`,
+      [userId],
+    );
 
-    return rows.map((r: any): FriendInfo => ({
+    return (rows as any[]).map((r: any): FriendInfo => ({
       id: r.id,
       username: r.username,
       display_name: r.display_name,
@@ -141,63 +146,67 @@ export default async function friendRoutes(app: FastifyInstance) {
       }
 
       // Verify target exists
-      const targetUser = db.prepare('SELECT id FROM users WHERE id = ?').get(target_id) as any;
+      const targetUser = await getDb().queryOne('SELECT id FROM users WHERE id = ?', [target_id]);
       if (!targetUser) {
         return reply.status(404).send({ error: 'User not found' });
       }
 
       // Check if blocked by target
-      const blockedByTarget = db.prepare(
-        "SELECT id FROM friendships WHERE user_id = ? AND target_id = ? AND status = 'blocked'"
-      ).get(target_id, userId) as any;
+      const blockedByTarget = await getDb().queryOne(
+        "SELECT id FROM friendships WHERE user_id = ? AND target_id = ? AND status = 'blocked'",
+        [target_id, userId],
+      );
       if (blockedByTarget) {
         return reply.status(403).send({ error: 'Cannot send friend request to this user' });
       }
 
       // Check if already friends
-      const alreadyFriends = db.prepare(
+      const alreadyFriends = await getDb().queryOne(
         `SELECT id FROM friendships
          WHERE ((user_id = ? AND target_id = ?) OR (user_id = ? AND target_id = ?))
-         AND status = 'accepted'`
-      ).get(userId, target_id, target_id, userId) as any;
+         AND status = 'accepted'`,
+        [userId, target_id, target_id, userId],
+      );
       if (alreadyFriends) {
         return reply.status(400).send({ error: 'Already friends with this user' });
       }
 
       // Check if pending request already exists from current user to target
-      const existingRequest = db.prepare(
-        "SELECT id FROM friendships WHERE user_id = ? AND target_id = ? AND status = 'pending'"
-      ).get(userId, target_id) as any;
+      const existingRequest = await getDb().queryOne(
+        "SELECT id FROM friendships WHERE user_id = ? AND target_id = ? AND status = 'pending'",
+        [userId, target_id],
+      );
       if (existingRequest) {
         return reply.status(400).send({ error: 'Friend request already sent' });
       }
 
       // Check if target already sent a pending request to current user — auto-accept
-      const reverseRequest = db.prepare(
-        "SELECT id FROM friendships WHERE user_id = ? AND target_id = ? AND status = 'pending'"
-      ).get(target_id, userId) as any;
+      const reverseRequest = await getDb().queryOne<{ id: string }>(
+        "SELECT id FROM friendships WHERE user_id = ? AND target_id = ? AND status = 'pending'",
+        [target_id, userId],
+      );
 
       if (reverseRequest) {
-        const autoAccept = db.transaction(() => {
+        await getDb().transaction(async (tx) => {
           // Update the existing request to accepted
-          db.prepare(
-            "UPDATE friendships SET status = 'accepted' WHERE id = ?"
-          ).run(reverseRequest.id);
+          await tx.run(
+            "UPDATE friendships SET status = 'accepted' WHERE id = ?",
+            [reverseRequest.id],
+          );
 
           // Insert reverse row for bidirectional lookup
           const reverseId = randomUUID();
-          db.prepare(
-            "INSERT INTO friendships (id, user_id, target_id, status) VALUES (?, ?, ?, 'accepted')"
-          ).run(reverseId, userId, target_id);
-
-          return reverseRequest.id;
+          await tx.run(
+            "INSERT INTO friendships (id, user_id, target_id, status) VALUES (?, ?, ?, 'accepted')",
+            [reverseId, userId, target_id],
+          );
         });
-        autoAccept();
 
         // Get current user info for the WS event
-        const currentUser = db.prepare(
-          'SELECT id, username, display_name, avatar_url FROM users WHERE id = ?'
-        ).get(userId) as any;
+        const currentUser = await getDb().queryOne(
+          'SELECT id, username, display_name, avatar_url FROM users WHERE id = ?',
+          [userId],
+        ) as any;
 
         const friendInfo: FriendInfo = {
           id: currentUser.id,
@@ -214,22 +223,24 @@ export default async function friendRoutes(app: FastifyInstance) {
           friend: friendInfo,
         });
 
-        const row = db.prepare('SELECT * FROM friendships WHERE id = ?').get(reverseRequest.id) as Friendship;
+        const row = await getDb().queryOne<Friendship>('SELECT * FROM friendships WHERE id = ?', [reverseRequest.id]);
         return row;
       }
 
       // Insert new pending request
       const id = randomUUID();
-      db.prepare(
-        "INSERT INTO friendships (id, user_id, target_id, status) VALUES (?, ?, ?, 'pending')"
-      ).run(id, userId, target_id);
+      await getDb().run(
+        "INSERT INTO friendships (id, user_id, target_id, status) VALUES (?, ?, ?, 'pending')",
+        [id, userId, target_id],
+      );
 
-      const friendship = db.prepare('SELECT * FROM friendships WHERE id = ?').get(id) as Friendship;
+      const friendship = await getDb().queryOne<Friendship>('SELECT * FROM friendships WHERE id = ?', [id]);
 
       // Build WS event
-      const senderInfo = db.prepare(
-        'SELECT id, username, display_name, avatar_url FROM users WHERE id = ?'
-      ).get(userId) as any;
+      const senderInfo = await getDb().queryOne(
+        'SELECT id, username, display_name, avatar_url FROM users WHERE id = ?',
+        [userId],
+      ) as any;
 
       const friendRequest: FriendRequest = {
         id,
@@ -240,7 +251,7 @@ export default async function friendRoutes(app: FastifyInstance) {
           avatar_url: senderInfo.avatar_url,
         },
         direction: 'incoming',
-        created_at: friendship.created_at,
+        created_at: friendship!.created_at,
       };
 
       sendTo(target_id, {
@@ -260,9 +271,10 @@ export default async function friendRoutes(app: FastifyInstance) {
       const userId = request.user.userId;
       const { id } = request.params;
 
-      const friendship = db.prepare(
-        "SELECT * FROM friendships WHERE id = ? AND status = 'pending'"
-      ).get(id) as Friendship | undefined;
+      const friendship = await getDb().queryOne<Friendship>(
+        "SELECT * FROM friendships WHERE id = ? AND status = 'pending'",
+        [id],
+      );
 
       if (!friendship) {
         return reply.status(404).send({ error: 'Friend request not found' });
@@ -272,22 +284,23 @@ export default async function friendRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'Cannot accept this request' });
       }
 
-      const accept = db.transaction(() => {
+      await getDb().transaction(async (tx) => {
         // Update the request to accepted
-        db.prepare("UPDATE friendships SET status = 'accepted' WHERE id = ?").run(id);
+        await tx.run("UPDATE friendships SET status = 'accepted' WHERE id = ?", [id]);
 
         // Insert reverse row for bidirectional lookup
         const reverseId = randomUUID();
-        db.prepare(
-          "INSERT INTO friendships (id, user_id, target_id, status) VALUES (?, ?, ?, 'accepted')"
-        ).run(reverseId, userId, friendship.user_id);
+        await tx.run(
+          "INSERT INTO friendships (id, user_id, target_id, status) VALUES (?, ?, ?, 'accepted')",
+          [reverseId, userId, friendship.user_id],
+        );
       });
-      accept();
 
       // Send WS event to the requester
-      const currentUser = db.prepare(
-        'SELECT id, username, display_name, avatar_url FROM users WHERE id = ?'
-      ).get(userId) as any;
+      const currentUser = await getDb().queryOne(
+        'SELECT id, username, display_name, avatar_url FROM users WHERE id = ?',
+        [userId],
+      ) as any;
 
       const client = getClient(userId);
       const friendInfo: FriendInfo = {
@@ -318,9 +331,10 @@ export default async function friendRoutes(app: FastifyInstance) {
       const userId = request.user.userId;
       const { id } = request.params;
 
-      const friendship = db.prepare(
-        "SELECT * FROM friendships WHERE id = ? AND status = 'pending'"
-      ).get(id) as Friendship | undefined;
+      const friendship = await getDb().queryOne<Friendship>(
+        "SELECT * FROM friendships WHERE id = ? AND status = 'pending'",
+        [id],
+      );
 
       if (!friendship) {
         return reply.status(404).send({ error: 'Friend request not found' });
@@ -330,7 +344,7 @@ export default async function friendRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'Cannot decline this request' });
       }
 
-      db.prepare('DELETE FROM friendships WHERE id = ?').run(id);
+      await getDb().run('DELETE FROM friendships WHERE id = ?', [id]);
 
       return { ok: true };
     },
@@ -344,9 +358,10 @@ export default async function friendRoutes(app: FastifyInstance) {
       const userId = request.user.userId;
       const { id } = request.params;
 
-      const friendship = db.prepare(
-        'SELECT * FROM friendships WHERE id = ?'
-      ).get(id) as Friendship | undefined;
+      const friendship = await getDb().queryOne<Friendship>(
+        'SELECT * FROM friendships WHERE id = ?',
+        [id],
+      );
 
       if (!friendship) {
         return reply.status(404).send({ error: 'Friendship not found' });
@@ -358,13 +373,11 @@ export default async function friendRoutes(app: FastifyInstance) {
 
       const otherId = friendship.user_id === userId ? friendship.target_id : friendship.user_id;
 
-      const removeFriend = db.transaction(() => {
-        // Delete both direction rows
-        db.prepare(
-          'DELETE FROM friendships WHERE (user_id = ? AND target_id = ?) OR (user_id = ? AND target_id = ?)'
-        ).run(userId, otherId, otherId, userId);
-      });
-      removeFriend();
+      // Delete both direction rows
+      await getDb().run(
+        'DELETE FROM friendships WHERE (user_id = ? AND target_id = ?) OR (user_id = ? AND target_id = ?)',
+        [userId, otherId, otherId, userId],
+      );
 
       sendTo(otherId, {
         type: 'friend:removed',
@@ -388,24 +401,25 @@ export default async function friendRoutes(app: FastifyInstance) {
       }
 
       // Verify target exists
-      const targetUser = db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId) as any;
+      const targetUser = await getDb().queryOne('SELECT id FROM users WHERE id = ?', [targetUserId]);
       if (!targetUser) {
         return reply.status(404).send({ error: 'User not found' });
       }
 
-      const blockUser = db.transaction(() => {
+      await getDb().transaction(async (tx) => {
         // Delete any existing friendship rows between the two users
-        db.prepare(
-          'DELETE FROM friendships WHERE (user_id = ? AND target_id = ?) OR (user_id = ? AND target_id = ?)'
-        ).run(currentUserId, targetUserId, targetUserId, currentUserId);
+        await tx.run(
+          'DELETE FROM friendships WHERE (user_id = ? AND target_id = ?) OR (user_id = ? AND target_id = ?)',
+          [currentUserId, targetUserId, targetUserId, currentUserId],
+        );
 
         // Insert blocked row
         const id = randomUUID();
-        db.prepare(
-          "INSERT INTO friendships (id, user_id, target_id, status) VALUES (?, ?, ?, 'blocked')"
-        ).run(id, currentUserId, targetUserId);
+        await tx.run(
+          "INSERT INTO friendships (id, user_id, target_id, status) VALUES (?, ?, ?, 'blocked')",
+          [id, currentUserId, targetUserId],
+        );
       });
-      blockUser();
 
       // Send friend:removed to target (don't reveal the block)
       sendTo(targetUserId, {
@@ -425,9 +439,10 @@ export default async function friendRoutes(app: FastifyInstance) {
       const currentUserId = request.user.userId;
       const targetUserId = request.params.userId;
 
-      const result = db.prepare(
-        "DELETE FROM friendships WHERE user_id = ? AND target_id = ? AND status = 'blocked'"
-      ).run(currentUserId, targetUserId);
+      const result = await getDb().run(
+        "DELETE FROM friendships WHERE user_id = ? AND target_id = ? AND status = 'blocked'",
+        [currentUserId, targetUserId],
+      );
 
       if (result.changes === 0) {
         return reply.status(404).send({ error: 'Block not found' });

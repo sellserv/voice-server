@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'crypto';
 import jwt from 'jsonwebtoken';
 import * as OTPAuth from 'otpauth';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { hashPassword, verifyPassword } from '../auth/passwords.js';
 import { createSession, revokeSession, revokeAllUserSessions } from '../auth/sessions.js';
 import {
@@ -99,7 +99,7 @@ function isValidEmail(email: string): boolean {
 export default async function authRoutes(app: FastifyInstance) {
   // Setup status — returns public config for the login page
   app.get('/api/auth/setup-status', authRateLimit, async (_request, reply) => {
-    const instanceSettings = db.prepare('SELECT allow_registration, terms_url, privacy_url FROM instance_settings WHERE id = 1').get() as { allow_registration: number; terms_url: string; privacy_url: string } | undefined;
+    const instanceSettings = await getDb().queryOne<{ allow_registration: number; terms_url: string; privacy_url: string }>('SELECT allow_registration, terms_url, privacy_url FROM instance_settings WHERE id = 1');
     return reply.send({
       turnstileSiteKey: isTurnstileEnabled() ? config.turnstileSiteKey : null,
       registrationOpen: instanceSettings ? !!instanceSettings.allow_registration : true,
@@ -111,7 +111,7 @@ export default async function authRoutes(app: FastifyInstance) {
   // Register
   app.post<{ Body: RegisterBody }>('/api/auth/register', authRateLimit, async (request, reply) => {
     // Check if registration is enabled
-    const instanceSettings = db.prepare('SELECT allow_registration FROM instance_settings WHERE id = 1').get() as { allow_registration: number } | undefined;
+    const instanceSettings = await getDb().queryOne<{ allow_registration: number }>('SELECT allow_registration FROM instance_settings WHERE id = 1');
     if (instanceSettings && !instanceSettings.allow_registration) {
       return reply.code(403).send({ error: 'Registration is currently closed' });
     }
@@ -148,7 +148,7 @@ export default async function authRoutes(app: FastifyInstance) {
       }
     }
 
-    const existing = db.prepare('SELECT id, email_verified, created_at FROM users WHERE username = ? OR email = ?').get(username, email) as { id: string; email_verified: number; created_at: string } | undefined;
+    const existing = await getDb().queryOne<{ id: string; email_verified: number; created_at: string }>('SELECT id, email_verified, created_at FROM users WHERE username = ? OR email = ?', [username, email]);
     if (existing) {
       if (!existing.email_verified) {
         // Only allow re-registration over unverified accounts after a cooldown (30 minutes)
@@ -157,19 +157,20 @@ export default async function authRoutes(app: FastifyInstance) {
         if (Date.now() - createdAt < cooldownMs) {
           return reply.code(409).send({ error: 'Username or email already in use. Please try again later.' });
         }
-        db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(existing.id);
-        db.prepare('DELETE FROM email_codes WHERE user_id = ?').run(existing.id);
-        db.prepare('DELETE FROM server_members WHERE user_id = ?').run(existing.id);
-        db.prepare('DELETE FROM users WHERE id = ?').run(existing.id);
+        await getDb().run('DELETE FROM user_roles WHERE user_id = ?', [existing.id]);
+        await getDb().run('DELETE FROM email_codes WHERE user_id = ?', [existing.id]);
+        await getDb().run('DELETE FROM server_members WHERE user_id = ?', [existing.id]);
+        await getDb().run('DELETE FROM users WHERE id = ?', [existing.id]);
       } else {
         return reply.code(409).send({ error: 'Username or email already in use' });
       }
     }
 
     // Check if banned
-    const bannedUser = db
-      .prepare('SELECT id FROM users WHERE username = ? AND banned = 1')
-      .get(username);
+    const bannedUser = await getDb().queryOne(
+      'SELECT id FROM users WHERE username = ? AND banned = 1',
+      [username],
+    );
     if (bannedUser) {
       return reply.code(403).send({ error: 'This account is banned' });
     }
@@ -183,24 +184,25 @@ export default async function authRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'Display name must be 1-32 characters' });
     }
 
-    const defaultRole = db
-      .prepare('SELECT id FROM roles WHERE is_default = 1 AND server_id IS NULL LIMIT 1')
-      .get() as { id: string } | undefined;
+    const defaultRole = await getDb().queryOne<{ id: string }>(
+      'SELECT id FROM roles WHERE is_default = 1 AND server_id IS NULL LIMIT 1',
+    );
     const roleId = defaultRole?.id || null;
 
-    db.transaction(() => {
-      db.prepare(
+    await getDb().transaction(async (tx) => {
+      await tx.run(
         "INSERT INTO users (id, username, display_name, password_hash, role, role_id, email, email_verified, mfa_method, password_changed_at) VALUES (?, ?, ?, ?, 'member', ?, ?, 0, 'email', datetime('now'))",
-      ).run(id, username, sanitizedDisplayName, password_hash, roleId, email);
+        [id, username, sanitizedDisplayName, password_hash, roleId, email],
+      );
 
       if (roleId) {
-        db.prepare('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)').run(id, roleId);
+        await tx.run('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [id, roleId]);
       }
-    })();
+    });
 
     // Send verification email — no JWT until verified
-    const code = createEmailCode(id, 'verification');
-    const template = verificationEmail(code);
+    const code = await createEmailCode(id, 'verification');
+    const template = await verificationEmail(code);
     try {
       await sendEmail(email, template.subject, template.html);
     } catch (e) {
@@ -229,11 +231,10 @@ export default async function authRoutes(app: FastifyInstance) {
       return reply.code(429).send({ error: `Too many login attempts. Try again in ${waitSecs} seconds.` });
     }
 
-    const user = db
-      .prepare(
-        'SELECT id, username, display_name, password_hash, role, role_id, banned, ban_reason, totp_enabled, totp_secret, password_changed_at, created_at, avatar_url, email, email_verified, mfa_method, failed_login_attempts, locked_at FROM users WHERE username = ?',
-      )
-      .get(username) as any;
+    const user = await getDb().queryOne<any>(
+      'SELECT id, username, display_name, password_hash, role, role_id, banned, ban_reason, totp_enabled, totp_secret, password_changed_at, created_at, avatar_url, email, email_verified, mfa_method, failed_login_attempts, locked_at FROM users WHERE username = ?',
+      [username],
+    );
 
     if (!user) {
       return reply.code(401).send({ error: 'Invalid credentials' });
@@ -260,15 +261,16 @@ export default async function authRoutes(app: FastifyInstance) {
 
       const dbAttempts = (user.failed_login_attempts || 0) + 1;
       if (dbAttempts >= 5) {
-        db.prepare(
+        await getDb().run(
           "UPDATE users SET failed_login_attempts = ?, locked_at = datetime('now') WHERE id = ?",
-        ).run(attempts, user.id);
+          [attempts, user.id],
+        );
         const mfaMethod = user.mfa_method || 'email';
         // Send unlock code via email if that's their method
         if (mfaMethod === 'email' && user.email && user.email_verified) {
           try {
-            const code = createEmailCode(user.id, 'mfa');
-            const template = accountLockedEmail(code);
+            const code = await createEmailCode(user.id, 'mfa');
+            const template = await accountLockedEmail(code);
             await sendEmail(user.email, template.subject, template.html);
           } catch (e) {
             console.error('[Auth] Failed to send account locked email:', (e as Error).message);
@@ -276,14 +278,14 @@ export default async function authRoutes(app: FastifyInstance) {
         }
         return reply.send({ account_locked: true, user_id: user.id, mfa_method: mfaMethod });
       }
-      db.prepare('UPDATE users SET failed_login_attempts = ? WHERE id = ?').run(dbAttempts, user.id);
-      logAuditEvent('failed_login', null, null, request.ip, { username });
+      await getDb().run('UPDATE users SET failed_login_attempts = ? WHERE id = ?', [dbAttempts, user.id]);
+      await logAuditEvent('failed_login', null, null, request.ip, { username });
       return reply.code(401).send({ error: 'Invalid credentials' });
     }
 
     // Successful password — reset counter and backoff
     if (user.failed_login_attempts > 0) {
-      db.prepare('UPDATE users SET failed_login_attempts = 0 WHERE id = ?').run(user.id);
+      await getDb().run('UPDATE users SET failed_login_attempts = 0 WHERE id = ?', [user.id]);
     }
     loginBackoff.delete(username.toLowerCase());
 
@@ -305,8 +307,8 @@ export default async function authRoutes(app: FastifyInstance) {
 
     // Email MFA (default)
     if (mfaMethod === 'email') {
-      const code = createEmailCode(user.id, 'mfa');
-      const template = mfaEmail(code);
+      const code = await createEmailCode(user.id, 'mfa');
+      const template = await mfaEmail(code);
       try {
         await sendEmail(user.email, template.subject, template.html);
       } catch (e) {
@@ -316,7 +318,7 @@ export default async function authRoutes(app: FastifyInstance) {
       return reply.send({ mfa_required: true, mfa_user_id: user.id, mfa_method: 'email' as const });
     }
 
-    const jti = createSession(user.id, request.ip, request.headers['user-agent'] || null);
+    const jti = await createSession(user.id, request.ip, request.headers['user-agent'] || null);
     const token = signToken({
       userId: user.id,
       username: user.username,
@@ -326,7 +328,7 @@ export default async function authRoutes(app: FastifyInstance) {
     });
     setAuthCookie(reply, token);
     const csrf = setCsrfCookie(reply);
-    logAuditEvent('successful_login', user.id, null, request.ip);
+    await logAuditEvent('successful_login', user.id, null, request.ip);
 
     return reply.send({
       id: user.id,
@@ -363,11 +365,10 @@ export default async function authRoutes(app: FastifyInstance) {
         return reply.code(429).send({ error: 'Too many failed attempts. Try again later.' });
       }
 
-      const user = db
-        .prepare(
-          'SELECT id, username, display_name, password_hash, role, role_id, avatar_url, banned, ban_reason, totp_enabled, totp_secret, password_changed_at, created_at, email, email_verified, mfa_method FROM users WHERE id = ?',
-        )
-        .get(user_id) as any;
+      const user = await getDb().queryOne<any>(
+        'SELECT id, username, display_name, password_hash, role, role_id, avatar_url, banned, ban_reason, totp_enabled, totp_secret, password_changed_at, created_at, email, email_verified, mfa_method FROM users WHERE id = ?',
+        [user_id],
+      );
 
       if (!user) {
         recordMfaFailure(user_id);
@@ -405,7 +406,7 @@ export default async function authRoutes(app: FastifyInstance) {
         usedTotpCodes.set(totpKey, Date.now() + 90 * 1000); // 90s = TOTP window
       } else {
         // Email MFA
-        const valid = validateEmailCode(user_id, code, 'mfa');
+        const valid = await validateEmailCode(user_id, code, 'mfa');
         if (!valid) {
           recordMfaFailure(user_id);
           return reply.code(401).send({ error: 'Invalid or expired code' });
@@ -413,9 +414,9 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       clearMfaAttempts(user_id);
-      logAuditEvent('successful_login', user.id, null, request.ip);
+      await logAuditEvent('successful_login', user.id, null, request.ip);
 
-      const jti = createSession(user.id, request.ip, request.headers['user-agent'] || null);
+      const jti = await createSession(user.id, request.ip, request.headers['user-agent'] || null);
       const token = signToken({
         userId: user.id,
         username: user.username,
@@ -460,11 +461,10 @@ export default async function authRoutes(app: FastifyInstance) {
         return reply.code(429).send({ error: 'Too many failed attempts. Try again later.' });
       }
 
-      const user = db
-        .prepare(
-          'SELECT id, locked_at, totp_enabled, totp_secret, mfa_method, email, email_verified FROM users WHERE id = ?',
-        )
-        .get(user_id) as any;
+      const user = await getDb().queryOne<any>(
+        'SELECT id, locked_at, totp_enabled, totp_secret, mfa_method, email, email_verified FROM users WHERE id = ?',
+        [user_id],
+      );
       if (!user) {
         recordMfaFailure(user_id);
         return reply.code(401).send({ error: 'Invalid request' });
@@ -500,7 +500,7 @@ export default async function authRoutes(app: FastifyInstance) {
         }
         usedTotpCodes.set(totpKey2, Date.now() + 90 * 1000);
       } else {
-        const valid = validateEmailCode(user_id, code, 'mfa');
+        const valid = await validateEmailCode(user_id, code, 'mfa');
         if (!valid) {
           recordMfaFailure(user_id);
           return reply.code(401).send({ error: 'Invalid or expired code' });
@@ -508,9 +508,9 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       clearMfaAttempts(user_id);
-      db.prepare('UPDATE users SET failed_login_attempts = 0, locked_at = NULL WHERE id = ?').run(
+      await getDb().run('UPDATE users SET failed_login_attempts = 0, locked_at = NULL WHERE id = ?', [
         user_id,
-      );
+      ]);
 
       return reply.send({ ok: true });
     },
@@ -530,9 +530,10 @@ export default async function authRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Invalid email format' });
       }
 
-      const user = db
-        .prepare('SELECT id, email, email_verified, password_hash FROM users WHERE id = ?')
-        .get(user_id) as any;
+      const user = await getDb().queryOne<any>(
+        'SELECT id, email, email_verified, password_hash FROM users WHERE id = ?',
+        [user_id],
+      );
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
       }
@@ -548,17 +549,18 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       // Check uniqueness
-      const existingEmail = db
-        .prepare('SELECT id FROM users WHERE email = ? AND id != ?')
-        .get(email, user_id);
+      const existingEmail = await getDb().queryOne(
+        'SELECT id FROM users WHERE email = ? AND id != ?',
+        [email, user_id],
+      );
       if (existingEmail) {
         return reply.code(409).send({ error: 'Email already in use' });
       }
 
-      db.prepare('UPDATE users SET email = ?, email_verified = 0 WHERE id = ?').run(email, user_id);
+      await getDb().run('UPDATE users SET email = ?, email_verified = 0 WHERE id = ?', [email, user_id]);
 
-      const code = createEmailCode(user_id, 'verification');
-      const template = verificationEmail(code);
+      const code = await createEmailCode(user_id, 'verification');
+      const template = await verificationEmail(code);
       try {
         await sendEmail(email, template.subject, template.html);
       } catch (e) {
@@ -586,17 +588,18 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       // Check uniqueness
-      const existingEmail = db
-        .prepare('SELECT id FROM users WHERE email = ? AND id != ?')
-        .get(email, userId);
+      const existingEmail = await getDb().queryOne(
+        'SELECT id FROM users WHERE email = ? AND id != ?',
+        [email, userId],
+      );
       if (existingEmail) {
         return reply.code(409).send({ error: 'Email already in use' });
       }
 
-      db.prepare('UPDATE users SET email = ?, email_verified = 0 WHERE id = ?').run(email, userId);
+      await getDb().run('UPDATE users SET email = ?, email_verified = 0 WHERE id = ?', [email, userId]);
 
-      const code = createEmailCode(userId, 'verification');
-      const template = verificationEmail(code);
+      const code = await createEmailCode(userId, 'verification');
+      const template = await verificationEmail(code);
       try {
         await sendEmail(email, template.subject, template.html);
       } catch (e) {
@@ -620,15 +623,15 @@ export default async function authRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Code required' });
       }
 
-      const valid = validateEmailCode(userId, code, 'verification');
+      const valid = await validateEmailCode(userId, code, 'verification');
       if (!valid) {
         return reply.code(401).send({ error: 'Invalid or expired code' });
       }
 
-      db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(userId);
+      await getDb().run('UPDATE users SET email_verified = 1 WHERE id = ?', [userId]);
 
-      const user = db.prepare('SELECT email FROM users WHERE id = ?').get(userId) as any;
-      return reply.send({ ok: true, email: user.email });
+      const user = await getDb().queryOne<{ email: string }>('SELECT email FROM users WHERE id = ?', [userId]);
+      return reply.send({ ok: true, email: user?.email });
     },
   );
 
@@ -652,13 +655,13 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       // Check uniqueness (case-insensitive)
-      const existing = db.prepare('SELECT id FROM users WHERE LOWER(username) = ? AND id != ?').get(username.toLowerCase(), userId);
+      const existing = await getDb().queryOne('SELECT id FROM users WHERE LOWER(username) = ? AND id != ?', [username.toLowerCase(), userId]);
       if (existing) {
         return reply.code(409).send({ error: 'Username unavailable' });
       }
 
       // Verify MFA
-      const user = db.prepare('SELECT totp_enabled, totp_secret, mfa_method, email, email_verified FROM users WHERE id = ?').get(userId) as any;
+      const user = await getDb().queryOne<any>('SELECT totp_enabled, totp_secret, mfa_method, email, email_verified FROM users WHERE id = ?', [userId]);
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
       }
@@ -677,16 +680,16 @@ export default async function authRoutes(app: FastifyInstance) {
         }
       } else {
         // Email code verification
-        const valid = validateEmailCode(userId, mfa_code, 'verification');
+        const valid = await validateEmailCode(userId, mfa_code, 'verification');
         if (!valid) {
           return reply.code(401).send({ error: 'Invalid or expired code' });
         }
       }
 
       const oldUsername = request.user.username;
-      db.prepare('UPDATE users SET username = ? WHERE id = ?').run(username, userId);
+      await getDb().run('UPDATE users SET username = ? WHERE id = ?', [username, userId]);
 
-      logAuditEvent('username_change', userId, userId, request.ip, { old: oldUsername, new: username });
+      await logAuditEvent('username_change', userId, userId, request.ip, { old: oldUsername, new: username });
 
       return reply.send({ ok: true, username });
     },
@@ -698,7 +701,7 @@ export default async function authRoutes(app: FastifyInstance) {
     { preHandler: requireAuth },
     async (request, reply) => {
       const userId = request.user.userId;
-      const user = db.prepare('SELECT totp_enabled, email, email_verified FROM users WHERE id = ?').get(userId) as any;
+      const user = await getDb().queryOne<any>('SELECT totp_enabled, email, email_verified FROM users WHERE id = ?', [userId]);
 
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
@@ -712,8 +715,8 @@ export default async function authRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'No verified email on file' });
       }
 
-      const code = createEmailCode(userId, 'verification');
-      const template = verificationEmail(code);
+      const code = await createEmailCode(userId, 'verification');
+      const template = await verificationEmail(code);
       try {
         await sendEmail(user.email, template.subject, template.html);
       } catch {
@@ -735,11 +738,10 @@ export default async function authRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Username required' });
       }
 
-      const user = db
-        .prepare(
-          'SELECT id, email, email_verified, mfa_method, totp_enabled FROM users WHERE username = ?',
-        )
-        .get(username) as any;
+      const user = await getDb().queryOne<any>(
+        'SELECT id, email, email_verified, mfa_method, totp_enabled FROM users WHERE username = ?',
+        [username],
+      );
 
       // Always return identical shape regardless of whether user exists (anti-enumeration)
       if (!user) {
@@ -750,8 +752,8 @@ export default async function authRoutes(app: FastifyInstance) {
 
       if (mfaMethod === 'email' && user.email && user.email_verified) {
         try {
-          const code = createEmailCode(user.id, 'password_reset');
-          const template = passwordResetEmail(code);
+          const code = await createEmailCode(user.id, 'password_reset');
+          const template = await passwordResetEmail(code);
           await sendEmail(user.email, template.subject, template.html);
         } catch (e) {
           console.error('[Auth] Failed to send password reset email:', (e as Error).message);
@@ -773,9 +775,10 @@ export default async function authRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Username and code required' });
       }
 
-      const user = db
-        .prepare('SELECT id, totp_enabled, totp_secret, mfa_method FROM users WHERE username = ?')
-        .get(username) as any;
+      const user = await getDb().queryOne<any>(
+        'SELECT id, totp_enabled, totp_secret, mfa_method FROM users WHERE username = ?',
+        [username],
+      );
       if (!user) {
         return reply.code(401).send({ error: 'Invalid credentials' });
       }
@@ -812,7 +815,7 @@ export default async function authRoutes(app: FastifyInstance) {
         }
         usedTotpCodes.set(totpKey3, Date.now() + 90 * 1000);
       } else {
-        const valid = validateEmailCode(user.id, code, 'password_reset');
+        const valid = await validateEmailCode(user.id, code, 'password_reset');
         if (!valid) {
           recordMfaFailure(user.id);
           return reply.code(401).send({ error: 'Invalid credentials' });
@@ -831,9 +834,10 @@ export default async function authRoutes(app: FastifyInstance) {
 
       // Store JTI in DB for replay prevention (survives server restarts)
       const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString().replace('T', ' ').replace('Z', '');
-      db.prepare(
+      await getDb().run(
         'INSERT INTO used_reset_tokens (jti, user_id, expires_at) VALUES (?, ?, ?)',
-      ).run(jti, user.id, expiresAt);
+        [jti, user.id, expiresAt],
+      );
 
       return reply.send({ reset_token: resetToken });
     },
@@ -871,24 +875,26 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!payload.jti) {
         return reply.code(401).send({ error: 'Invalid reset token' });
       }
-      const tokenRow = db.prepare(
+      const tokenRow = await getDb().queryOne<{ used: number }>(
         'SELECT used FROM used_reset_tokens WHERE jti = ?',
-      ).get(payload.jti) as { used: number } | undefined;
+        [payload.jti],
+      );
       if (!tokenRow) {
         return reply.code(401).send({ error: 'Invalid reset token' });
       }
       if (tokenRow.used) {
         return reply.code(401).send({ error: 'Reset token has already been used' });
       }
-      db.prepare('UPDATE used_reset_tokens SET used = 1 WHERE jti = ?').run(payload.jti);
+      await getDb().run('UPDATE used_reset_tokens SET used = 1 WHERE jti = ?', [payload.jti]);
 
       const newHash = await hashPassword(new_password);
-      db.prepare(
+      await getDb().run(
         "UPDATE users SET password_hash = ?, password_changed_at = datetime('now') WHERE id = ?",
-      ).run(newHash, payload.userId);
+        [newHash, payload.userId],
+      );
 
       // Revoke all existing sessions after password reset
-      revokeAllUserSessions(payload.userId);
+      await revokeAllUserSessions(payload.userId);
 
       return reply.send({ ok: true });
     },
@@ -915,11 +921,10 @@ export default async function authRoutes(app: FastifyInstance) {
         });
       }
 
-      const user = db
-        .prepare(
-          'SELECT id, username, display_name, password_hash, role, role_id, avatar_url, totp_enabled, created_at, email, mfa_method FROM users WHERE id = ?',
-        )
-        .get(userId) as any;
+      const user = await getDb().queryOne<any>(
+        'SELECT id, username, display_name, password_hash, role, role_id, avatar_url, totp_enabled, created_at, email, mfa_method FROM users WHERE id = ?',
+        [userId],
+      );
 
       if (!user) {
         return reply.code(401).send({ error: 'Invalid credentials' });
@@ -931,26 +936,28 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       const newHash = await hashPassword(new_password);
-      db.prepare(
+      await getDb().run(
         "UPDATE users SET password_hash = ?, password_changed_at = datetime('now') WHERE id = ?",
-      ).run(newHash, userId);
+        [newHash, userId],
+      );
 
-      logAuditEvent('password_change', userId, null, request.ip);
+      await logAuditEvent('password_change', userId, null, request.ip);
 
       // Revoke all other sessions after password change
-      revokeAllUserSessions(userId);
+      await revokeAllUserSessions(userId);
 
       // Re-fetch to get the updated password_changed_at for the new JWT
-      const freshUser = db
-        .prepare('SELECT password_changed_at FROM users WHERE id = ?')
-        .get(userId) as { password_changed_at: string };
-      const newJti = createSession(user.id, request.ip, request.headers['user-agent'] || null);
+      const freshUser = await getDb().queryOne<{ password_changed_at: string }>(
+        'SELECT password_changed_at FROM users WHERE id = ?',
+        [userId],
+      );
+      const newJti = await createSession(user.id, request.ip, request.headers['user-agent'] || null);
       const token = signToken({
         userId: user.id,
         username: user.username,
         role: user.role,
         jti: newJti,
-        pwc: freshUser.password_changed_at,
+        pwc: freshUser?.password_changed_at,
       });
       setAuthCookie(reply, token);
       const csrf = setCsrfCookie(reply);
@@ -986,7 +993,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (token) {
       try {
         const payload = verifyToken(token);
-        revokeSession(payload.jti);
+        await revokeSession(payload.jti);
       } catch {
         // Ignore invalid token on logout
       }
@@ -998,31 +1005,29 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // Current user
   app.get('/api/auth/me', { preHandler: requireAuth }, async (request, reply) => {
-    const user = db
-      .prepare(
-        `SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.avatar_url, u.bio, u.banner_url, u.totp_enabled, u.created_at, u.email, u.mfa_method,
+    const user = await getDb().queryOne<any>(
+      `SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.avatar_url, u.bio, u.banner_url, u.totp_enabled, u.created_at, u.email, u.mfa_method,
               u.name_font, u.name_color, u.premium_tier, r.name as role_name, r.color as role_color
        FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ?`,
-      )
-      .get(request.user.userId) as any;
+      [request.user.userId],
+    );
 
     if (!user) {
       return reply.code(404).send({ error: 'User not found' });
     }
 
     user.totp_enabled = !!user.totp_enabled;
-    if (isAlphaPhase()) {
+    if (await isAlphaPhase()) {
       user.premium_tier = 'pro';
     }
 
     // Attach role arrays
-    const userRoles = db
-      .prepare(
-        `SELECT r.id as role_id, r.name as role_name, r.color as role_color
+    const userRoles = await getDb().query<{ role_id: string; role_name: string; role_color: string }>(
+      `SELECT r.id as role_id, r.name as role_name, r.color as role_color
        FROM user_roles ur JOIN roles r ON r.id = ur.role_id
        WHERE ur.user_id = ? ORDER BY r.position`,
-      )
-      .all(request.user.userId) as { role_id: string; role_name: string; role_color: string }[];
+      [request.user.userId],
+    );
 
     user.role_ids = userRoles.map((r) => r.role_id);
     user.role_names = userRoles.map((r) => r.role_name);

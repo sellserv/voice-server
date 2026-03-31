@@ -4,7 +4,7 @@ import { config } from '../config.js';
 import { verifyToken } from '../auth/jwt.js';
 import { getSessionByToken } from '../auth/sessions.js';
 import { isInstanceAdmin } from '../auth/middleware.js';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 
 function generateCode(): string {
   return randomBytes(32).toString('hex');
@@ -28,7 +28,7 @@ async function getAuthenticatedUser(request: FastifyRequest): Promise<{ userId: 
 
   try {
     const payload = verifyToken(token);
-    const session = getSessionByToken(payload.jti);
+    const session = await getSessionByToken(payload.jti);
     if (!session || session.user_id !== payload.userId) return null;
     return { userId: payload.userId, username: payload.username };
   } catch {
@@ -36,19 +36,19 @@ async function getAuthenticatedUser(request: FastifyRequest): Promise<{ userId: 
   }
 }
 
-function cleanupExpiredCodes() {
-  db.prepare("DELETE FROM oauth2_codes WHERE expires_at < datetime('now')").run();
+async function cleanupExpiredCodes() {
+  await getDb().run("DELETE FROM oauth2_codes WHERE expires_at < datetime('now')");
 }
 
-function cleanupExpiredTokens() {
-  db.prepare("DELETE FROM oauth2_tokens WHERE expires_at < datetime('now')").run();
+async function cleanupExpiredTokens() {
+  await getDb().run("DELETE FROM oauth2_tokens WHERE expires_at < datetime('now')");
 }
 
 export default async function oauth2Routes(app: FastifyInstance) {
   // Cleanup expired entries periodically
   setInterval(() => {
-    cleanupExpiredCodes();
-    cleanupExpiredTokens();
+    cleanupExpiredCodes().catch(() => {});
+    cleanupExpiredTokens().catch(() => {});
   }, 60 * 60 * 1000);
 
   // ─── GET /oauth2/authorize — Show consent or redirect to login ───
@@ -194,9 +194,10 @@ export default async function oauth2Routes(app: FastifyInstance) {
     const code = generateCode();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
-    db.prepare(
-      'INSERT INTO oauth2_codes (code, user_id, client_id, redirect_uri, scope, state, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(code, user.userId, client_id, redirect_uri, scope || 'admin', state || '', expiresAt);
+    await getDb().run(
+      'INSERT INTO oauth2_codes (code, user_id, client_id, redirect_uri, scope, state, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [code, user.userId, client_id, redirect_uri, scope || 'admin', state || '', expiresAt],
+    );
 
     const url = new URL(redirect_uri);
     url.searchParams.set('code', code);
@@ -217,16 +218,17 @@ export default async function oauth2Routes(app: FastifyInstance) {
       return reply.code(401).send({ error: 'invalid_client' });
     }
 
-    const authCode = db.prepare(
-      'SELECT * FROM oauth2_codes WHERE code = ? AND used = 0'
-    ).get(code) as any;
+    const authCode = await getDb().queryOne(
+      'SELECT * FROM oauth2_codes WHERE code = ? AND used = 0',
+      [code],
+    ) as any;
 
     if (!authCode) {
       return reply.code(400).send({ error: 'invalid_grant', error_description: 'Invalid or expired authorization code' });
     }
 
     if (new Date(authCode.expires_at) < new Date()) {
-      db.prepare('DELETE FROM oauth2_codes WHERE code = ?').run(code);
+      await getDb().run('DELETE FROM oauth2_codes WHERE code = ?', [code]);
       return reply.code(400).send({ error: 'invalid_grant', error_description: 'Authorization code expired' });
     }
 
@@ -234,15 +236,16 @@ export default async function oauth2Routes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'invalid_grant', error_description: 'Client mismatch' });
     }
 
-    db.prepare('UPDATE oauth2_codes SET used = 1 WHERE code = ?').run(code);
+    await getDb().run('UPDATE oauth2_codes SET used = 1 WHERE code = ?', [code]);
 
     const tokenId = randomUUID();
     const accessToken = randomBytes(48).toString('hex');
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
-    db.prepare(
-      'INSERT INTO oauth2_tokens (id, user_id, client_id, access_token, scope, expires_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(tokenId, authCode.user_id, client_id, accessToken, authCode.scope, expiresAt);
+    await getDb().run(
+      'INSERT INTO oauth2_tokens (id, user_id, client_id, access_token, scope, expires_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [tokenId, authCode.user_id, client_id, accessToken, authCode.scope, expiresAt],
+    );
 
     return {
       access_token: accessToken,
@@ -260,17 +263,19 @@ export default async function oauth2Routes(app: FastifyInstance) {
     }
 
     const accessToken = auth.slice(7);
-    const tokenRow = db.prepare(
-      'SELECT * FROM oauth2_tokens WHERE access_token = ? AND revoked = 0'
-    ).get(accessToken) as any;
+    const tokenRow = await getDb().queryOne(
+      'SELECT * FROM oauth2_tokens WHERE access_token = ? AND revoked = 0',
+      [accessToken],
+    ) as any;
 
     if (!tokenRow || new Date(tokenRow.expires_at) < new Date()) {
       return reply.code(401).send({ error: 'Invalid or expired token' });
     }
 
-    const user = db.prepare(
-      'SELECT id, username, display_name, email, avatar_url FROM users WHERE id = ?'
-    ).get(tokenRow.user_id) as any;
+    const user = await getDb().queryOne(
+      'SELECT id, username, display_name, email, avatar_url FROM users WHERE id = ?',
+      [tokenRow.user_id],
+    ) as any;
 
     if (!user) {
       return reply.code(401).send({ error: 'User not found' });
@@ -294,7 +299,7 @@ export default async function oauth2Routes(app: FastifyInstance) {
       return reply.code(401).send({ error: 'invalid_client' });
     }
 
-    db.prepare('UPDATE oauth2_tokens SET revoked = 1 WHERE access_token = ?').run(token);
+    await getDb().run('UPDATE oauth2_tokens SET revoked = 1 WHERE access_token = ?', [token]);
 
     return { success: true };
   });

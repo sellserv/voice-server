@@ -1,4 +1,4 @@
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { sendTo } from '../ws/index.js';
 import { leaveVoiceChannel, handleVoiceEvent } from './signaling.js';
 import { userVoiceChannels } from '../ws/handlers.js';
@@ -12,16 +12,16 @@ const afkTimers = new Map<string, ReturnType<typeof setTimeout>>();
  * Called when a user's status changes to 'idle'.
  * Starts an AFK timer if they're in a voice channel with an AFK channel configured.
  */
-export function onUserIdle(userId: string) {
+export async function onUserIdle(userId: string) {
   if (afkTimers.has(userId)) return;
 
   const currentChannelId = userVoiceChannels.get(userId);
   if (!currentChannelId) return;
 
-  const channel = db.prepare('SELECT server_id FROM channels WHERE id = ?').get(currentChannelId) as { server_id: string | null } | undefined;
+  const channel = await getDb().queryOne<{ server_id: string | null }>('SELECT server_id FROM channels WHERE id = ?', [currentChannelId]);
   if (!channel?.server_id) return;
 
-  const server = db.prepare('SELECT afk_channel_id, afk_timeout FROM servers WHERE id = ?').get(channel.server_id) as { afk_channel_id: string | null; afk_timeout: number } | undefined;
+  const server = await getDb().queryOne<{ afk_channel_id: string | null; afk_timeout: number }>('SELECT afk_channel_id, afk_timeout FROM servers WHERE id = ?', [channel.server_id]);
   if (!server?.afk_channel_id) return;
 
   if (currentChannelId === server.afk_channel_id) return;
@@ -29,14 +29,14 @@ export function onUserIdle(userId: string) {
   const afkChannelId = server.afk_channel_id;
   const timeout = (server.afk_timeout || 300) * 1000;
 
-  const timer = setTimeout(() => {
+  const timer = setTimeout(async () => {
     afkTimers.delete(userId);
     // Re-read current AFK settings in case they changed while timer was running
     const currentChannel = userVoiceChannels.get(userId);
     if (!currentChannel) return;
-    const ch = db.prepare('SELECT server_id FROM channels WHERE id = ?').get(currentChannel) as { server_id: string | null } | undefined;
+    const ch = await getDb().queryOne<{ server_id: string | null }>('SELECT server_id FROM channels WHERE id = ?', [currentChannel]);
     if (!ch?.server_id) return;
-    const srv = db.prepare('SELECT afk_channel_id FROM servers WHERE id = ?').get(ch.server_id) as { afk_channel_id: string | null } | undefined;
+    const srv = await getDb().queryOne<{ afk_channel_id: string | null }>('SELECT afk_channel_id FROM servers WHERE id = ?', [ch.server_id]);
     if (!srv?.afk_channel_id || currentChannel === srv.afk_channel_id) return;
     moveUserToAfk(userId, srv.afk_channel_id).catch((err) => {
       console.error('Failed to move user to AFK channel:', err);
@@ -72,17 +72,17 @@ async function moveUserToAfk(userId: string, afkChannelId: string) {
   if (!currentChannelId) return;
   if (currentChannelId === afkChannelId) return;
 
-  const afkChannel = db.prepare('SELECT id FROM channels WHERE id = ?').get(afkChannelId);
+  const afkChannel = await getDb().queryOne<any>('SELECT id FROM channels WHERE id = ?', [afkChannelId]);
   if (!afkChannel) return;
 
   // Skip if user can't see or connect to the AFK channel
-  if (!hasChannelPermission(userId, afkChannelId, 'view_channel') ||
-      !hasChannelPermission(userId, afkChannelId, 'connect_voice')) return;
+  if (!await hasChannelPermission(userId, afkChannelId, 'view_channel') ||
+      !await hasChannelPermission(userId, afkChannelId, 'connect_voice')) return;
 
-  const userRow = db.prepare('SELECT username, role FROM users WHERE id = ?').get(userId) as { username: string; role: string } | undefined;
+  const userRow = await getDb().queryOne<{ username: string; role: string }>('SELECT username, role FROM users WHERE id = ?', [userId]);
   if (!userRow) return;
 
-  const user: JwtPayload = { userId, username: userRow.username, role: userRow.role };
+  const user: JwtPayload = { userId, username: userRow.username, role: userRow.role, jti: '' };
 
   // Leave current channel
   leaveVoiceChannel(userId);
@@ -97,9 +97,9 @@ async function moveUserToAfk(userId: string, afkChannelId: string) {
 /**
  * Check if a channel is the AFK channel for its server.
  */
-export function isAfkChannel(channelId: string): boolean {
-  const channel = db.prepare('SELECT server_id FROM channels WHERE id = ?').get(channelId) as { server_id: string | null } | undefined;
+export async function isAfkChannel(channelId: string): Promise<boolean> {
+  const channel = await getDb().queryOne<{ server_id: string | null }>('SELECT server_id FROM channels WHERE id = ?', [channelId]);
   if (!channel?.server_id) return false;
-  const server = db.prepare('SELECT afk_channel_id FROM servers WHERE id = ?').get(channel.server_id) as { afk_channel_id: string | null } | undefined;
+  const server = await getDb().queryOne<{ afk_channel_id: string | null }>('SELECT afk_channel_id FROM servers WHERE id = ?', [channel.server_id]);
   return server?.afk_channel_id === channelId;
 }

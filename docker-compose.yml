@@ -1,3 +1,5 @@
+# Self-hosted single-container deployment.
+# For production (PostgreSQL + Redis + LiveKit), see deploy/production/
 services:
   sellserv:
     image: ghcr.io/sellserv/voice-server:latest
@@ -8,17 +10,8 @@ services:
     volumes:
       - data:/app/data
       - uploads:/app/uploads
-    environment:
-      - JWT_SECRET=change-me-run-openssl-rand-hex-32
-      - MEDIASOUP_ANNOUNCED_IP=127.0.0.1  # Set to your server's public IP
-      # - CORS_ORIGINS=https://your-domain.com
-      # - ADMIN_USERS=user-id-1,user-id-2
-      # - RESEND_API_KEY=
-      # - EMAIL_FROM=
-      # - STRIPE_SECRET_KEY=
-      # - STRIPE_WEBHOOK_SECRET=
-      # - STRIPE_PRO_PRICE_ID=
-      # - GIPHY_API_KEY=
+    env_file:
+      - .env
 
 volumes:
   data:

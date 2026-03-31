@@ -1,25 +1,24 @@
 import type { FastifyInstance } from 'fastify';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { requireAuth } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import { hasChannelAccess } from '../auth/permissions.js';
 import type { Message, PaginatedMessages } from '@voip-server/shared';
 
-function attachReactions(messages: Message[]): void {
+async function attachReactions(messages: Message[]): Promise<void> {
   if (messages.length === 0) return;
 
   const ids = messages.map((m) => m.id);
   const placeholders = ids.map(() => '?').join(',');
-  const reactions = db
-    .prepare(
-      `
+  const reactions = await getDb().query<{ message_id: string; emoji: string; user_ids: string; count: number }>(
+    `
       SELECT message_id, emoji, GROUP_CONCAT(user_id) as user_ids, COUNT(*) as count
       FROM reactions
       WHERE message_id IN (${placeholders})
       GROUP BY message_id, emoji
     `,
-    )
-    .all(...ids) as { message_id: string; emoji: string; user_ids: string; count: number }[];
+    ids,
+  );
 
   const reactionsByMessage = new Map<
     string,
@@ -39,12 +38,11 @@ function attachReactions(messages: Message[]): void {
   }
 }
 
-function fetchMessages(channelId: string, before: string | undefined, limit: number): Message[] {
+async function fetchMessages(channelId: string, before: string | undefined, limit: number): Promise<Message[]> {
   let messages: Message[];
   if (before) {
-    messages = db
-      .prepare(
-        `
+    messages = await getDb().query<Message>(
+      `
         SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by, m.type, m.metadata,
                u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color,
                f.mime_type as file_mime_type,
@@ -60,12 +58,11 @@ function fetchMessages(channelId: string, before: string | undefined, limit: num
         ORDER BY m.created_at DESC
         LIMIT ?
       `,
-      )
-      .all(channelId, before, limit + 1) as Message[];
+      [channelId, before, limit + 1],
+    );
   } else {
-    messages = db
-      .prepare(
-        `
+    messages = await getDb().query<Message>(
+      `
         SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by, m.type, m.metadata,
                u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color,
                f.mime_type as file_mime_type,
@@ -81,8 +78,8 @@ function fetchMessages(channelId: string, before: string | undefined, limit: num
         ORDER BY m.created_at DESC
         LIMIT ?
       `,
-      )
-      .all(channelId, limit + 1) as Message[];
+      [channelId, limit + 1],
+    );
   }
 
   // Truncate reply_to_content to 200 chars
@@ -96,7 +93,7 @@ function fetchMessages(channelId: string, before: string | undefined, limit: num
   if (hasMore) messages.pop();
   messages.reverse();
 
-  attachReactions(messages);
+  await attachReactions(messages);
 
   return messages;
 }
@@ -115,19 +112,20 @@ export default async function messageRoutes(app: FastifyInstance) {
     const limit = Math.min(parseInt(request.query.limit || '50', 10), 100);
 
     // Verify channel exists and belongs to this server
-    const channel = db.prepare('SELECT id, server_id FROM channels WHERE id = ?').get(channelId) as
-      | { id: string; server_id: string | null }
-      | undefined;
+    const channel = await getDb().queryOne<{ id: string; server_id: string | null }>(
+      'SELECT id, server_id FROM channels WHERE id = ?',
+      [channelId],
+    );
     if (!channel || channel.server_id !== serverId) {
       return reply.code(404).send({ error: 'Channel not found in this server' });
     }
 
     // Channel access control check
-    if (!hasChannelAccess(request.user.userId, channelId)) {
+    if (!await hasChannelAccess(request.user.userId, channelId)) {
       return reply.code(403).send({ error: 'You do not have access to this channel' });
     }
 
-    const messages = fetchMessages(channelId, before, limit);
+    const messages = await fetchMessages(channelId, before, limit);
     const hasMore = messages.length === limit;
 
     const result: PaginatedMessages = { messages, hasMore };
@@ -142,20 +140,20 @@ export default async function messageRoutes(app: FastifyInstance) {
     const { id: channelId } = request.params;
 
     // Verify channel exists and belongs to this server
-    const channel = db.prepare('SELECT id, server_id FROM channels WHERE id = ?').get(channelId) as
-      | { id: string; server_id: string | null }
-      | undefined;
+    const channel = await getDb().queryOne<{ id: string; server_id: string | null }>(
+      'SELECT id, server_id FROM channels WHERE id = ?',
+      [channelId],
+    );
     if (!channel || channel.server_id !== serverId) {
       return reply.code(404).send({ error: 'Channel not found in this server' });
     }
 
-    if (!hasChannelAccess(request.user.userId, channelId)) {
+    if (!await hasChannelAccess(request.user.userId, channelId)) {
       return reply.code(403).send({ error: 'You do not have access to this channel' });
     }
 
-    const messages = db
-      .prepare(
-        `
+    const messages = await getDb().query<Message>(
+      `
       SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by, m.type, m.metadata,
              u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color,
              f.mime_type as file_mime_type
@@ -166,8 +164,8 @@ export default async function messageRoutes(app: FastifyInstance) {
       WHERE m.channel_id = ? AND m.pinned = 1
       ORDER BY m.created_at DESC
     `,
-      )
-      .all(channelId) as Message[];
+      [channelId],
+    );
 
     return { messages };
   });
@@ -190,9 +188,10 @@ export default async function messageRoutes(app: FastifyInstance) {
 
     let rowids: { rowid: number }[];
     try {
-      rowids = db
-        .prepare('SELECT rowid FROM messages_fts WHERE content MATCH ?')
-        .all(safeQuery) as { rowid: number }[];
+      rowids = await getDb().query<{ rowid: number }>(
+        'SELECT rowid FROM messages_fts WHERE content MATCH ?',
+        [safeQuery],
+      );
     } catch {
       // FTS5 table may not exist yet
       return { messages: [] };
@@ -206,9 +205,8 @@ export default async function messageRoutes(app: FastifyInstance) {
     const placeholders = ids.map(() => '?').join(',');
 
     // Only return messages from channels belonging to this server
-    const messages = db
-      .prepare(
-        `
+    const messages = await getDb().query<Message>(
+      `
       SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by, m.type, m.metadata,
              u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color,
              f.mime_type as file_mime_type
@@ -220,13 +218,16 @@ export default async function messageRoutes(app: FastifyInstance) {
       WHERE m.rowid IN (${placeholders}) AND c.server_id = ?
       ORDER BY m.created_at DESC
     `,
-      )
-      .all(...ids, serverId) as Message[];
+      [...ids, serverId],
+    );
 
     // Filter to only channels the user has access to
-    const filtered = messages.filter((msg) =>
-      hasChannelAccess(request.user.userId, msg.channel_id),
-    );
+    const filtered: Message[] = [];
+    for (const msg of messages) {
+      if (await hasChannelAccess(request.user.userId, msg.channel_id)) {
+        filtered.push(msg);
+      }
+    }
 
     return { messages: filtered };
   });
@@ -243,9 +244,10 @@ export default async function messageRoutes(app: FastifyInstance) {
     const limit = Math.min(parseInt(request.query.limit || '50', 10), 100);
 
     // Verify channel exists
-    const channel = db.prepare('SELECT id, type FROM channels WHERE id = ?').get(channelId) as
-      | { id: string; type: string }
-      | undefined;
+    const channel = await getDb().queryOne<{ id: string; type: string }>(
+      'SELECT id, type FROM channels WHERE id = ?',
+      [channelId],
+    );
     if (!channel) {
       return reply.code(404).send({ error: 'Channel not found' });
     }
@@ -253,20 +255,21 @@ export default async function messageRoutes(app: FastifyInstance) {
     // DM authorization: verify the requesting user is a participant
     if (channel.type === 'dm') {
       const userId = request.user.userId;
-      const participant = db
-        .prepare('SELECT 1 FROM dm_participants WHERE channel_id = ? AND user_id = ?')
-        .get(channelId, userId);
+      const participant = await getDb().queryOne(
+        'SELECT 1 FROM dm_participants WHERE channel_id = ? AND user_id = ?',
+        [channelId, userId],
+      );
       if (!participant) {
         return reply.code(403).send({ error: 'Not a participant of this DM' });
       }
     }
 
     // Channel access control check
-    if (channel.type !== 'dm' && !hasChannelAccess(request.user.userId, channelId)) {
+    if (channel.type !== 'dm' && !await hasChannelAccess(request.user.userId, channelId)) {
       return reply.code(403).send({ error: 'You do not have access to this channel' });
     }
 
-    const messages = fetchMessages(channelId, before, limit);
+    const messages = await fetchMessages(channelId, before, limit);
     const hasMore = messages.length === limit;
 
     const result: PaginatedMessages = { messages, hasMore };
@@ -279,20 +282,20 @@ export default async function messageRoutes(app: FastifyInstance) {
   }>('/api/channels/:id/pins', { preHandler: requireAuth }, async (request, reply) => {
     const { id: channelId } = request.params;
 
-    const channel = db.prepare('SELECT id, type FROM channels WHERE id = ?').get(channelId) as
-      | { id: string; type: string }
-      | undefined;
+    const channel = await getDb().queryOne<{ id: string; type: string }>(
+      'SELECT id, type FROM channels WHERE id = ?',
+      [channelId],
+    );
     if (!channel) {
       return reply.code(404).send({ error: 'Channel not found' });
     }
 
-    if (channel.type !== 'dm' && !hasChannelAccess(request.user.userId, channelId)) {
+    if (channel.type !== 'dm' && !await hasChannelAccess(request.user.userId, channelId)) {
       return reply.code(403).send({ error: 'You do not have access to this channel' });
     }
 
-    const messages = db
-      .prepare(
-        `
+    const messages = await getDb().query<Message>(
+      `
       SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by, m.type, m.metadata,
              u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color,
              f.mime_type as file_mime_type
@@ -303,8 +306,8 @@ export default async function messageRoutes(app: FastifyInstance) {
       WHERE m.channel_id = ? AND m.pinned = 1
       ORDER BY m.created_at DESC
     `,
-      )
-      .all(channelId) as Message[];
+      [channelId],
+    );
 
     return { messages };
   });
@@ -325,9 +328,10 @@ export default async function messageRoutes(app: FastifyInstance) {
 
     let rowids: { rowid: number }[];
     try {
-      rowids = db
-        .prepare('SELECT rowid FROM messages_fts WHERE content MATCH ?')
-        .all(safeQuery) as { rowid: number }[];
+      rowids = await getDb().query<{ rowid: number }>(
+        'SELECT rowid FROM messages_fts WHERE content MATCH ?',
+        [safeQuery],
+      );
     } catch {
       // FTS5 table may not exist yet
       return { messages: [] };
@@ -340,9 +344,8 @@ export default async function messageRoutes(app: FastifyInstance) {
     const ids = rowids.slice(0, limit).map((r) => r.rowid);
     const placeholders = ids.map(() => '?').join(',');
 
-    const messages = db
-      .prepare(
-        `
+    const messages = await getDb().query<Message>(
+      `
       SELECT m.id, m.channel_id, m.user_id, m.content, m.file_id, m.reply_to_id, m.invite_id, m.poll_id, m.created_at, m.edited_at, m.pinned, m.pinned_by, m.type, m.metadata,
              u.username, u.display_name, u.avatar_url, u.name_font, u.name_color, r.color as role_color,
              f.mime_type as file_mime_type
@@ -353,13 +356,16 @@ export default async function messageRoutes(app: FastifyInstance) {
       WHERE m.rowid IN (${placeholders})
       ORDER BY m.created_at DESC
     `,
-      )
-      .all(...ids) as Message[];
+      ids,
+    );
 
     // Filter to only channels the user has access to
-    const filtered = messages.filter((msg) =>
-      hasChannelAccess(request.user.userId, msg.channel_id),
-    );
+    const filtered: Message[] = [];
+    for (const msg of messages) {
+      if (await hasChannelAccess(request.user.userId, msg.channel_id)) {
+        filtered.push(msg);
+      }
+    }
 
     return { messages: filtered };
   });

@@ -1,4 +1,4 @@
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { isInstanceAdmin } from './middleware.js';
 
 const NEW_USER_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
@@ -12,10 +12,11 @@ interface CooldownResult {
  * Check if a user is within the new-account cooldown period.
  * Instance admins are exempt.
  */
-export function checkNewUserCooldown(userId: string): CooldownResult {
-  const user = db
-    .prepare('SELECT created_at FROM users WHERE id = ?')
-    .get(userId) as { created_at: string } | undefined;
+export async function checkNewUserCooldown(userId: string): Promise<CooldownResult> {
+  const user = await getDb().queryOne<{ created_at: string }>(
+    'SELECT created_at FROM users WHERE id = ?',
+    [userId],
+  );
 
   if (!user) return { restricted: false };
   if (isInstanceAdmin(userId)) return { restricted: false };

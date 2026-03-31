@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { requireAuth, requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import { hasPermission, invalidateChannelAccessCache, isPremium, isAlphaPhase } from '../auth/permissions.js';
@@ -13,9 +13,8 @@ export default async function userRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireServerMember] },
     async (request) => {
       const serverId = getServerId(request);
-      const users = db
-       .prepare(
-         `SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.avatar_url, u.bio, u.banner_url, u.banned, u.created_at, u.is_bot,
+      const users = await getDb().query<any>(
+        `SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.avatar_url, u.bio, u.banner_url, u.banned, u.created_at, u.is_bot,
                u.name_font, u.name_color, u.premium_tier,
                r.name as role_name, r.color as role_color,
                sm.nickname as server_nickname, sm.avatar_url as member_avatar_url, sm.banner_url as member_banner_url
@@ -25,24 +24,23 @@ export default async function userRoutes(app: FastifyInstance) {
          WHERE u.is_bot = 0
             OR (u.is_bot = 1 AND EXISTS (SELECT 1 FROM bots b WHERE b.user_id = u.id AND b.enabled = 1))
          ORDER BY u.created_at`,
-        )
-        .all(serverId) as any[];
+        [serverId],
+      );
 
       // Attach role arrays for each user (scoped to this server's roles)
-      const allUserRoles = db
-        .prepare(
-          `SELECT ur.user_id, r.id as role_id, r.name as role_name, r.color as role_color, r.position
-         FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-         WHERE r.server_id = ?
-         ORDER BY r.position`,
-        )
-        .all(serverId) as {
+      const allUserRoles = await getDb().query<{
         user_id: string;
         role_id: string;
         role_name: string;
         role_color: string;
         position: number;
-      }[];
+      }>(
+        `SELECT ur.user_id, r.id as role_id, r.name as role_name, r.color as role_color, r.position
+         FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+         WHERE r.server_id = ?
+         ORDER BY r.position`,
+        [serverId],
+      );
 
       const userRolesMap = new Map<
         string,
@@ -59,12 +57,14 @@ export default async function userRoutes(app: FastifyInstance) {
         entry.role_colors.push(ur.role_color);
       }
 
+      const alphaPhase = await isAlphaPhase();
+
       for (const user of users) {
         const roles = userRolesMap.get(user.id);
         user.role_ids = roles?.role_ids ?? (user.role_id ? [user.role_id] : []);
         user.role_names = roles?.role_names ?? (user.role_name ? [user.role_name] : []);
         user.role_colors = roles?.role_colors ?? (user.role_color ? [user.role_color] : []);
-        
+
         // Prioritize server-specific profile fields
         if (user.member_avatar_url) {
           user.avatar_url = user.member_avatar_url;
@@ -73,7 +73,7 @@ export default async function userRoutes(app: FastifyInstance) {
           user.banner_url = user.member_banner_url;
         }
 
-        if (isAlphaPhase()) {
+        if (alphaPhase) {
           user.premium_tier = 'pro';
         }
       }
@@ -91,35 +91,40 @@ export default async function userRoutes(app: FastifyInstance) {
       const serverId = getServerId(request);
       const { role, role_id } = request.body;
 
-      const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+      const user = await getDb().queryOne('SELECT id FROM users WHERE id = ?', [id]);
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
       }
 
       // Verify user is a member of this server
-      const member = db.prepare(
+      const member = await getDb().queryOne(
         'SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?',
-      ).get(serverId, id);
+        [serverId, id],
+      );
       if (!member) {
         return reply.code(404).send({ error: 'User is not a member of this server' });
       }
 
       // Block role changes for bots
-      const targetUser = db.prepare('SELECT is_bot FROM users WHERE id = ?').get(id) as { is_bot: number } | undefined;
+      const targetUser = await getDb().queryOne<{ is_bot: number }>(
+        'SELECT is_bot FROM users WHERE id = ?',
+        [id],
+      );
       if (targetUser?.is_bot) {
         return reply.code(400).send({ error: 'Bot roles cannot be changed. Manage bots in Bot Settings.' });
       }
 
       if (role_id) {
-        const roleRow = db
-          .prepare('SELECT id, permissions FROM roles WHERE id = ? AND server_id = ?')
-          .get(role_id, serverId) as { id: string; permissions: string } | undefined;
+        const roleRow = await getDb().queryOne<{ id: string; permissions: string }>(
+          'SELECT id, permissions FROM roles WHERE id = ? AND server_id = ?',
+          [role_id, serverId],
+        );
         if (!roleRow) {
           return reply.code(400).send({ error: 'Role not found' });
         }
         try {
           const targetPerms = JSON.parse(roleRow.permissions);
-          if (targetPerms.administrator && !hasPermission(request.user.userId, 'administrator')) {
+          if (targetPerms.administrator && !await hasPermission(request.user.userId, 'administrator')) {
             return reply
               .code(403)
               .send({
@@ -127,12 +132,16 @@ export default async function userRoutes(app: FastifyInstance) {
               });
           }
         } catch {}
-        db.prepare('UPDATE users SET role_id = ? WHERE id = ?').run(role_id, id);
+        await getDb().run('UPDATE users SET role_id = ? WHERE id = ?', [role_id, id]);
         // Sync user_roles junction table (only for this server's roles)
-        db.prepare(
+        await getDb().run(
           `DELETE FROM user_roles WHERE user_id = ? AND role_id IN (SELECT id FROM roles WHERE server_id = ?)`,
-        ).run(id, serverId);
-        db.prepare('INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)').run(id, role_id);
+          [id, serverId],
+        );
+        await getDb().run(
+          'INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
+          [id, role_id],
+        );
       }
 
       invalidateChannelAccessCache();
@@ -154,7 +163,10 @@ export default async function userRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'At least one role is required' });
       }
 
-      const user = db.prepare('SELECT id, is_bot FROM users WHERE id = ?').get(id) as { id: string; is_bot: number } | undefined;
+      const user = await getDb().queryOne<{ id: string; is_bot: number }>(
+        'SELECT id, is_bot FROM users WHERE id = ?',
+        [id],
+      );
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
       }
@@ -164,9 +176,10 @@ export default async function userRoutes(app: FastifyInstance) {
       }
 
       // Verify user is a member of this server
-      const member = db.prepare(
+      const member = await getDb().queryOne(
         'SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?',
-      ).get(serverId, id);
+        [serverId, id],
+      );
       if (!member) {
         return reply.code(404).send({ error: 'User is not a member of this server' });
       }
@@ -174,13 +187,14 @@ export default async function userRoutes(app: FastifyInstance) {
       // Filter to only roles that belong to this server (client may send cross-server role IDs)
       const validRoleIds: string[] = [];
       for (const roleId of role_ids) {
-        const roleRow = db.prepare('SELECT id, permissions FROM roles WHERE id = ? AND server_id = ?').get(roleId, serverId) as
-          | { id: string; permissions: string }
-          | undefined;
+        const roleRow = await getDb().queryOne<{ id: string; permissions: string }>(
+          'SELECT id, permissions FROM roles WHERE id = ? AND server_id = ?',
+          [roleId, serverId],
+        );
         if (!roleRow) continue; // Skip roles from other servers
         try {
           const targetPerms = JSON.parse(roleRow.permissions);
-          if (targetPerms.administrator && !hasPermission(request.user.userId, 'administrator')) {
+          if (targetPerms.administrator && !await hasPermission(request.user.userId, 'administrator')) {
             return reply
               .code(403)
               .send({
@@ -195,14 +209,17 @@ export default async function userRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'No valid roles for this server' });
       }
 
-      db.transaction(() => {
+      await getDb().transaction(async (tx) => {
         // Replace user roles for this server only (preserve roles from other servers)
-        db.prepare(
+        await tx.run(
           `DELETE FROM user_roles WHERE user_id = ? AND role_id IN (SELECT id FROM roles WHERE server_id = ?)`,
-        ).run(id, serverId);
-        const insert = db.prepare('INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)');
+          [id, serverId],
+        );
         for (const roleId of validRoleIds) {
-          insert.run(id, roleId);
+          await tx.run(
+            'INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
+            [id, roleId],
+          );
         }
 
         // Set display role: use main_role_id if provided and valid, otherwise auto-calculate
@@ -210,21 +227,20 @@ export default async function userRoutes(app: FastifyInstance) {
         if (main_role_id && validRoleIds.includes(main_role_id)) {
           displayRoleId = main_role_id;
         } else {
-          const autoRole = db
-            .prepare(
-              `SELECT r.id FROM roles r
+          const autoRole = await tx.queryOne<{ id: string }>(
+            `SELECT r.id FROM roles r
              JOIN user_roles ur ON ur.role_id = r.id
              WHERE ur.user_id = ?
              ORDER BY r.position ASC LIMIT 1`,
-            )
-            .get(id) as { id: string } | undefined;
+            [id],
+          );
           displayRoleId = autoRole?.id;
         }
 
         if (displayRoleId) {
-          db.prepare('UPDATE users SET role_id = ? WHERE id = ?').run(displayRoleId, id);
+          await tx.run('UPDATE users SET role_id = ? WHERE id = ?', [displayRoleId, id]);
         }
-      })();
+      });
 
       invalidateChannelAccessCache();
       broadcast({ type: 'user:updated', userId: id });
@@ -246,7 +262,7 @@ export default async function userRoutes(app: FastifyInstance) {
     const { display_name, avatar_url, bio, banner_url, name_font, name_color } = request.body;
 
     if (display_name !== undefined) {
-      if (!hasPermission(request.user.userId, 'change_nickname')) {
+      if (!await hasPermission(request.user.userId, 'change_nickname')) {
         return reply
           .code(403)
           .send({ error: 'You do not have permission to change your nickname' });
@@ -254,9 +270,9 @@ export default async function userRoutes(app: FastifyInstance) {
       if (display_name.length < 1 || display_name.length > 32) {
         return reply.code(400).send({ error: 'Display name must be 1-32 characters' });
       }
-      db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(
-        display_name,
-        request.user.userId,
+      await getDb().run(
+        'UPDATE users SET display_name = ? WHERE id = ?',
+        [display_name, request.user.userId],
       );
     }
 
@@ -273,16 +289,17 @@ export default async function userRoutes(app: FastifyInstance) {
             .send({ error: 'Invalid avatar URL — must be an uploaded file path' });
         }
         const storedName = avatar_url.replace('/uploads/', '');
-        const file = db
-          .prepare('SELECT id FROM files WHERE stored_name = ? AND user_id = ?')
-          .get(storedName, request.user.userId);
+        const file = await getDb().queryOne(
+          'SELECT id FROM files WHERE stored_name = ? AND user_id = ?',
+          [storedName, request.user.userId],
+        );
         if (!file) {
           return reply.code(400).send({ error: 'File not found or not owned by you' });
         }
       }
-      db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(
-        avatar_url,
-        request.user.userId,
+      await getDb().run(
+        'UPDATE users SET avatar_url = ? WHERE id = ?',
+        [avatar_url, request.user.userId],
       );
     }
 
@@ -290,7 +307,7 @@ export default async function userRoutes(app: FastifyInstance) {
       if (typeof bio !== 'string' || bio.length > 190) {
         return reply.code(400).send({ error: 'Bio must be at most 190 characters' });
       }
-      db.prepare('UPDATE users SET bio = ? WHERE id = ?').run(bio, request.user.userId);
+      await getDb().run('UPDATE users SET bio = ? WHERE id = ?', [bio, request.user.userId]);
     }
 
     if (banner_url !== undefined) {
@@ -304,9 +321,10 @@ export default async function userRoutes(app: FastifyInstance) {
           // valid external URL, no further check needed
         } else if (banner_url.startsWith('/uploads/')) {
           const storedName = banner_url.replace('/uploads/', '');
-          const file = db
-            .prepare('SELECT id FROM files WHERE stored_name = ? AND user_id = ?')
-            .get(storedName, request.user.userId);
+          const file = await getDb().queryOne(
+            'SELECT id FROM files WHERE stored_name = ? AND user_id = ?',
+            [storedName, request.user.userId],
+          );
           if (!file) {
             return reply.code(400).send({ error: 'File not found or not owned by you' });
           }
@@ -316,14 +334,14 @@ export default async function userRoutes(app: FastifyInstance) {
             .send({ error: 'Invalid banner URL — must be an uploaded file or GIPHY URL' });
         }
       }
-      db.prepare('UPDATE users SET banner_url = ? WHERE id = ?').run(
-        banner_url,
-        request.user.userId,
+      await getDb().run(
+        'UPDATE users SET banner_url = ? WHERE id = ?',
+        [banner_url, request.user.userId],
       );
     }
 
     if (name_font !== undefined) {
-      if (name_font !== null && !isPremium(request.user.userId)) {
+      if (name_font !== null && !await isPremium(request.user.userId)) {
         return reply.code(403).send({ error: 'Custom name fonts are a Pro feature', premiumRequired: true });
       }
       const allowedFonts = [
@@ -344,11 +362,14 @@ export default async function userRoutes(app: FastifyInstance) {
       if (name_font !== null && !allowedFonts.includes(name_font)) {
         return reply.code(400).send({ error: 'Invalid font selection' });
       }
-      db.prepare('UPDATE users SET name_font = ? WHERE id = ?').run(name_font, request.user.userId);
+      await getDb().run(
+        'UPDATE users SET name_font = ? WHERE id = ?',
+        [name_font, request.user.userId],
+      );
     }
 
     if (name_color !== undefined) {
-      if (name_color !== null && !isPremium(request.user.userId)) {
+      if (name_color !== null && !await isPremium(request.user.userId)) {
         return reply.code(403).send({ error: 'Custom name colors are a Pro feature', premiumRequired: true });
       }
       if (name_color !== null) {
@@ -358,9 +379,9 @@ export default async function userRoutes(app: FastifyInstance) {
           return reply.code(400).send({ error: 'Invalid color — must be #rrggbb or gradient:#rrggbb,#rrggbb' });
         }
       }
-      db.prepare('UPDATE users SET name_color = ? WHERE id = ?').run(
-        name_color,
-        request.user.userId,
+      await getDb().run(
+        'UPDATE users SET name_color = ? WHERE id = ?',
+        [name_color, request.user.userId],
       );
     }
 
@@ -373,22 +394,20 @@ export default async function userRoutes(app: FastifyInstance) {
 
     broadcast({ type: 'user:updated', userId: request.user.userId });
 
-    const user = db
-      .prepare(
-        `SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.avatar_url, u.bio, u.banner_url, u.name_font, u.name_color, u.totp_enabled, u.created_at, u.email, u.mfa_method,
+    const user = await getDb().queryOne<any>(
+      `SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.avatar_url, u.bio, u.banner_url, u.name_font, u.name_color, u.totp_enabled, u.created_at, u.email, u.mfa_method,
                 r.name as role_name, r.color as role_color
          FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ?`,
-      )
-      .get(request.user.userId) as any;
+      [request.user.userId],
+    );
 
     // Attach role arrays
-    const userRoles = db
-      .prepare(
-        `SELECT r.id as role_id, r.name as role_name, r.color as role_color
+    const userRoles = await getDb().query<{ role_id: string; role_name: string; role_color: string }>(
+      `SELECT r.id as role_id, r.name as role_name, r.color as role_color
          FROM user_roles ur JOIN roles r ON r.id = ur.role_id
          WHERE ur.user_id = ? ORDER BY r.position`,
-      )
-      .all(request.user.userId) as { role_id: string; role_name: string; role_color: string }[];
+      [request.user.userId],
+    );
 
     user.role_ids = userRoles.map((r) => r.role_id);
     user.role_names = userRoles.map((r) => r.role_name);

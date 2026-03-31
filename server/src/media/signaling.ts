@@ -44,7 +44,7 @@ export function leaveVoiceChannel(userId: string) {
   userVoiceChannels.delete(userId);
 }
 
-export function getAllRoomMembers(): Record<
+export async function getAllRoomMembers(): Promise<Record<
   string,
   {
     userId: string;
@@ -54,7 +54,7 @@ export function getAllRoomMembers(): Record<
     muted: boolean;
     deafened: boolean;
   }[]
-> {
+>> {
   const result: Record<
     string,
     {
@@ -69,14 +69,14 @@ export function getAllRoomMembers(): Record<
   for (const [channelId, room] of rooms) {
     const peers = room.getPeerList();
     if (peers.length > 0) {
-      result[channelId] = peers.map((p) => ({
+      result[channelId] = await Promise.all(peers.map(async (p) => ({
         userId: p.userId,
         username: p.username,
         display_name: p.display_name,
-        avatar_url: getAvatarUrl(p.userId),
+        avatar_url: await getAvatarUrl(p.userId),
         muted: p.muted,
         deafened: p.deafened,
-      }));
+      })));
     }
   }
   return result;
@@ -89,11 +89,11 @@ export function getPeersInChannel(channelId: string): string[] {
 }
 
 /** Called when the mediasoup worker dies — evict all peers and destroy all rooms */
-export function clearAllRooms() {
+export async function clearAllRooms() {
   for (const [channelId, room] of rooms) {
     for (const userId of room.peers.keys()) {
       userVoiceChannels.delete(userId);
-      broadcastToChannel(channelId, { type: 'voice:left', channelId, userId, username: '' });
+      await broadcastToChannel(channelId, { type: 'voice:left', channelId, userId, username: '' });
     }
     room.close();
   }
@@ -108,25 +108,25 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         leaveVoiceChannel(user.userId);
 
         const room = await getOrCreateRoom(event.channelId);
-        const peer = room.addPeer(user.userId, user.username, getDisplayName(user.userId));
+        const peer = room.addPeer(user.userId, user.username, await getDisplayName(user.userId));
         userVoiceChannels.set(user.userId, event.channelId);
 
-        const avatarUrl = getAvatarUrl(user.userId);
-        broadcastToChannel(event.channelId, {
+        const avatarUrl = await getAvatarUrl(user.userId);
+        await broadcastToChannel(event.channelId, {
           type: 'voice:joined',
           channelId: event.channelId,
           userId: user.userId,
           username: user.username,
-          display_name: getDisplayName(user.userId),
+          display_name: await getDisplayName(user.userId),
           avatar_url: avatarUrl,
           muted: peer.muted,
           deafened: peer.deafened,
         });
 
-        const peersWithAvatar = room.getPeerList().map((p) => ({
+        const peersWithAvatar = await Promise.all(room.getPeerList().map(async (p) => ({
           ...p,
-          avatar_url: getAvatarUrl(p.userId),
-        }));
+          avatar_url: await getAvatarUrl(p.userId),
+        })));
         sendTo(user.userId, {
           type: 'voice:peers',
           channelId: event.channelId,
@@ -134,10 +134,10 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         });
 
         // Force mute in AFK channel
-        if (isAfkChannel(event.channelId)) {
+        if (await isAfkChannel(event.channelId)) {
           const afkPeer = room.peers.get(user.userId);
           if (afkPeer) afkPeer.muted = true;
-          broadcastToChannel(event.channelId, {
+          await broadcastToChannel(event.channelId, {
             type: 'voice:muteUpdate',
             channelId: event.channelId,
             userId: user.userId,
@@ -151,7 +151,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         const channelId = userVoiceChannels.get(user.userId);
         if (channelId) {
           leaveVoiceChannel(user.userId);
-          broadcastToChannel(channelId, {
+          await broadcastToChannel(channelId, {
             type: 'voice:left',
             channelId,
             userId: user.userId,
@@ -165,8 +165,8 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         const channelId = userVoiceChannels.get(user.userId);
         if (channelId) {
           // Prevent unmuting in AFK channel
-          if (!event.muted && isAfkChannel(channelId)) {
-            broadcastToChannel(channelId, {
+          if (!event.muted && await isAfkChannel(channelId)) {
+            await broadcastToChannel(channelId, {
               type: 'voice:muteUpdate',
               channelId,
               userId: user.userId,
@@ -177,7 +177,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
           const room = rooms.get(channelId);
           const peer = room?.peers.get(user.userId);
           if (peer) peer.muted = event.muted;
-          broadcastToChannel(channelId, {
+          await broadcastToChannel(channelId, {
             type: 'voice:muteUpdate',
             channelId,
             userId: user.userId,
@@ -193,7 +193,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
           const room = rooms.get(channelId);
           const peer = room?.peers.get(user.userId);
           if (peer) peer.deafened = event.deafened;
-          broadcastToChannel(channelId, {
+          await broadcastToChannel(channelId, {
             type: 'voice:deafenUpdate',
             channelId,
             userId: user.userId,
@@ -248,7 +248,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         if (
           kind === 'audio' &&
           !channelId.startsWith('call:') &&
-          !hasChannelPermission(user.userId, channelId, 'speak')
+          !await hasChannelPermission(user.userId, channelId, 'speak')
         ) {
           sendTo(user.userId, { type: 'error', message: 'You do not have permission to speak' });
           return;
@@ -257,7 +257,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         if (
           kind === 'video' &&
           !channelId.startsWith('call:') &&
-          !hasChannelPermission(user.userId, channelId, 'share_screen')
+          !await hasChannelPermission(user.userId, channelId, 'share_screen')
         ) {
           sendTo(user.userId, {
             type: 'error',
@@ -274,7 +274,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         sendTo(user.userId, { type: 'rtc:produced', producerId });
 
         // Pause audio in AFK channel
-        if (kind === 'audio' && isAfkChannel(channelId)) {
+        if (kind === 'audio' && await isAfkChannel(channelId)) {
           const afkRoom = rooms.get(channelId);
           const afkPeer = afkRoom?.peers.get(user.userId);
           if (afkPeer?.producer) {
@@ -284,20 +284,20 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
 
         if (kind === 'video') {
           // Screen share started — notify UI and trigger consumption
-          broadcastToChannel(channelId, {
+          await broadcastToChannel(channelId, {
             type: 'screen:started',
             userId: user.userId,
             username: user.username,
             producerId,
           });
-          broadcastToChannel(
+          await broadcastToChannel(
             channelId,
             { type: 'rtc:newProducer', producerId, userId: user.userId, username: user.username },
             user.userId,
           );
         } else {
           // Notify other peers about the new audio producer
-          broadcastToChannel(
+          await broadcastToChannel(
             channelId,
             { type: 'rtc:newProducer', producerId, userId: user.userId, username: user.username },
             user.userId,
@@ -313,7 +313,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         if (room) {
           room.closeVideoProducer(user.userId);
         }
-        broadcastToChannel(channelId, { type: 'screen:stopped', userId: user.userId });
+        await broadcastToChannel(channelId, { type: 'screen:stopped', userId: user.userId });
         break;
       }
 

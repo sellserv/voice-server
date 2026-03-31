@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'crypto';
 import { nanoid } from 'nanoid';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { requirePermission, requireAdmin, requireAuth, isInstanceAdmin } from '../auth/middleware.js';
 import { hasPermission } from '../auth/permissions.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
@@ -9,9 +9,9 @@ import { broadcast, disconnectUser, getOnlineUsers, sendToMany, injectFakeClient
 import type { InviteCode } from '@voip-server/shared';
 import { logAuditEvent, getAuditLog } from '../audit/log.js';
 
-function getServerMemberUserIds(serverId: string): string[] {
-  return (db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(serverId) as { user_id: string }[])
-    .map(r => r.user_id);
+async function getServerMemberUserIds(serverId: string): Promise<string[]> {
+  const rows = await getDb().query<{ user_id: string }>('SELECT user_id FROM server_members WHERE server_id = ?', [serverId]);
+  return rows.map(r => r.user_id);
 }
 
 const adminRateLimit = {
@@ -32,13 +32,13 @@ export default async function adminRoutes(app: FastifyInstance) {
     '/api/admin/stats',
     { ...adminRateLimit, preHandler: requireAdmin },
     async () => {
-      const userCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as any).c;
-      const serverCount = (db.prepare('SELECT COUNT(*) as c FROM servers').get() as any).c;
-      const messageCount = (db.prepare('SELECT COUNT(*) as c FROM messages').get() as any).c;
-      const fileCount = (db.prepare('SELECT COUNT(*) as c FROM files').get() as any).c;
-      const diskUsage = (db.prepare('SELECT COALESCE(SUM(size_bytes), 0) as total FROM files').get() as any).total;
-      const onlineCount = getOnlineUsers().length;
-      const openReports = (db.prepare("SELECT COUNT(*) as c FROM reports WHERE status = 'open'").get() as any).c;
+      const userCount = (await getDb().queryOne<any>('SELECT COUNT(*) as c FROM users'))?.c;
+      const serverCount = (await getDb().queryOne<any>('SELECT COUNT(*) as c FROM servers'))?.c;
+      const messageCount = (await getDb().queryOne<any>('SELECT COUNT(*) as c FROM messages'))?.c;
+      const fileCount = (await getDb().queryOne<any>('SELECT COUNT(*) as c FROM files'))?.c;
+      const diskUsage = (await getDb().queryOne<any>('SELECT COALESCE(SUM(size_bytes), 0) as total FROM files'))?.total;
+      const onlineCount = (await getOnlineUsers()).length;
+      const openReports = (await getDb().queryOne<any>("SELECT COUNT(*) as c FROM reports WHERE status = 'open'"))?.c;
 
       return {
         users: userCount,
@@ -57,13 +57,13 @@ export default async function adminRoutes(app: FastifyInstance) {
     '/api/admin/users',
     { ...adminRateLimit, preHandler: requireAdmin },
     async () => {
-      return db.prepare(
+      return await getDb().query(
         `SELECT u.id, u.username, u.display_name, u.avatar_url, u.email, u.banned, u.created_at,
                 (SELECT COUNT(*) FROM server_members WHERE user_id = u.id) as server_count,
                 (SELECT COUNT(*) FROM messages WHERE user_id = u.id) as message_count,
                 (SELECT ip FROM audit_log WHERE user_id = u.id AND event_type = 'successful_login' ORDER BY created_at DESC LIMIT 1) as last_ip
          FROM users u ORDER BY u.created_at DESC`,
-      ).all();
+      );
     },
   );
 
@@ -73,20 +73,22 @@ export default async function adminRoutes(app: FastifyInstance) {
     { ...adminRateLimit, preHandler: requireAdmin },
     async (request, reply) => {
       const { id } = request.params;
-      const user = db.prepare(
+      const user = await getDb().queryOne<any>(
         `SELECT u.id, u.username, u.display_name, u.email, u.avatar_url, u.bio, u.banned, u.ban_reason, u.created_at,
                 (SELECT COUNT(*) FROM messages WHERE user_id = u.id) as message_count,
                 (SELECT ip FROM audit_log WHERE user_id = u.id AND event_type = 'successful_login' ORDER BY created_at DESC LIMIT 1) as last_ip
          FROM users u WHERE u.id = ?`,
-      ).get(id) as any;
+        [id],
+      );
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
       }
-      user.servers = db.prepare(
+      user.servers = await getDb().query(
         `SELECT s.id, s.name FROM servers s
          JOIN server_members sm ON sm.server_id = s.id
          WHERE sm.user_id = ?`,
-      ).all(id);
+        [id],
+      );
       return user;
     },
   );
@@ -103,9 +105,10 @@ export default async function adminRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Cannot ban yourself' });
       }
 
-      const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id) as
-        | { id: string; username: string }
-        | undefined;
+      const user = await getDb().queryOne<{ id: string; username: string }>(
+        'SELECT id, username FROM users WHERE id = ?',
+        [id],
+      );
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
       }
@@ -115,8 +118,8 @@ export default async function adminRoutes(app: FastifyInstance) {
       }
 
       const trimmedReason = reason?.trim().slice(0, 1000) || null;
-      db.prepare('UPDATE users SET banned = 1, ban_reason = ? WHERE id = ?').run(trimmedReason, id);
-      logAuditEvent('platform_ban', request.user.userId, id, request.ip, { reason: trimmedReason });
+      await getDb().run('UPDATE users SET banned = 1, ban_reason = ? WHERE id = ?', [trimmedReason, id]);
+      await logAuditEvent('platform_ban', request.user.userId, id, request.ip, { reason: trimmedReason });
       broadcast({ type: 'user:banned', userId: id });
       disconnectUser(id);
 
@@ -131,13 +134,13 @@ export default async function adminRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { id } = request.params;
 
-      const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+      const user = await getDb().queryOne('SELECT id FROM users WHERE id = ?', [id]);
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
       }
 
-      db.prepare('UPDATE users SET banned = 0, ban_reason = NULL WHERE id = ?').run(id);
-      logAuditEvent('platform_unban', request.user.userId, id, request.ip);
+      await getDb().run('UPDATE users SET banned = 0, ban_reason = NULL WHERE id = ?', [id]);
+      await logAuditEvent('platform_unban', request.user.userId, id, request.ip);
 
       return { ok: true };
     },
@@ -148,7 +151,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     '/api/admin/servers',
     { ...adminRateLimit, preHandler: requireAdmin },
     async () => {
-      const rows = db.prepare(
+      const rows = await getDb().query<any>(
         `SELECT s.id, s.name, s.icon_file_id, s.owner_id, s.created_at,
                 u.username as owner_username,
                 f.stored_name as icon_stored_name,
@@ -157,7 +160,7 @@ export default async function adminRoutes(app: FastifyInstance) {
          FROM servers s LEFT JOIN users u ON u.id = s.owner_id
          LEFT JOIN files f ON f.id = s.icon_file_id
          ORDER BY s.created_at DESC`,
-      ).all() as any[];
+      );
       return rows.map((r: any) => ({
         ...r,
         icon_url: r.icon_stored_name ? '/uploads/' + r.icon_stored_name : null,
@@ -172,34 +175,34 @@ export default async function adminRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { id } = request.params;
 
-      const server = db.prepare('SELECT id, name FROM servers WHERE id = ?').get(id) as
-        | { id: string; name: string }
-        | undefined;
+      const server = await getDb().queryOne<{ id: string; name: string }>(
+        'SELECT id, name FROM servers WHERE id = ?',
+        [id],
+      );
       if (!server) {
         return reply.code(404).send({ error: 'Server not found' });
       }
 
-      const memberIds = getServerMemberUserIds(id);
+      const memberIds = await getServerMemberUserIds(id);
 
-      const deleteServer = db.transaction(() => {
-        db.prepare('DELETE FROM invite_codes WHERE server_id = ?').run(id);
-        db.prepare('DELETE FROM channel_permission_overrides WHERE server_id = ?').run(id);
-        db.prepare('DELETE FROM group_permission_overrides WHERE server_id = ?').run(id);
-        db.prepare('DELETE FROM custom_emojis WHERE server_id = ?').run(id);
-        db.prepare('DELETE FROM soundboard_sounds WHERE server_id = ?').run(id);
-        db.prepare('DELETE FROM bots WHERE server_id = ?').run(id);
-        db.prepare('DELETE FROM audit_log WHERE server_id = ?').run(id);
-        db.prepare('DELETE FROM reports WHERE server_id = ?').run(id);
-        db.prepare('DELETE FROM server_bans WHERE server_id = ?').run(id);
-        db.prepare('DELETE FROM channel_groups WHERE server_id = ?').run(id);
-        db.prepare('DELETE FROM channels WHERE server_id = ?').run(id);
-        db.prepare('DELETE FROM roles WHERE server_id = ?').run(id);
-        db.prepare('DELETE FROM server_members WHERE server_id = ?').run(id);
-        db.prepare('DELETE FROM servers WHERE id = ?').run(id);
+      await getDb().transaction(async (tx) => {
+        await tx.run('DELETE FROM invite_codes WHERE server_id = ?', [id]);
+        await tx.run('DELETE FROM channel_permission_overrides WHERE server_id = ?', [id]);
+        await tx.run('DELETE FROM group_permission_overrides WHERE server_id = ?', [id]);
+        await tx.run('DELETE FROM custom_emojis WHERE server_id = ?', [id]);
+        await tx.run('DELETE FROM soundboard_sounds WHERE server_id = ?', [id]);
+        await tx.run('DELETE FROM bots WHERE server_id = ?', [id]);
+        await tx.run('DELETE FROM audit_log WHERE server_id = ?', [id]);
+        await tx.run('DELETE FROM reports WHERE server_id = ?', [id]);
+        await tx.run('DELETE FROM server_bans WHERE server_id = ?', [id]);
+        await tx.run('DELETE FROM channel_groups WHERE server_id = ?', [id]);
+        await tx.run('DELETE FROM channels WHERE server_id = ?', [id]);
+        await tx.run('DELETE FROM roles WHERE server_id = ?', [id]);
+        await tx.run('DELETE FROM server_members WHERE server_id = ?', [id]);
+        await tx.run('DELETE FROM servers WHERE id = ?', [id]);
       });
-      deleteServer();
 
-      logAuditEvent('server_deleted', request.user.userId, null, request.ip, { name: server.name });
+      await logAuditEvent('server_deleted', request.user.userId, null, request.ip, { name: server.name });
       sendToMany(memberIds, { type: 'server:deleted', serverId: id });
 
       return { ok: true };
@@ -217,7 +220,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         event_type?: string;
         user_id?: string;
       };
-      return getAuditLog({
+      return await getAuditLog({
         page: page ? (parseInt(page, 10) || 1) : undefined,
         limit: limit ? Math.min(parseInt(limit, 10) || 50, 100) : undefined,
         eventType: event_type,
@@ -243,11 +246,12 @@ export default async function adminRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Reason must be 1000 characters or less' });
       }
 
-      const message = db.prepare(
+      const message = await getDb().queryOne<any>(
         `SELECT m.id, m.user_id, m.content, m.channel_id, c.server_id
          FROM messages m LEFT JOIN channels c ON c.id = m.channel_id
          WHERE m.id = ?`,
-      ).get(message_id) as any;
+        [message_id],
+      );
 
       if (!message) {
         return reply.code(404).send({ error: 'Message not found' });
@@ -258,20 +262,22 @@ export default async function adminRoutes(app: FastifyInstance) {
       }
 
       // Prevent duplicate open reports for same message by same user
-      const existing = db.prepare(
+      const existing = await getDb().queryOne(
         "SELECT id FROM reports WHERE reporter_id = ? AND message_id = ? AND status = 'open'",
-      ).get(request.user.userId, message_id);
+        [request.user.userId, message_id],
+      );
       if (existing) {
         return reply.code(409).send({ error: 'You have already reported this message' });
       }
 
       const id = randomUUID();
-      db.prepare(
+      await getDb().run(
         `INSERT INTO reports (id, reporter_id, message_id, reported_user_id, channel_id, server_id, reason, message_content)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(id, request.user.userId, message_id, message.user_id, message.channel_id, message.server_id, reason.trim(), message.content);
+        [id, request.user.userId, message_id, message.user_id, message.channel_id, message.server_id, reason.trim(), message.content],
+      );
 
-      logAuditEvent('report_submitted', request.user.userId, message.user_id, request.ip, { message_id, reason: reason.trim() }, message.server_id);
+      await logAuditEvent('report_submitted', request.user.userId, message.user_id, request.ip, { message_id, reason: reason.trim() }, message.server_id);
 
       return { ok: true };
     },
@@ -290,7 +296,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       const filter = status ? "WHERE r.status = ?" : "";
       const params = status ? [status] : [];
 
-      return db.prepare(
+      return await getDb().query(
         `SELECT r.*,
                 reporter.username as reporter_username,
                 reported.username as reported_username,
@@ -301,7 +307,8 @@ export default async function adminRoutes(app: FastifyInstance) {
          LEFT JOIN servers s ON s.id = r.server_id
          ${filter}
          ORDER BY r.created_at DESC`,
-      ).all(...params);
+        params,
+      );
     },
   );
 
@@ -317,7 +324,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Status must be resolved or dismissed' });
       }
 
-      const report = db.prepare('SELECT id, reported_user_id, status FROM reports WHERE id = ?').get(id) as any;
+      const report = await getDb().queryOne<any>('SELECT id, reported_user_id, status FROM reports WHERE id = ?', [id]);
       if (!report) {
         return reply.code(404).send({ error: 'Report not found' });
       }
@@ -325,11 +332,12 @@ export default async function adminRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Report is already ' + report.status });
       }
 
-      db.prepare(
+      await getDb().run(
         "UPDATE reports SET status = ?, resolved_by = ?, resolution_note = ?, resolved_at = datetime('now') WHERE id = ?",
-      ).run(status, request.user.userId, note || null, id);
+        [status, request.user.userId, note || null, id],
+      );
 
-      logAuditEvent('report_resolved', request.user.userId, report.reported_user_id, request.ip, { report_id: id, status, note });
+      await logAuditEvent('report_resolved', request.user.userId, report.reported_user_id, request.ip, { report_id: id, status, note });
 
       return { ok: true };
     },
@@ -349,9 +357,10 @@ export default async function adminRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Cannot kick yourself' });
       }
 
-      const user = db.prepare('SELECT id, is_bot FROM users WHERE id = ?').get(id) as
-        | { id: string; is_bot: number }
-        | undefined;
+      const user = await getDb().queryOne<{ id: string; is_bot: number }>(
+        'SELECT id, is_bot FROM users WHERE id = ?',
+        [id],
+      );
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
       }
@@ -361,24 +370,25 @@ export default async function adminRoutes(app: FastifyInstance) {
       }
 
       // Can't kick someone with administrator permission
-      if (hasPermission(id, 'administrator', serverId)) {
+      if (await hasPermission(id, 'administrator', serverId)) {
         return reply.code(400).send({ error: 'Cannot kick an administrator' });
       }
 
       // Check they're actually a member
-      const isMember = db.prepare(
-        'SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?'
-      ).get(serverId, id);
+      const isMember = await getDb().queryOne(
+        'SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?',
+        [serverId, id],
+      );
       if (!isMember) {
         return reply.code(400).send({ error: 'User is not a member of this server' });
       }
 
       // Remove from server (no ban record — they can rejoin)
-      db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(serverId, id);
+      await getDb().run('DELETE FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, id]);
 
-      logAuditEvent('user_kick', request.user.userId, id, request.ip, undefined, serverId);
+      await logAuditEvent('user_kick', request.user.userId, id, request.ip, undefined, serverId);
 
-      const memberIds = getServerMemberUserIds(serverId);
+      const memberIds = await getServerMemberUserIds(serverId);
       sendToMany(memberIds, { type: 'server:memberLeft', serverId, userId: id });
       // Also notify the kicked user so their client removes the server
       sendToMany([id], { type: 'server:memberLeft', serverId, userId: id });
@@ -400,9 +410,10 @@ export default async function adminRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Cannot ban yourself' });
       }
 
-      const user = db.prepare('SELECT id, role, is_bot FROM users WHERE id = ?').get(id) as
-        | { id: string; role: string; is_bot: number }
-        | undefined;
+      const user = await getDb().queryOne<{ id: string; role: string; is_bot: number }>(
+        'SELECT id, role, is_bot FROM users WHERE id = ?',
+        [id],
+      );
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
       }
@@ -412,30 +423,30 @@ export default async function adminRoutes(app: FastifyInstance) {
       }
 
       // Can't ban someone with administrator permission
-      if (hasPermission(id, 'administrator')) {
+      if (await hasPermission(id, 'administrator')) {
         return reply.code(400).send({ error: 'Cannot ban an administrator' });
       }
 
       const trimmedReason = reason?.trim().slice(0, 1000) || null;
 
-      const performBan = db.transaction(() => {
+      await getDb().transaction(async (tx) => {
         // Record the ban
-        db.prepare(
-          'INSERT OR REPLACE INTO server_bans (server_id, user_id, reason, banned_by) VALUES (?, ?, ?, ?)'
-        ).run(serverId, id, trimmedReason, request.user.userId);
+        await tx.run(
+          'INSERT OR REPLACE INTO server_bans (server_id, user_id, reason, banned_by) VALUES (?, ?, ?, ?)',
+          [serverId, id, trimmedReason, request.user.userId],
+        );
 
         // Remove user from this server's membership
-        db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(
+        await tx.run('DELETE FROM server_members WHERE server_id = ? AND user_id = ?', [
           serverId,
           id,
-        );
+        ]);
       });
-      performBan();
 
-      logAuditEvent('user_ban', request.user.userId, id, request.ip, { reason: trimmedReason }, serverId);
+      await logAuditEvent('user_ban', request.user.userId, id, request.ip, { reason: trimmedReason }, serverId);
 
       // Notify only members of this server (not all connected users)
-      const memberIds = getServerMemberUserIds(serverId);
+      const memberIds = await getServerMemberUserIds(serverId);
       sendToMany(memberIds, { type: 'server:memberLeft', serverId, userId: id });
 
       return { ok: true };
@@ -450,17 +461,18 @@ export default async function adminRoutes(app: FastifyInstance) {
       const { id } = request.params;
       const serverId = getServerId(request);
 
-      const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+      const user = await getDb().queryOne('SELECT id FROM users WHERE id = ?', [id]);
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
       }
 
       // Remove from server_bans
-      db.prepare(
-        'DELETE FROM server_bans WHERE server_id = ? AND user_id = ?'
-      ).run(serverId, id);
+      await getDb().run(
+        'DELETE FROM server_bans WHERE server_id = ? AND user_id = ?',
+        [serverId, id],
+      );
 
-      logAuditEvent('user_unban', request.user.userId, id, request.ip, undefined, serverId);
+      await logAuditEvent('user_unban', request.user.userId, id, request.ip, undefined, serverId);
       return { ok: true };
     },
   );
@@ -479,12 +491,13 @@ export default async function adminRoutes(app: FastifyInstance) {
       const code = nanoid(8);
       const defaultExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-      db.prepare(
+      await getDb().run(
         'INSERT INTO invite_codes (id, code, created_by, max_uses, expires_at, server_id) VALUES (?, ?, ?, ?, ?, ?)',
-      ).run(id, code, request.user.userId, max_uses ?? null, expires_at ?? defaultExpiry, serverId);
+        [id, code, request.user.userId, max_uses ?? null, expires_at ?? defaultExpiry, serverId],
+      );
 
-      logAuditEvent('invite_create', request.user.userId, null, request.ip, { code }, serverId);
-      return db.prepare('SELECT * FROM invite_codes WHERE id = ?').get(id) as InviteCode;
+      await logAuditEvent('invite_create', request.user.userId, null, request.ip, { code }, serverId);
+      return await getDb().queryOne<InviteCode>('SELECT * FROM invite_codes WHERE id = ?', [id]);
     },
   );
 
@@ -494,15 +507,16 @@ export default async function adminRoutes(app: FastifyInstance) {
     { preHandler: [requirePermission('manage_invite_codes'), requireServerMember] },
     async (request) => {
       const serverId = getServerId(request);
-      return db
-        .prepare('SELECT * FROM invite_codes WHERE server_id = ? ORDER BY created_at DESC')
-        .all(serverId) as InviteCode[];
+      return await getDb().query<InviteCode>(
+        'SELECT * FROM invite_codes WHERE server_id = ? ORDER BY created_at DESC',
+        [serverId],
+      );
     },
   );
 
   // Get instance settings
   app.get('/api/admin/instance-settings', { preHandler: requireAdmin }, async () => {
-    const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name, alpha_billing, terms_url, privacy_url FROM instance_settings WHERE id = 1').get() as any;
+    const settings = await getDb().queryOne<any>('SELECT allow_server_creation, allow_registration, instance_name, alpha_billing, terms_url, privacy_url FROM instance_settings WHERE id = 1');
     return settings || { allow_server_creation: 1, allow_registration: 1, instance_name: 'SellServ Voice', alpha_billing: 0, terms_url: '', privacy_url: '' };
   });
 
@@ -513,25 +527,25 @@ export default async function adminRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { allow_registration, instance_name, alpha_billing, terms_url, privacy_url } = request.body;
       if (allow_registration !== undefined) {
-        db.prepare('UPDATE instance_settings SET allow_registration = ? WHERE id = 1').run(allow_registration ? 1 : 0);
+        await getDb().run('UPDATE instance_settings SET allow_registration = ? WHERE id = 1', [allow_registration ? 1 : 0]);
       }
       if (instance_name !== undefined) {
         const trimmed = instance_name.trim().slice(0, 100);
         if (!trimmed) {
           return reply.code(400).send({ error: 'Instance name cannot be empty' });
         }
-        db.prepare('UPDATE instance_settings SET instance_name = ? WHERE id = 1').run(trimmed);
+        await getDb().run('UPDATE instance_settings SET instance_name = ? WHERE id = 1', [trimmed]);
       }
       if (alpha_billing !== undefined) {
-        db.prepare('UPDATE instance_settings SET alpha_billing = ? WHERE id = 1').run(alpha_billing ? 1 : 0);
+        await getDb().run('UPDATE instance_settings SET alpha_billing = ? WHERE id = 1', [alpha_billing ? 1 : 0]);
       }
       if (terms_url !== undefined) {
-        db.prepare('UPDATE instance_settings SET terms_url = ? WHERE id = 1').run(terms_url.trim().slice(0, 500));
+        await getDb().run('UPDATE instance_settings SET terms_url = ? WHERE id = 1', [terms_url.trim().slice(0, 500)]);
       }
       if (privacy_url !== undefined) {
-        db.prepare('UPDATE instance_settings SET privacy_url = ? WHERE id = 1').run(privacy_url.trim().slice(0, 500));
+        await getDb().run('UPDATE instance_settings SET privacy_url = ? WHERE id = 1', [privacy_url.trim().slice(0, 500)]);
       }
-      const settings = db.prepare('SELECT allow_server_creation, allow_registration, instance_name, alpha_billing, terms_url, privacy_url FROM instance_settings WHERE id = 1').get() as any;
+      const settings = await getDb().queryOne<any>('SELECT allow_server_creation, allow_registration, instance_name, alpha_billing, terms_url, privacy_url FROM instance_settings WHERE id = 1');
       return settings;
     },
   );
@@ -543,11 +557,11 @@ export default async function adminRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { id } = request.params;
       const serverId = getServerId(request);
-      const result = db.prepare('DELETE FROM invite_codes WHERE id = ? AND server_id = ?').run(id, serverId);
+      const result = await getDb().run('DELETE FROM invite_codes WHERE id = ? AND server_id = ?', [id, serverId]);
       if (result.changes === 0) {
         return reply.code(404).send({ error: 'Invite code not found' });
       }
-      logAuditEvent('invite_delete', request.user.userId, null, request.ip, { id }, serverId);
+      await logAuditEvent('invite_delete', request.user.userId, null, request.ip, { id }, serverId);
       return { ok: true };
     },
   );
@@ -559,9 +573,9 @@ export default async function adminRoutes(app: FastifyInstance) {
     '/api/admin/global-roles',
     { ...adminRateLimit, preHandler: requireAdmin },
     async () => {
-      return db.prepare(
+      return await getDb().query(
         'SELECT id, name, color, position, permissions, is_default, pro FROM roles WHERE server_id IS NULL ORDER BY position ASC',
-      ).all();
+      );
     },
   );
 
@@ -577,33 +591,36 @@ export default async function adminRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'roleId and action (add/remove) are required' });
       }
 
-      const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId) as
-        | { id: string; username: string }
-        | undefined;
+      const user = await getDb().queryOne<{ id: string; username: string }>(
+        'SELECT id, username FROM users WHERE id = ?',
+        [userId],
+      );
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
       }
 
-      const role = db.prepare('SELECT id, name, pro FROM roles WHERE id = ? AND server_id IS NULL').get(roleId) as
-        | { id: string; name: string; pro: number }
-        | undefined;
+      const role = await getDb().queryOne<{ id: string; name: string; pro: number }>(
+        'SELECT id, name, pro FROM roles WHERE id = ? AND server_id IS NULL',
+        [roleId],
+      );
       if (!role) {
         return reply.code(404).send({ error: 'Global role not found' });
       }
 
       if (action === 'add') {
-        db.prepare('INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)').run(userId, roleId);
+        await getDb().run('INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)', [userId, roleId]);
       } else {
-        db.prepare('DELETE FROM user_roles WHERE user_id = ? AND role_id = ?').run(userId, roleId);
+        await getDb().run('DELETE FROM user_roles WHERE user_id = ? AND role_id = ?', [userId, roleId]);
       }
 
       // Update cached premium_tier on users table
-      const hasPro = db.prepare(
+      const hasPro = await getDb().queryOne(
         `SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ? AND r.pro = 1`,
-      ).get(userId);
-      db.prepare('UPDATE users SET premium_tier = ? WHERE id = ?').run(hasPro ? 'pro' : 'free', userId);
+        [userId],
+      );
+      await getDb().run('UPDATE users SET premium_tier = ? WHERE id = ?', [hasPro ? 'pro' : 'free', userId]);
 
-      logAuditEvent('role_change', request.user.userId, userId, request.ip, {
+      await logAuditEvent('role_change', request.user.userId, userId, request.ip, {
         role: role.name,
         action,
         global: true,
@@ -613,11 +630,12 @@ export default async function adminRoutes(app: FastifyInstance) {
       broadcast({ type: 'user:updated', userId });
 
       // Return updated global roles for this user
-      const userGlobalRoles = db.prepare(
+      const userGlobalRoles = await getDb().query(
         `SELECT r.id, r.name, r.color, r.pro FROM user_roles ur
          JOIN roles r ON r.id = ur.role_id
          WHERE ur.user_id = ? AND r.server_id IS NULL`,
-      ).all(userId);
+        [userId],
+      );
 
       return { ok: true, globalRoles: userGlobalRoles, premiumTier: hasPro ? 'pro' : 'free' };
     },
@@ -629,15 +647,16 @@ export default async function adminRoutes(app: FastifyInstance) {
     { ...adminRateLimit, preHandler: requireAdmin },
     async (request, reply) => {
       const { userId } = request.params;
-      const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+      const user = await getDb().queryOne('SELECT id FROM users WHERE id = ?', [userId]);
       if (!user) {
         return reply.code(404).send({ error: 'User not found' });
       }
-      const roles = db.prepare(
+      const roles = await getDb().query(
         `SELECT r.id, r.name, r.color, r.pro FROM user_roles ur
          JOIN roles r ON r.id = ur.role_id
          WHERE ur.user_id = ? AND r.server_id IS NULL`,
-      ).all(userId);
+        [userId],
+      );
       return roles;
     },
   );
@@ -654,29 +673,32 @@ export default async function adminRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'pro (boolean) is required' });
       }
 
-      const role = db.prepare('SELECT id, name FROM roles WHERE id = ? AND server_id IS NULL').get(roleId) as
-        | { id: string; name: string }
-        | undefined;
+      const role = await getDb().queryOne<{ id: string; name: string }>(
+        'SELECT id, name FROM roles WHERE id = ? AND server_id IS NULL',
+        [roleId],
+      );
       if (!role) {
         return reply.code(404).send({ error: 'Global role not found' });
       }
 
-      db.prepare('UPDATE roles SET pro = ? WHERE id = ?').run(pro ? 1 : 0, roleId);
+      await getDb().run('UPDATE roles SET pro = ? WHERE id = ?', [pro ? 1 : 0, roleId]);
 
       // Recalculate premium_tier for all users who have this role
-      const affectedUsers = db.prepare(
+      const affectedUsers = await getDb().query<{ user_id: string }>(
         'SELECT user_id FROM user_roles WHERE role_id = ?',
-      ).all(roleId) as { user_id: string }[];
+        [roleId],
+      );
 
       for (const { user_id } of affectedUsers) {
-        const hasPro = db.prepare(
+        const hasPro = await getDb().queryOne(
           `SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ? AND r.pro = 1`,
-        ).get(user_id);
-        db.prepare('UPDATE users SET premium_tier = ? WHERE id = ?').run(hasPro ? 'pro' : 'free', user_id);
+          [user_id],
+        );
+        await getDb().run('UPDATE users SET premium_tier = ? WHERE id = ?', [hasPro ? 'pro' : 'free', user_id]);
         broadcast({ type: 'user:updated', userId: user_id });
       }
 
-      logAuditEvent('permission_change', request.user.userId, null, request.ip, {
+      await logAuditEvent('permission_change', request.user.userId, null, request.ip, {
         role: role.name,
         pro,
         global: true,
@@ -697,13 +719,17 @@ export default async function adminRoutes(app: FastifyInstance) {
       let injected = 0;
 
       for (const entry of users) {
-        const user = db.prepare('SELECT id, username, display_name FROM users WHERE id = ?').get(entry.userId) as
-          | { id: string; username: string; display_name: string }
-          | undefined;
+        const user = await getDb().queryOne<{ id: string; username: string; display_name: string }>(
+          'SELECT id, username, display_name FROM users WHERE id = ?',
+          [entry.userId],
+        );
         if (!user) continue;
 
-        const serverIds = (db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(user.id) as { server_id: string }[])
-          .map((r) => r.server_id);
+        const serverRows = await getDb().query<{ server_id: string }>(
+          'SELECT server_id FROM server_members WHERE user_id = ?',
+          [user.id],
+        );
+        const serverIds = serverRows.map((r) => r.server_id);
 
         injectFakeClient(user.id, {
           username: user.username,
@@ -717,9 +743,10 @@ export default async function adminRoutes(app: FastifyInstance) {
 
       // Broadcast presence:update for each injected user so clients see them online
       for (const entry of users) {
-        const user = db.prepare('SELECT id, username, display_name FROM users WHERE id = ?').get(entry.userId) as
-          | { id: string; username: string; display_name: string }
-          | undefined;
+        const user = await getDb().queryOne<{ id: string; username: string; display_name: string }>(
+          'SELECT id, username, display_name FROM users WHERE id = ?',
+          [entry.userId],
+        );
         if (!user) continue;
 
         broadcast({
@@ -745,9 +772,10 @@ export default async function adminRoutes(app: FastifyInstance) {
         const voiceMembers: Record<string, any[]> = {};
         voiceMembers[voiceChannelId] = [];
         for (const vuId of voiceUserIds) {
-          const vu = db.prepare('SELECT id, username, display_name, avatar_url FROM users WHERE id = ?').get(vuId) as
-            | { id: string; username: string; display_name: string; avatar_url: string | null }
-            | undefined;
+          const vu = await getDb().queryOne<{ id: string; username: string; display_name: string; avatar_url: string | null }>(
+            'SELECT id, username, display_name, avatar_url FROM users WHERE id = ?',
+            [vuId],
+          );
           if (vu) {
             voiceMembers[voiceChannelId].push({
               userId: vu.id,
@@ -771,7 +799,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     '/api/admin/demo-presence',
     { preHandler: requireAdmin },
     async () => {
-      const demoUsers = db.prepare("SELECT id FROM users WHERE id LIKE 'demo_%'").all() as { id: string }[];
+      const demoUsers = await getDb().query<{ id: string }>("SELECT id FROM users WHERE id LIKE 'demo_%'");
       let removed = 0;
       for (const u of demoUsers) {
         removeFakeClient(u.id);
@@ -779,9 +807,10 @@ export default async function adminRoutes(app: FastifyInstance) {
       }
       // Broadcast offline for each removed user
       for (const u of demoUsers) {
-        const user = db.prepare('SELECT username, display_name FROM users WHERE id = ?').get(u.id) as
-          | { username: string; display_name: string }
-          | undefined;
+        const user = await getDb().queryOne<{ username: string; display_name: string }>(
+          'SELECT username, display_name FROM users WHERE id = ?',
+          [u.id],
+        );
         if (user) {
           broadcast({
             type: 'presence:update',

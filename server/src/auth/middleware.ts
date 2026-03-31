@@ -2,7 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { verifyToken, type JwtPayload } from './jwt.js';
 import { getSessionByToken } from './sessions.js';
 import { hasPermission, hasChannelPermission, getUserRoleIds } from './permissions.js';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { config } from '../config.js';
 import type { RolePermissions } from '@voip-server/shared';
 
@@ -33,18 +33,22 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply) 
     const payload = verifyToken(token);
 
     // Verify session in DB
-    const session = getSessionByToken(payload.jti);
+    const session = await getSessionByToken(payload.jti);
     if (!session || session.user_id !== payload.userId) {
       reply.code(401).send({ error: 'Session revoked or expired — please log in again' });
       return;
     }
 
     // Re-check user status from DB on every request (#6 ban check, #7 role refresh)
-    const dbUser = db
-      .prepare('SELECT role, banned, role_id, password_changed_at FROM users WHERE id = ?')
-      .get(payload.userId) as
-      | { role: string; banned: number; role_id: string | null; password_changed_at: string | null }
-      | undefined;
+    const dbUser = await getDb().queryOne<{
+      role: string;
+      banned: number;
+      role_id: string | null;
+      password_changed_at: string | null;
+    }>(
+      'SELECT role, banned, role_id, password_changed_at FROM users WHERE id = ?',
+      [payload.userId],
+    );
 
     if (!dbUser) {
       reply.code(401).send({ error: 'User not found' });
@@ -75,7 +79,7 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply) 
     }
 
     // Use the current role from DB, not the stale JWT role
-    const roleIds = getUserRoleIds(payload.userId);
+    const roleIds = await getUserRoleIds(payload.userId);
     request.user = { ...payload, role: dbUser.role, roleId: dbUser.role_id ?? undefined, roleIds };
   } catch {
     reply.code(401).send({ error: 'Invalid or expired token' });
@@ -102,7 +106,7 @@ export function requirePermission(perm: keyof RolePermissions) {
     await requireAuth(request, reply);
     if (reply.sent) return;
     const serverId = (request.params as any).serverId;
-    if (!hasPermission(request.user.userId, perm, serverId)) {
+    if (!(await hasPermission(request.user.userId, perm, serverId))) {
       return reply.code(403).send({ error: `Missing permission: ${String(perm)}` });
     }
   };
@@ -113,7 +117,7 @@ export function requireChannelPermission(perm: keyof RolePermissions, channelIdP
     await requireAuth(request, reply);
     if (reply.sent) return;
     const channelId = (request.params as any)[channelIdParam];
-    if (!hasChannelPermission(request.user.userId, channelId, perm)) {
+    if (!(await hasChannelPermission(request.user.userId, channelId, perm))) {
       reply.code(403).send({ error: `Missing permission: ${String(perm)}` });
     }
   };

@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'crypto';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { requireAuth, isInstanceAdmin } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import { hasPermission, isPremium } from '../auth/permissions.js';
-import { sendTo, sendToMany, getServerMemberUserIds } from '../ws/index.js';
+import { sendTo, sendToMany } from '../ws/index.js';
 import { ensureDmChannel, notifyDmCreated } from '../ws/dmUtils.js';
 import { sendWelcomeMessages } from '../bots/welcomeBot.js';
 import type { Server, ServerInvitation, Message } from '@voip-server/shared';
@@ -62,10 +62,11 @@ const MEMBER_PERMISSIONS = JSON.stringify({
   manage_server: false,
 });
 
-function getServerMemberUserIds(serverId: string): string[] {
-  const rows = db
-    .prepare('SELECT user_id FROM server_members WHERE server_id = ?')
-    .all(serverId) as { user_id: string }[];
+async function getServerMemberUserIds(serverId: string): Promise<string[]> {
+  const rows = await getDb().query<{ user_id: string }>(
+    'SELECT user_id FROM server_members WHERE server_id = ?',
+    [serverId],
+  );
   return rows.map((r) => r.user_id);
 }
 
@@ -73,16 +74,15 @@ export default async function serverRoutes(app: FastifyInstance) {
   // List servers the user is a member of
   app.get('/api/servers', { preHandler: requireAuth }, async (request) => {
     const userId = request.user.userId;
-    const rows = db
-      .prepare(
-        `SELECT servers.*, sm.notification_level, sm.suppress_everyone, sm.muted_until, COUNT(sm2.user_id) as member_count, f.stored_name as icon_stored_name
+    const rows = await getDb().query<any>(
+      `SELECT servers.*, sm.notification_level, sm.suppress_everyone, sm.muted_until, COUNT(sm2.user_id) as member_count, f.stored_name as icon_stored_name
          FROM servers
          JOIN server_members sm ON sm.server_id = servers.id AND sm.user_id = ?
          LEFT JOIN server_members sm2 ON sm2.server_id = servers.id
          LEFT JOIN files f ON f.id = servers.icon_file_id
          GROUP BY servers.id`,
-      )
-      .all(userId) as any[];
+      [userId],
+    );
 
     return rows.map((row) => ({
       id: row.id,
@@ -106,12 +106,12 @@ export default async function serverRoutes(app: FastifyInstance) {
       const userId = request.user.userId;
 
       // Check instance_settings.allow_server_creation
-      const settings = db
-        .prepare('SELECT allow_server_creation FROM instance_settings WHERE id = 1')
-        .get() as { allow_server_creation: number } | undefined;
+      const settings = await getDb().queryOne<{ allow_server_creation: number }>(
+        'SELECT allow_server_creation FROM instance_settings WHERE id = 1',
+      );
       if (settings && !settings.allow_server_creation) {
         // Only instance admins can create servers when disabled
-        if (!isInstanceAdmin(request.user.userId) && !hasPermission(userId, 'administrator')) {
+        if (!isInstanceAdmin(request.user.userId) && !await hasPermission(userId, 'administrator')) {
           return reply.code(403).send({ error: 'Server creation is disabled' });
         }
       }
@@ -130,59 +130,67 @@ export default async function serverRoutes(app: FastifyInstance) {
       const generalChannelId = randomUUID();
       const voiceChannelId = randomUUID();
 
-      const user = db
-        .prepare('SELECT username FROM users WHERE id = ?')
-        .get(userId) as { username: string };
+      const user = await getDb().queryOne<{ username: string }>(
+        'SELECT username FROM users WHERE id = ?',
+        [userId],
+      );
 
-      const createServer = db.transaction(() => {
+      await getDb().transaction(async (tx) => {
         // Create the server
-        db.prepare(
+        await tx.run(
           'INSERT INTO servers (id, name, icon_file_id, owner_id) VALUES (?, ?, ?, ?)',
-        ).run(serverId, name.trim(), icon_file_id || null, userId);
+          [serverId, name.trim(), icon_file_id || null, userId],
+        );
 
         // Create default roles
-        db.prepare(
+        await tx.run(
           'INSERT INTO roles (id, name, color, position, permissions, is_default, server_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        ).run(adminRoleId, 'Admin', '#e74c3c', 0, ALL_PERMISSIONS, 0, serverId);
-        db.prepare(
+          [adminRoleId, 'Admin', '#e74c3c', 0, ALL_PERMISSIONS, 0, serverId],
+        );
+        await tx.run(
           'INSERT INTO roles (id, name, color, position, permissions, is_default, server_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        ).run(memberRoleId, 'Member', '#99aab5', 1, MEMBER_PERMISSIONS, 1, serverId);
+          [memberRoleId, 'Member', '#99aab5', 1, MEMBER_PERMISSIONS, 1, serverId],
+        );
 
         // Create default channels
-        db.prepare(
+        await tx.run(
           'INSERT INTO channels (id, name, type, sort_order, server_id) VALUES (?, ?, ?, ?, ?)',
-        ).run(generalChannelId, 'general', 'text', 0, serverId);
-        db.prepare(
+          [generalChannelId, 'general', 'text', 0, serverId],
+        );
+        await tx.run(
           'INSERT INTO channels (id, name, type, sort_order, server_id) VALUES (?, ?, ?, ?, ?)',
-        ).run(voiceChannelId, 'General Voice', 'voice', 1, serverId);
+          [voiceChannelId, 'General Voice', 'voice', 1, serverId],
+        );
 
         // Add creator as server member
-        db.prepare(
+        await tx.run(
           'INSERT INTO server_members (server_id, user_id) VALUES (?, ?)',
-        ).run(serverId, userId);
+          [serverId, userId],
+        );
 
         // Assign creator the Admin role
-        db.prepare(
+        await tx.run(
           'INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)',
-        ).run(userId, adminRoleId);
+          [userId, adminRoleId],
+        );
 
         // Create welcome bot for this server
-        const botUser = db.prepare("SELECT id FROM users WHERE id = 'bot-welcome'").get();
+        const botUser = await tx.queryOne("SELECT id FROM users WHERE id = 'bot-welcome'");
         if (botUser) {
           const botId = randomUUID();
-          db.prepare(
+          await tx.run(
             "INSERT INTO bots (id, user_id, type, name, enabled, greeting, server_id, created_at) VALUES (?, 'bot-welcome', 'welcome', 'Welcome Bot', 0, 'Welcome to the server, {user}! 👋', ?, datetime('now'))",
-          ).run(botId, serverId);
+            [botId, serverId],
+          );
         }
       });
-      createServer();
 
       // Broadcast to the creator
       sendToMany([userId], {
         type: 'server:memberJoined',
         serverId,
         userId,
-        username: user.username,
+        username: user!.username,
       });
 
       // Build response
@@ -198,9 +206,10 @@ export default async function serverRoutes(app: FastifyInstance) {
 
       // Resolve icon_url if icon_file_id was provided
       if (icon_file_id) {
-        const file = db
-          .prepare('SELECT stored_name FROM files WHERE id = ?')
-          .get(icon_file_id) as { stored_name: string } | undefined;
+        const file = await getDb().queryOne<{ stored_name: string }>(
+          'SELECT stored_name FROM files WHERE id = ?',
+          [icon_file_id],
+        );
         if (file) {
           server.icon_url = '/uploads/' + file.stored_name;
         }
@@ -217,16 +226,15 @@ export default async function serverRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
-      const row = db
-        .prepare(
-          `SELECT servers.*, COUNT(sm.user_id) as member_count, f.stored_name as icon_stored_name
+      const row = await getDb().queryOne<any>(
+        `SELECT servers.*, COUNT(sm.user_id) as member_count, f.stored_name as icon_stored_name
            FROM servers
            LEFT JOIN server_members sm ON sm.server_id = servers.id
            LEFT JOIN files f ON f.id = servers.icon_file_id
            WHERE servers.id = ?
            GROUP BY servers.id`,
-        )
-        .get(serverId) as any;
+        [serverId],
+      );
 
       if (!row) {
         return reply.code(404).send({ error: 'Server not found' });
@@ -253,13 +261,14 @@ export default async function serverRoutes(app: FastifyInstance) {
       const userId = request.user.userId;
 
       // Check: user must be server owner OR have administrator permission
-      const server = db
-        .prepare('SELECT owner_id FROM servers WHERE id = ?')
-        .get(serverId) as { owner_id: string } | undefined;
+      const server = await getDb().queryOne<{ owner_id: string }>(
+        'SELECT owner_id FROM servers WHERE id = ?',
+        [serverId],
+      );
       if (!server) {
         return reply.code(404).send({ error: 'Server not found' });
       }
-      if (server.owner_id !== userId && !hasPermission(userId, 'administrator')) {
+      if (server.owner_id !== userId && !await hasPermission(userId, 'administrator')) {
         return reply.code(403).send({ error: 'Only the server owner or an administrator can update the server' });
       }
 
@@ -272,27 +281,26 @@ export default async function serverRoutes(app: FastifyInstance) {
         if (name.trim().length > 100) {
           return reply.code(400).send({ error: 'Server name must be 100 characters or less' });
         }
-        db.prepare('UPDATE servers SET name = ? WHERE id = ?').run(name.trim(), serverId);
+        await getDb().run('UPDATE servers SET name = ? WHERE id = ?', [name.trim(), serverId]);
       }
 
       if (icon_file_id !== undefined) {
-        db.prepare('UPDATE servers SET icon_file_id = ? WHERE id = ?').run(
-          icon_file_id || null,
-          serverId,
+        await getDb().run(
+          'UPDATE servers SET icon_file_id = ? WHERE id = ?',
+          [icon_file_id || null, serverId],
         );
       }
 
       // Fetch updated server
-      const row = db
-        .prepare(
-          `SELECT servers.*, COUNT(sm.user_id) as member_count, f.stored_name as icon_stored_name
+      const row = await getDb().queryOne<any>(
+        `SELECT servers.*, COUNT(sm.user_id) as member_count, f.stored_name as icon_stored_name
            FROM servers
            LEFT JOIN server_members sm ON sm.server_id = servers.id
            LEFT JOIN files f ON f.id = servers.icon_file_id
            WHERE servers.id = ?
            GROUP BY servers.id`,
-        )
-        .get(serverId) as any;
+        [serverId],
+      );
 
       if (!row) {
         return reply.code(404).send({ error: 'Server not found' });
@@ -309,7 +317,7 @@ export default async function serverRoutes(app: FastifyInstance) {
       };
 
       // Broadcast to all server members
-      const memberIds = getServerMemberUserIds(serverId);
+      const memberIds = await getServerMemberUserIds(serverId);
       sendToMany(memberIds, { type: 'server:updated', server: updatedServer });
 
       return updatedServer;
@@ -324,9 +332,10 @@ export default async function serverRoutes(app: FastifyInstance) {
       const serverId = getServerId(request);
       const userId = request.user.userId;
 
-      const server = db
-        .prepare('SELECT owner_id FROM servers WHERE id = ?')
-        .get(serverId) as { owner_id: string } | undefined;
+      const server = await getDb().queryOne<{ owner_id: string }>(
+        'SELECT owner_id FROM servers WHERE id = ?',
+        [serverId],
+      );
       if (!server) {
         return reply.code(404).send({ error: 'Server not found' });
       }
@@ -335,28 +344,27 @@ export default async function serverRoutes(app: FastifyInstance) {
       }
 
       // Get all member IDs before deletion for broadcast
-      const memberIds = getServerMemberUserIds(serverId);
+      const memberIds = await getServerMemberUserIds(serverId);
 
-      const deleteServer = db.transaction(() => {
+      await getDb().transaction(async (tx) => {
         // Delete all server-scoped data (no ON DELETE CASCADE for server_id columns)
-        db.prepare('DELETE FROM invite_codes WHERE server_id = ?').run(serverId);
-        db.prepare('DELETE FROM channel_permission_overrides WHERE server_id = ?').run(serverId);
-        db.prepare('DELETE FROM group_permission_overrides WHERE server_id = ?').run(serverId);
-        db.prepare('DELETE FROM custom_emojis WHERE server_id = ?').run(serverId);
-        db.prepare('DELETE FROM soundboard_sounds WHERE server_id = ?').run(serverId);
-        db.prepare('DELETE FROM bots WHERE server_id = ?').run(serverId);
-        db.prepare('DELETE FROM audit_log WHERE server_id = ?').run(serverId);
-        db.prepare('DELETE FROM channel_groups WHERE server_id = ?').run(serverId);
+        await tx.run('DELETE FROM invite_codes WHERE server_id = ?', [serverId]);
+        await tx.run('DELETE FROM channel_permission_overrides WHERE server_id = ?', [serverId]);
+        await tx.run('DELETE FROM group_permission_overrides WHERE server_id = ?', [serverId]);
+        await tx.run('DELETE FROM custom_emojis WHERE server_id = ?', [serverId]);
+        await tx.run('DELETE FROM soundboard_sounds WHERE server_id = ?', [serverId]);
+        await tx.run('DELETE FROM bots WHERE server_id = ?', [serverId]);
+        await tx.run('DELETE FROM audit_log WHERE server_id = ?', [serverId]);
+        await tx.run('DELETE FROM channel_groups WHERE server_id = ?', [serverId]);
         // Delete channels (messages/reactions cascade via FK)
-        db.prepare('DELETE FROM channels WHERE server_id = ?').run(serverId);
+        await tx.run('DELETE FROM channels WHERE server_id = ?', [serverId]);
         // Delete roles (user_roles cascade via FK)
-        db.prepare('DELETE FROM roles WHERE server_id = ?').run(serverId);
+        await tx.run('DELETE FROM roles WHERE server_id = ?', [serverId]);
         // Delete server members
-        db.prepare('DELETE FROM server_members WHERE server_id = ?').run(serverId);
+        await tx.run('DELETE FROM server_members WHERE server_id = ?', [serverId]);
         // Delete the server
-        db.prepare('DELETE FROM servers WHERE id = ?').run(serverId);
+        await tx.run('DELETE FROM servers WHERE id = ?', [serverId]);
       });
-      deleteServer();
 
       // Broadcast to all former members
       sendToMany(memberIds, { type: 'server:deleted', serverId });
@@ -378,9 +386,10 @@ export default async function serverRoutes(app: FastifyInstance) {
       }
 
       // Find the invite code
-      const invite = db
-        .prepare('SELECT * FROM invite_codes WHERE code = ?')
-        .get(invite_code) as any;
+      const invite = await getDb().queryOne<any>(
+        'SELECT * FROM invite_codes WHERE code = ?',
+        [invite_code],
+      );
       if (!invite) {
         return reply.code(404).send({ error: 'Invalid invite code' });
       }
@@ -396,43 +405,46 @@ export default async function serverRoutes(app: FastifyInstance) {
       }
 
       // Check if user is banned from this server
-      const isBanned = db.prepare(
-        'SELECT 1 FROM server_bans WHERE server_id = ? AND user_id = ?'
-      ).get(serverId, userId);
+      const isBanned = await getDb().queryOne(
+        'SELECT 1 FROM server_bans WHERE server_id = ? AND user_id = ?',
+        [serverId, userId],
+      );
 
       if (isBanned) {
         return reply.code(403).send({ error: 'You are banned from this server' });
       }
 
       // Check server join limit
-      const serverCount = db
-        .prepare('SELECT COUNT(*) as count FROM server_members WHERE user_id = ?')
-        .get(userId) as { count: number };
-      const maxServers = isPremium(userId) ? PRO_SERVER_LIMIT : FREE_SERVER_LIMIT;
-      if (serverCount.count >= maxServers) {
+      const serverCount = await getDb().queryOne<{ count: number }>(
+        'SELECT COUNT(*) as count FROM server_members WHERE user_id = ?',
+        [userId],
+      );
+      const userIsPremium = await isPremium(userId);
+      const maxServers = userIsPremium ? PRO_SERVER_LIMIT : FREE_SERVER_LIMIT;
+      if (serverCount!.count >= maxServers) {
         return reply.code(403).send({
-          error: `You have reached the ${maxServers} server limit. ${isPremium(userId) ? '' : 'Upgrade to Pro for up to 200 servers.'}`,
-          premiumRequired: !isPremium(userId),
+          error: `You have reached the ${maxServers} server limit. ${userIsPremium ? '' : 'Upgrade to Pro for up to 200 servers.'}`,
+          premiumRequired: !userIsPremium,
         });
       }
 
       // Check if already a member
-      const existingMember = db
-        .prepare('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?')
-        .get(serverId, userId);
+      const existingMember = await getDb().queryOne(
+        'SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?',
+        [serverId, userId],
+      );
 
       if (existingMember) {
         // Already a member, return the server
-        const row = db
-          .prepare(
-            `SELECT servers.*, COUNT(sm.user_id) as member_count, f.stored_name as icon_stored_name
+        const row = await getDb().queryOne<any>(
+          `SELECT servers.*, COUNT(sm.user_id) as member_count, f.stored_name as icon_stored_name
              FROM servers
              LEFT JOIN server_members sm ON sm.server_id = servers.id
              LEFT JOIN files f ON f.id = servers.icon_file_id
              WHERE servers.id = ?
              GROUP BY servers.id`,
-          )
-          .get(serverId) as any;
+          [serverId],
+        );
 
         return {
           id: row.id,
@@ -445,42 +457,48 @@ export default async function serverRoutes(app: FastifyInstance) {
         } as Server;
       }
 
-      const user = db
-        .prepare('SELECT username FROM users WHERE id = ?')
-        .get(userId) as { username: string };
-
-      const joinServer = db.transaction(() => {
-        // Re-check max_uses inside transaction to prevent race condition
-        if (invite.max_uses !== null) {
-          const current = db.prepare('SELECT use_count FROM invite_codes WHERE id = ?').get(invite.id) as { use_count: number };
-          if (current.use_count >= invite.max_uses) {
-            throw new Error('Invite code has reached maximum uses');
-          }
-        }
-
-        // Add user as server member
-        db.prepare(
-          'INSERT INTO server_members (server_id, user_id) VALUES (?, ?)',
-        ).run(serverId, userId);
-
-        // Increment invite use_count
-        db.prepare(
-          'UPDATE invite_codes SET use_count = use_count + 1 WHERE id = ?',
-        ).run(invite.id);
-
-        // Assign default role for this server
-        const defaultRole = db
-          .prepare('SELECT id FROM roles WHERE server_id = ? AND is_default = 1')
-          .get(serverId) as { id: string } | undefined;
-        if (defaultRole) {
-          db.prepare(
-            'INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
-          ).run(userId, defaultRole.id);
-        }
-      });
+      const user = await getDb().queryOne<{ username: string }>(
+        'SELECT username FROM users WHERE id = ?',
+        [userId],
+      );
 
       try {
-        joinServer();
+        await getDb().transaction(async (tx) => {
+          // Re-check max_uses inside transaction to prevent race condition
+          if (invite.max_uses !== null) {
+            const current = await tx.queryOne<{ use_count: number }>(
+              'SELECT use_count FROM invite_codes WHERE id = ?',
+              [invite.id],
+            );
+            if (current!.use_count >= invite.max_uses) {
+              throw new Error('Invite code has reached maximum uses');
+            }
+          }
+
+          // Add user as server member
+          await tx.run(
+            'INSERT INTO server_members (server_id, user_id) VALUES (?, ?)',
+            [serverId, userId],
+          );
+
+          // Increment invite use_count
+          await tx.run(
+            'UPDATE invite_codes SET use_count = use_count + 1 WHERE id = ?',
+            [invite.id],
+          );
+
+          // Assign default role for this server
+          const defaultRole = await tx.queryOne<{ id: string }>(
+            'SELECT id FROM roles WHERE server_id = ? AND is_default = 1',
+            [serverId],
+          );
+          if (defaultRole) {
+            await tx.run(
+              'INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
+              [userId, defaultRole.id],
+            );
+          }
+        });
       } catch (e: any) {
         if (e.message === 'Invite code has reached maximum uses') {
           return reply.code(410).send({ error: e.message });
@@ -489,28 +507,27 @@ export default async function serverRoutes(app: FastifyInstance) {
       }
 
       // Broadcast to all server members
-      const memberIds = getServerMemberUserIds(serverId);
+      const memberIds = await getServerMemberUserIds(serverId);
       sendToMany(memberIds, {
         type: 'server:memberJoined',
         serverId,
         userId,
-        username: user.username,
+        username: user!.username,
       });
 
       // Send welcome bot messages
-      sendWelcomeMessages(userId, serverId);
+      await sendWelcomeMessages(userId, serverId);
 
       // Return the server
-      const row = db
-        .prepare(
-          `SELECT servers.*, COUNT(sm.user_id) as member_count, f.stored_name as icon_stored_name
+      const row = await getDb().queryOne<any>(
+        `SELECT servers.*, COUNT(sm.user_id) as member_count, f.stored_name as icon_stored_name
            FROM servers
            LEFT JOIN server_members sm ON sm.server_id = servers.id
            LEFT JOIN files f ON f.id = servers.icon_file_id
            WHERE servers.id = ?
            GROUP BY servers.id`,
-        )
-        .get(serverId) as any;
+        [serverId],
+      );
 
       return {
         id: row.id,
@@ -533,9 +550,10 @@ export default async function serverRoutes(app: FastifyInstance) {
       const userId = request.user.userId;
 
       // Cannot leave if you're the owner
-      const server = db
-        .prepare('SELECT owner_id FROM servers WHERE id = ?')
-        .get(serverId) as { owner_id: string } | undefined;
+      const server = await getDb().queryOne<{ owner_id: string }>(
+        'SELECT owner_id FROM servers WHERE id = ?',
+        [serverId],
+      );
       if (!server) {
         return reply.code(404).send({ error: 'Server not found' });
       }
@@ -543,27 +561,29 @@ export default async function serverRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Server owner cannot leave. Transfer ownership first.' });
       }
 
-      const leaveServer = db.transaction(() => {
+      await getDb().transaction(async (tx) => {
         // Remove from server_members
-        db.prepare(
+        await tx.run(
           'DELETE FROM server_members WHERE server_id = ? AND user_id = ?',
-        ).run(serverId, userId);
+          [serverId, userId],
+        );
 
         // Remove server-specific user_roles
-        const serverRoles = db
-          .prepare('SELECT id FROM roles WHERE server_id = ?')
-          .all(serverId) as { id: string }[];
+        const serverRoles = await tx.query<{ id: string }>(
+          'SELECT id FROM roles WHERE server_id = ?',
+          [serverId],
+        );
         if (serverRoles.length > 0) {
           const placeholders = serverRoles.map(() => '?').join(',');
-          db.prepare(
+          await tx.run(
             `DELETE FROM user_roles WHERE user_id = ? AND role_id IN (${placeholders})`,
-          ).run(userId, ...serverRoles.map((r) => r.id));
+            [userId, ...serverRoles.map((r) => r.id)],
+          );
         }
       });
-      leaveServer();
 
       // Broadcast to remaining server members
-      const memberIds = getServerMemberUserIds(serverId);
+      const memberIds = await getServerMemberUserIds(serverId);
       sendToMany(memberIds, {
         type: 'server:memberLeft',
         serverId,
@@ -604,12 +624,13 @@ export default async function serverRoutes(app: FastifyInstance) {
       }
 
       values.push(serverId, userId);
-      db.prepare(
-        `UPDATE server_members SET ${updates.join(', ')} WHERE server_id = ? AND user_id = ?`
-      ).run(...values);
+      await getDb().run(
+        `UPDATE server_members SET ${updates.join(', ')} WHERE server_id = ? AND user_id = ?`,
+        values,
+      );
 
       // Broadcast update to all server members
-      const memberIds = getServerMemberUserIds(serverId);
+      const memberIds = await getServerMemberUserIds(serverId);
       sendToMany(memberIds, {
         type: 'server:memberUpdated',
         serverId,
@@ -630,15 +651,14 @@ export default async function serverRoutes(app: FastifyInstance) {
     async (request) => {
       const serverId = getServerId(request);
 
-      const members = db
-        .prepare(
-          `SELECT sm.server_id, sm.user_id, sm.nickname, sm.avatar_url as member_avatar_url, sm.banner_url as member_banner_url, sm.joined_at,
+      const members = await getDb().query<any>(
+        `SELECT sm.server_id, sm.user_id, sm.nickname, sm.avatar_url as member_avatar_url, sm.banner_url as member_banner_url, sm.joined_at,
                   u.username, u.display_name, u.avatar_url, u.status_preference, u.is_bot
            FROM server_members sm
            JOIN users u ON u.id = sm.user_id
            WHERE sm.server_id = ?`,
-        )
-        .all(serverId) as any[];
+        [serverId],
+      );
 
       return members.map((m: any) => ({
         server_id: m.server_id,
@@ -667,14 +687,15 @@ export default async function serverRoutes(app: FastifyInstance) {
       const query = (request.query.q || '').trim();
       if (!query || query.length < 1) return [];
 
-      const users = db.prepare(
+      const users = await getDb().query<any>(
         `SELECT u.id, u.username, u.display_name, u.avatar_url
          FROM users u
          WHERE u.is_bot = 0
            AND u.id NOT IN (SELECT user_id FROM server_members WHERE server_id = ?)
            AND (u.username LIKE ? OR u.display_name LIKE ?)
-         LIMIT 10`
-      ).all(serverId, `%${query}%`, `%${query}%`) as any[];
+         LIMIT 10`,
+        [serverId, `%${query}%`, `%${query}%`],
+      );
 
       return users;
     },
@@ -693,42 +714,59 @@ export default async function serverRoutes(app: FastifyInstance) {
       }
 
       // Check inviter has permission to invite
-      const canInvite = hasPermission(request.user.userId, 'create_invites', serverId);
+      const canInvite = await hasPermission(request.user.userId, 'create_invites', serverId);
       if (!canInvite) {
         return reply.code(403).send({ error: 'No permission to invite users' });
       }
 
       // Check target user exists
-      const targetUser = db.prepare('SELECT id FROM users WHERE id = ? AND is_bot = 0').get(userId) as any;
+      const targetUser = await getDb().queryOne<any>(
+        'SELECT id FROM users WHERE id = ? AND is_bot = 0',
+        [userId],
+      );
       if (!targetUser) {
         return reply.code(404).send({ error: 'User not found' });
       }
 
       // Check if already a member
-      const existing = db.prepare('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?').get(serverId, userId);
+      const existing = await getDb().queryOne(
+        'SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?',
+        [serverId, userId],
+      );
       if (existing) {
         return reply.code(400).send({ error: 'User is already a member' });
       }
 
       // Check if there's already a pending invitation
-      const pendingInvite = db.prepare(
-        "SELECT id FROM server_invitations WHERE server_id = ? AND invitee_id = ? AND status = 'pending'"
-      ).get(serverId, userId);
+      const pendingInvite = await getDb().queryOne(
+        "SELECT id FROM server_invitations WHERE server_id = ? AND invitee_id = ? AND status = 'pending'",
+        [serverId, userId],
+      );
       if (pendingInvite) {
         return reply.code(400).send({ error: 'Invitation already sent' });
       }
 
       const id = randomUUID();
-      db.prepare(
-        'INSERT INTO server_invitations (id, server_id, inviter_id, invitee_id) VALUES (?, ?, ?, ?)'
-      ).run(id, serverId, request.user.userId, userId);
+      await getDb().run(
+        'INSERT INTO server_invitations (id, server_id, inviter_id, invitee_id) VALUES (?, ?, ?, ?)',
+        [id, serverId, request.user.userId, userId],
+      );
 
       // Build the invitation object
-      const server = db.prepare('SELECT name, icon_file_id FROM servers WHERE id = ?').get(serverId) as any;
-      const inviter = db.prepare('SELECT display_name, username FROM users WHERE id = ?').get(request.user.userId) as any;
+      const server = await getDb().queryOne<any>(
+        'SELECT name, icon_file_id FROM servers WHERE id = ?',
+        [serverId],
+      );
+      const inviter = await getDb().queryOne<any>(
+        'SELECT display_name, username FROM users WHERE id = ?',
+        [request.user.userId],
+      );
       let iconUrl: string | null = null;
       if (server.icon_file_id) {
-        const file = db.prepare('SELECT stored_name FROM files WHERE id = ?').get(server.icon_file_id) as any;
+        const file = await getDb().queryOne<any>(
+          'SELECT stored_name FROM files WHERE id = ?',
+          [server.icon_file_id],
+        );
         if (file) iconUrl = `/uploads/${file.stored_name}`;
       }
 
@@ -749,14 +787,15 @@ export default async function serverRoutes(app: FastifyInstance) {
 
       // Automatically send a DM message with the invitation
       try {
-        const dmChannelId = ensureDmChannel(request.user.userId, userId);
+        const dmChannelId = await ensureDmChannel(request.user.userId, userId);
         const messageId = randomUUID();
         const msgNow = new Date().toISOString();
         const content = `I've invited you to join my server: **${server.name}**`;
 
-        db.prepare(
-          'INSERT INTO messages (id, channel_id, user_id, content, invite_id, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-        ).run(messageId, dmChannelId, request.user.userId, content, id, msgNow);
+        await getDb().run(
+          'INSERT INTO messages (id, channel_id, user_id, content, invite_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+          [messageId, dmChannelId, request.user.userId, content, id, msgNow],
+        );
 
         const msg: Message = {
           id: messageId,
@@ -773,8 +812,8 @@ export default async function serverRoutes(app: FastifyInstance) {
         };
 
         // Notify both participants
-        notifyDmCreated(request.user.userId, dmChannelId);
-        notifyDmCreated(userId, dmChannelId);
+        await notifyDmCreated(request.user.userId, dmChannelId);
+        await notifyDmCreated(userId, dmChannelId);
         sendTo(request.user.userId, { type: 'chat:message', message: msg });
         sendTo(userId, { type: 'chat:message', message: msg });
       } catch (err) {
@@ -791,12 +830,12 @@ export default async function serverRoutes(app: FastifyInstance) {
     { preHandler: [requireAuth, requireServerMember] },
     async (request, reply) => {
       const serverId = getServerId(request);
-      
-      if (!hasPermission(request.user.userId, 'manage_invite_codes', serverId)) {
+
+      if (!await hasPermission(request.user.userId, 'manage_invite_codes', serverId)) {
         return reply.code(403).send({ error: 'No permission to view invitations' });
       }
 
-      const rows = db.prepare(
+      const rows = await getDb().query<any>(
         `SELECT si.id, si.server_id, si.inviter_id, si.invitee_id, si.status, si.created_at,
                 u_inviter.display_name as inviter_name, u_inviter.username as inviter_username,
                 u_invitee.display_name as invitee_name, u_invitee.username as invitee_username,
@@ -805,10 +844,11 @@ export default async function serverRoutes(app: FastifyInstance) {
          JOIN users u_inviter ON u_inviter.id = si.inviter_id
          JOIN users u_invitee ON u_invitee.id = si.invitee_id
          WHERE si.server_id = ? AND si.status = 'pending'
-         ORDER BY si.created_at DESC`
-      ).all(serverId) as any[];
+         ORDER BY si.created_at DESC`,
+        [serverId],
+      );
 
-      return rows.map(r => ({
+      return rows.map((r: any) => ({
         id: r.id,
         server_id: r.server_id,
         inviter_id: r.inviter_id,
@@ -830,13 +870,14 @@ export default async function serverRoutes(app: FastifyInstance) {
       const serverId = getServerId(request);
       const { id } = request.params;
 
-      if (!hasPermission(request.user.userId, 'manage_invite_codes', serverId)) {
+      if (!await hasPermission(request.user.userId, 'manage_invite_codes', serverId)) {
         return reply.code(403).send({ error: 'No permission to manage invitations' });
       }
 
-      const result = db.prepare(
-        "UPDATE server_invitations SET status = 'cancelled' WHERE id = ? AND server_id = ? AND status = 'pending'"
-      ).run(id, serverId);
+      const result = await getDb().run(
+        "UPDATE server_invitations SET status = 'cancelled' WHERE id = ? AND server_id = ? AND status = 'pending'",
+        [id, serverId],
+      );
 
       if (result.changes === 0) {
         return reply.code(404).send({ error: 'Invitation not found or already processed' });
@@ -854,15 +895,16 @@ export default async function serverRoutes(app: FastifyInstance) {
       const { id } = request.params;
       const userId = request.user.userId;
 
-      const r = db.prepare(
+      const r = await getDb().queryOne<any>(
         `SELECT si.id, si.server_id, si.inviter_id, si.invitee_id, si.status, si.created_at,
                 s.name as server_name, s.icon_file_id,
                 u.display_name as inviter_display_name, u.username as inviter_username
          FROM server_invitations si
          JOIN servers s ON s.id = si.server_id
          JOIN users u ON u.id = si.inviter_id
-         WHERE si.id = ? AND (si.invitee_id = ? OR si.inviter_id = ?)`
-      ).get(id, userId, userId) as any;
+         WHERE si.id = ? AND (si.invitee_id = ? OR si.inviter_id = ?)`,
+        [id, userId, userId],
+      );
 
       if (!r) {
         return reply.code(404).send({ error: 'Invitation not found' });
@@ -870,7 +912,10 @@ export default async function serverRoutes(app: FastifyInstance) {
 
       let iconUrl: string | null = null;
       if (r.icon_file_id) {
-        const file = db.prepare('SELECT stored_name FROM files WHERE id = ?').get(r.icon_file_id) as any;
+        const file = await getDb().queryOne<any>(
+          'SELECT stored_name FROM files WHERE id = ?',
+          [r.icon_file_id],
+        );
         if (file) iconUrl = `/uploads/${file.stored_name}`;
       }
 
@@ -893,7 +938,7 @@ export default async function serverRoutes(app: FastifyInstance) {
     '/api/invitations',
     { preHandler: requireAuth },
     async (request) => {
-      const rows = db.prepare(
+      const rows = await getDb().query<any>(
         `SELECT si.id, si.server_id, si.inviter_id, si.invitee_id, si.status, si.created_at,
                 s.name as server_name, s.icon_file_id,
                 u.display_name as inviter_display_name, u.username as inviter_username
@@ -901,16 +946,21 @@ export default async function serverRoutes(app: FastifyInstance) {
          JOIN servers s ON s.id = si.server_id
          JOIN users u ON u.id = si.inviter_id
          WHERE si.invitee_id = ? AND si.status = 'pending'
-         ORDER BY si.created_at DESC`
-      ).all(request.user.userId) as any[];
+         ORDER BY si.created_at DESC`,
+        [request.user.userId],
+      );
 
-      return rows.map((r: any) => {
+      const results: ServerInvitation[] = [];
+      for (const r of rows) {
         let iconUrl: string | null = null;
         if (r.icon_file_id) {
-          const file = db.prepare('SELECT stored_name FROM files WHERE id = ?').get(r.icon_file_id) as any;
+          const file = await getDb().queryOne<any>(
+            'SELECT stored_name FROM files WHERE id = ?',
+            [r.icon_file_id],
+          );
           if (file) iconUrl = `/uploads/${file.stored_name}`;
         }
-        return {
+        results.push({
           id: r.id,
           server_id: r.server_id,
           server_name: r.server_name,
@@ -920,8 +970,9 @@ export default async function serverRoutes(app: FastifyInstance) {
           invitee_id: r.invitee_id,
           status: r.status,
           created_at: r.created_at,
-        } as ServerInvitation;
-      });
+        } as ServerInvitation);
+      }
+      return results;
     },
   );
 
@@ -933,38 +984,43 @@ export default async function serverRoutes(app: FastifyInstance) {
       const { id } = request.params;
       const userId = request.user.userId;
 
-      const result = db.transaction(() => {
-        const invitation = db.prepare(
-          "SELECT * FROM server_invitations WHERE id = ? AND invitee_id = ? AND status = 'pending'"
-        ).get(id, userId) as any;
+      const result = await getDb().transaction(async (tx) => {
+        const invitation = await tx.queryOne<any>(
+          "SELECT * FROM server_invitations WHERE id = ? AND invitee_id = ? AND status = 'pending'",
+          [id, userId],
+        );
 
         if (!invitation) return { error: 'invitation_not_found' };
 
         // Check if user is banned from this server
-        const isBanned = db.prepare(
-          'SELECT 1 FROM server_bans WHERE server_id = ? AND user_id = ?'
-        ).get(invitation.server_id, userId);
+        const isBanned = await tx.queryOne(
+          'SELECT 1 FROM server_bans WHERE server_id = ? AND user_id = ?',
+          [invitation.server_id, userId],
+        );
 
         if (isBanned) {
           return { error: 'banned' };
         }
 
-        db.prepare(
-          'INSERT OR IGNORE INTO server_members (server_id, user_id) VALUES (?, ?)'
-        ).run(invitation.server_id, userId);
+        await tx.run(
+          'INSERT OR IGNORE INTO server_members (server_id, user_id) VALUES (?, ?)',
+          [invitation.server_id, userId],
+        );
 
-        const defaultRole = db.prepare(
-          'SELECT id FROM roles WHERE server_id = ? AND is_default = 1'
-        ).get(invitation.server_id) as any;
+        const defaultRole = await tx.queryOne<any>(
+          'SELECT id FROM roles WHERE server_id = ? AND is_default = 1',
+          [invitation.server_id],
+        );
         if (defaultRole) {
-          db.prepare(
-            'INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)'
-          ).run(userId, defaultRole.id);
+          await tx.run(
+            'INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
+            [userId, defaultRole.id],
+          );
         }
 
-        db.prepare("UPDATE server_invitations SET status = 'accepted' WHERE id = ?").run(id);
+        await tx.run("UPDATE server_invitations SET status = 'accepted' WHERE id = ?", [id]);
         return invitation;
-      })();
+      });
 
       if (result?.error === 'invitation_not_found') {
         return reply.code(404).send({ error: 'Invitation not found' });
@@ -977,10 +1033,11 @@ export default async function serverRoutes(app: FastifyInstance) {
       }
 
       // Get server data to return
-      const server = db.prepare(
+      const server = await getDb().queryOne<any>(
         `SELECT s.*, (SELECT COUNT(*) FROM server_members WHERE server_id = s.id) as member_count
-         FROM servers s WHERE s.id = ?`
-      ).get(result.server_id) as any;
+         FROM servers s WHERE s.id = ?`,
+        [result.server_id],
+      );
 
       if (!server) {
         return reply.code(404).send({ error: 'Server not found' });
@@ -988,7 +1045,10 @@ export default async function serverRoutes(app: FastifyInstance) {
 
       let iconUrl: string | null = null;
       if (server.icon_file_id) {
-        const file = db.prepare('SELECT stored_name FROM files WHERE id = ?').get(server.icon_file_id) as any;
+        const file = await getDb().queryOne<any>(
+          'SELECT stored_name FROM files WHERE id = ?',
+          [server.icon_file_id],
+        );
         if (file) iconUrl = `/uploads/${file.stored_name}`;
       }
 
@@ -1011,9 +1071,10 @@ export default async function serverRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { id } = request.params;
 
-      const result = db.prepare(
-        "UPDATE server_invitations SET status = 'declined' WHERE id = ? AND invitee_id = ? AND status = 'pending'"
-      ).run(id, request.user.userId);
+      const result = await getDb().run(
+        "UPDATE server_invitations SET status = 'declined' WHERE id = ? AND invitee_id = ? AND status = 'pending'",
+        [id, request.user.userId],
+      );
 
       if (result.changes === 0) {
         return reply.code(404).send({ error: 'Invitation not found' });
@@ -1037,21 +1098,24 @@ export default async function serverRoutes(app: FastifyInstance) {
         if (!valid.includes(notification_level)) {
           return reply.code(400).send({ error: 'Invalid notification_level' });
         }
-        db.prepare(
+        await getDb().run(
           'UPDATE server_members SET notification_level = ? WHERE server_id = ? AND user_id = ?',
-        ).run(notification_level, serverId, userId);
+          [notification_level, serverId, userId],
+        );
       }
 
       if (suppress_everyone !== undefined) {
-        db.prepare(
+        await getDb().run(
           'UPDATE server_members SET suppress_everyone = ? WHERE server_id = ? AND user_id = ?',
-        ).run(suppress_everyone ? 1 : 0, serverId, userId);
+          [suppress_everyone ? 1 : 0, serverId, userId],
+        );
       }
 
       if (muted_until !== undefined) {
-        db.prepare(
+        await getDb().run(
           'UPDATE server_members SET muted_until = ? WHERE server_id = ? AND user_id = ?',
-        ).run(muted_until, serverId, userId);
+          [muted_until, serverId, userId],
+        );
       }
 
       return { ok: true };

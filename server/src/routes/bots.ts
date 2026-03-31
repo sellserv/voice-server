@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import type { Bot } from '@voip-server/shared';
@@ -9,15 +9,14 @@ export default async function botRoutes(app: FastifyInstance) {
   // List all bots (admin only) — server-scoped
   app.get('/api/servers/:serverId/bots', { preHandler: [requirePermission('manage_bots'), requireServerMember] }, async (request) => {
     const serverId = getServerId(request);
-    const rows = db
-      .prepare(
-        `SELECT b.id, b.user_id, b.type, b.name, b.channel_id, b.enabled, b.greeting, b.dm_enabled, b.dm_greeting, b.config, u.avatar_url
+    const rows = await getDb().query(
+      `SELECT b.id, b.user_id, b.type, b.name, b.channel_id, b.enabled, b.greeting, b.dm_enabled, b.dm_greeting, b.config, u.avatar_url
        FROM bots b JOIN users u ON u.id = b.user_id
        WHERE b.server_id = ?`,
-      )
-      .all(serverId) as any[];
+      [serverId],
+    );
 
-    return rows.map((r) => ({
+    return rows.map((r: any) => ({
       id: r.id,
       user_id: r.user_id,
       type: r.type,
@@ -51,7 +50,7 @@ export default async function botRoutes(app: FastifyInstance) {
     const { name, channel_id, enabled, greeting, avatar_url, dm_enabled, dm_greeting, config } =
       request.body;
 
-    const existingBot = db.prepare('SELECT id, user_id FROM bots WHERE id = ? AND server_id = ?').get(id, serverId) as any;
+    const existingBot = await getDb().queryOne<{ id: string; user_id: string }>('SELECT id, user_id FROM bots WHERE id = ? AND server_id = ?', [id, serverId]);
     if (!existingBot) {
       return reply.code(404).send({ error: 'Bot not found' });
     }
@@ -60,42 +59,43 @@ export default async function botRoutes(app: FastifyInstance) {
       if (!name || name.length > 32) {
         return reply.code(400).send({ error: 'Bot name must be 1-32 characters' });
       }
-      db.prepare('UPDATE bots SET name = ? WHERE id = ? AND server_id = ?').run(name, id, serverId);
-      db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(name, existingBot.user_id);
+      await getDb().run('UPDATE bots SET name = ? WHERE id = ? AND server_id = ?', [name, id, serverId]);
+      await getDb().run('UPDATE users SET display_name = ? WHERE id = ?', [name, existingBot.user_id]);
     }
 
     if (channel_id !== undefined) {
       if (channel_id !== null) {
-        const channel = db
-          .prepare("SELECT id FROM channels WHERE id = ? AND type = 'text' AND server_id = ?")
-          .get(channel_id, serverId);
+        const channel = await getDb().queryOne(
+          "SELECT id FROM channels WHERE id = ? AND type = 'text' AND server_id = ?",
+          [channel_id, serverId],
+        );
         if (!channel) {
           return reply.code(400).send({ error: 'Text channel not found' });
         }
       }
-      db.prepare('UPDATE bots SET channel_id = ? WHERE id = ? AND server_id = ?').run(channel_id, id, serverId);
+      await getDb().run('UPDATE bots SET channel_id = ? WHERE id = ? AND server_id = ?', [channel_id, id, serverId]);
     }
 
     if (enabled !== undefined) {
-      db.prepare('UPDATE bots SET enabled = ? WHERE id = ? AND server_id = ?').run(enabled ? 1 : 0, id, serverId);
+      await getDb().run('UPDATE bots SET enabled = ? WHERE id = ? AND server_id = ?', [enabled ? 1 : 0, id, serverId]);
     }
 
     if (greeting !== undefined) {
       if (!greeting || greeting.length > 500) {
         return reply.code(400).send({ error: 'Greeting must be 1-500 characters' });
       }
-      db.prepare('UPDATE bots SET greeting = ? WHERE id = ? AND server_id = ?').run(greeting, id, serverId);
+      await getDb().run('UPDATE bots SET greeting = ? WHERE id = ? AND server_id = ?', [greeting, id, serverId]);
     }
 
     if (dm_enabled !== undefined) {
-      db.prepare('UPDATE bots SET dm_enabled = ? WHERE id = ? AND server_id = ?').run(dm_enabled ? 1 : 0, id, serverId);
+      await getDb().run('UPDATE bots SET dm_enabled = ? WHERE id = ? AND server_id = ?', [dm_enabled ? 1 : 0, id, serverId]);
     }
 
     if (dm_greeting !== undefined) {
       if (!dm_greeting || dm_greeting.length > 500) {
         return reply.code(400).send({ error: 'DM greeting must be 1-500 characters' });
       }
-      db.prepare('UPDATE bots SET dm_greeting = ? WHERE id = ? AND server_id = ?').run(dm_greeting, id, serverId);
+      await getDb().run('UPDATE bots SET dm_greeting = ? WHERE id = ? AND server_id = ?', [dm_greeting, id, serverId]);
     }
 
     if (config !== undefined) {
@@ -107,7 +107,7 @@ export default async function botRoutes(app: FastifyInstance) {
           return reply.code(400).send({ error: 'Config must be valid JSON' });
         }
       }
-      db.prepare('UPDATE bots SET config = ? WHERE id = ? AND server_id = ?').run(config, id, serverId);
+      await getDb().run('UPDATE bots SET config = ? WHERE id = ? AND server_id = ?', [config, id, serverId]);
     }
 
     if (avatar_url !== undefined) {
@@ -123,7 +123,7 @@ export default async function botRoutes(app: FastifyInstance) {
           return reply.code(400).send({ error: 'Invalid avatar URL' });
         } else {
           const storedName = avatar_url.replace('/uploads/', '');
-          const file = db.prepare('SELECT id, user_id FROM files WHERE stored_name = ?').get(storedName) as { id: string; user_id: string } | undefined;
+          const file = await getDb().queryOne<{ id: string; user_id: string }>('SELECT id, user_id FROM files WHERE stored_name = ?', [storedName]);
           if (!file) {
             return reply.code(400).send({ error: 'File not found' });
           }
@@ -132,18 +132,17 @@ export default async function botRoutes(app: FastifyInstance) {
           }
         }
       }
-      db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(
+      await getDb().run('UPDATE users SET avatar_url = ? WHERE id = ?', [
         avatar_url,
         existingBot.user_id,
-      );
+      ]);
     }
 
-    const updated = db
-      .prepare(
-        `SELECT b.id, b.user_id, b.type, b.name, b.channel_id, b.enabled, b.greeting, b.dm_enabled, b.dm_greeting, b.config, u.avatar_url
+    const updated = await getDb().queryOne(
+      `SELECT b.id, b.user_id, b.type, b.name, b.channel_id, b.enabled, b.greeting, b.dm_enabled, b.dm_greeting, b.config, u.avatar_url
          FROM bots b JOIN users u ON u.id = b.user_id WHERE b.id = ?`,
-      )
-      .get(id) as any;
+      [id],
+    ) as any;
 
     const bot: Bot = {
       id: updated.id,

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'crypto';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { requireAuth, requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import { broadcastToServer } from '../ws/index.js';
@@ -10,14 +10,13 @@ export default async function customEmojiRoutes(app: FastifyInstance) {
   app.get('/api/servers/:serverId/custom-emojis', { preHandler: [requireAuth, requireServerMember] }, async (request, reply) => {
     try {
       const serverId = getServerId(request);
-      return db
-        .prepare(
-          `SELECT e.id, e.name, e.file_id, e.server_id, e.uploaded_by, e.created_at, f.stored_name, f.mime_type
+      return await getDb().query(
+        `SELECT e.id, e.name, e.file_id, e.server_id, e.uploaded_by, e.created_at, f.stored_name, f.mime_type
          FROM custom_emojis e JOIN files f ON f.id = e.file_id
          WHERE e.server_id = ?
          ORDER BY e.created_at DESC`,
-        )
-        .all(serverId);
+        [serverId],
+      );
     } catch (err: any) {
       console.error('Failed to list custom emojis:', err);
       return reply.code(500).send({ error: 'Failed to list custom emojis' });
@@ -44,12 +43,12 @@ export default async function customEmojiRoutes(app: FastifyInstance) {
       }
 
       try {
-        const existing = db.prepare('SELECT id FROM custom_emojis WHERE name = ? AND server_id = ?').get(name, serverId);
+        const existing = await getDb().queryOne('SELECT id FROM custom_emojis WHERE name = ? AND server_id = ?', [name, serverId]);
         if (existing) {
           return reply.code(400).send({ error: 'Emoji name already exists on this server' });
         }
 
-        const file = db.prepare('SELECT id, mime_type FROM files WHERE id = ?').get(file_id) as any;
+        const file = await getDb().queryOne<{ id: string; mime_type: string }>('SELECT id, mime_type FROM files WHERE id = ?', [file_id]);
         if (!file) {
           return reply.code(400).send({ error: 'File not found' });
         }
@@ -59,9 +58,10 @@ export default async function customEmojiRoutes(app: FastifyInstance) {
 
         const id = randomUUID();
         try {
-          db.prepare(
+          await getDb().run(
             'INSERT INTO custom_emojis (id, name, file_id, uploaded_by, server_id) VALUES (?, ?, ?, ?, ?)',
-          ).run(id, name, file_id, request.user.userId, serverId);
+            [id, name, file_id, request.user.userId, serverId],
+          );
         } catch (err: any) {
           if (err.message?.includes('UNIQUE constraint failed')) {
             return reply.code(400).send({ error: 'Emoji name already exists on this server' });
@@ -69,13 +69,12 @@ export default async function customEmojiRoutes(app: FastifyInstance) {
           throw err;
         }
 
-        const emoji = db
-          .prepare(
-            `SELECT e.id, e.name, e.file_id, e.server_id, e.uploaded_by, e.created_at, f.stored_name, f.mime_type
+        const emoji = await getDb().queryOne(
+          `SELECT e.id, e.name, e.file_id, e.server_id, e.uploaded_by, e.created_at, f.stored_name, f.mime_type
            FROM custom_emojis e JOIN files f ON f.id = e.file_id
            WHERE e.id = ?`,
-          )
-          .get(id);
+          [id],
+        );
 
         if (!emoji) {
           throw new Error('Failed to retrieve created emoji after insert');
@@ -102,7 +101,7 @@ export default async function customEmojiRoutes(app: FastifyInstance) {
       try {
         const serverId = getServerId(request);
         const emojiId = request.params.id;
-        const result = db.prepare('DELETE FROM custom_emojis WHERE id = ? AND server_id = ?').run(emojiId, serverId);
+        const result = await getDb().run('DELETE FROM custom_emojis WHERE id = ? AND server_id = ?', [emojiId, serverId]);
         if (result.changes === 0) {
           return reply.code(404).send({ error: 'Custom emoji not found' });
         }

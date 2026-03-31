@@ -44,7 +44,7 @@ import { broadcast, getOnlineUsers } from './ws/index.js';
 import { initEmail } from './email/sender.js';
 import { cleanupExpiredCodes } from './email/codes.js';
 import { initPollExpiryManager } from './media/pollExpiryManager.js';
-import db from './db/connection.js';
+import { initAdapters, getDb } from './adapters/index.js';
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled rejection at:', promise, 'reason:', reason);
@@ -199,8 +199,9 @@ for (const id of config.adminUsers) {
   }
 }
 
-// Initialize database
-initSchema();
+// Initialize adapters + database
+await initAdapters();
+await initSchema();
 
 // Initialize email
 initEmail();
@@ -210,8 +211,8 @@ initPollExpiryManager();
 
 // Initialize mediasoup workers (one per CPU core, configurable via MEDIASOUP_WORKERS)
 await createWorkers();
-setWorkerDiedCallback(() => {
-  clearAllRooms();
+setWorkerDiedCallback(async () => {
+  await clearAllRooms();
   broadcast({ type: 'error', message: 'Voice server restarted. Please rejoin the voice channel.' });
 });
 
@@ -222,12 +223,12 @@ app.get('/api/health', async () => ({ status: 'ok', timestamp: new Date().toISOS
 app.get('/api/public/instance/info', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (_request, reply) => {
   reply.header('Access-Control-Allow-Origin', '*');
 
-  const totalUsers = (db.prepare('SELECT COUNT(*) as c FROM users WHERE is_bot = 0').get() as any).c;
-  const totalServers = (db.prepare('SELECT COUNT(*) as c FROM servers').get() as any).c;
-  const totalMessages = (db.prepare('SELECT COUNT(*) as c FROM messages').get() as any).c;
-  const onlineCount = getOnlineUsers().length;
+  const totalUsers = (await getDb().queryOne<{ c: number }>('SELECT COUNT(*) as c FROM users WHERE is_bot = 0'))!.c;
+  const totalServers = (await getDb().queryOne<{ c: number }>('SELECT COUNT(*) as c FROM servers'))!.c;
+  const totalMessages = (await getDb().queryOne<{ c: number }>('SELECT COUNT(*) as c FROM messages'))!.c;
+  const onlineCount = (await getOnlineUsers()).length;
 
-  const settings = db.prepare('SELECT allow_registration FROM instance_settings WHERE id = 1').get() as any;
+  const settings = await getDb().queryOne<{ allow_registration: number }>('SELECT allow_registration FROM instance_settings WHERE id = 1');
   const registrationOpen = settings ? !!settings.allow_registration : true;
 
   return {
@@ -282,12 +283,12 @@ app.setNotFoundHandler(async (request, reply) => {
 });
 
 // Cleanup expired email codes every hour
-setInterval(cleanupExpiredCodes, 60 * 60 * 1000);
+setInterval(() => { cleanupExpiredCodes().catch((err) => console.error('Failed to cleanup expired codes:', err)); }, 60 * 60 * 1000);
 
 // Cleanup link preview cache older than 7 days
-function cleanupLinkPreviews() {
+async function cleanupLinkPreviews() {
   const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const result = db.prepare('DELETE FROM link_previews WHERE fetched_at < ?').run(cutoff);
+  const result = await getDb().run('DELETE FROM link_previews WHERE fetched_at < ?', [cutoff]);
   if (result.changes > 0) {
     console.log(`Cleaned up ${result.changes} expired link preview(s)`);
   }
@@ -296,8 +297,8 @@ cleanupLinkPreviews();
 setInterval(cleanupLinkPreviews, 24 * 60 * 60 * 1000);
 
 // Cleanup old audit log entries at startup and every 24 hours
-cleanupOldAuditEntries();
-setInterval(cleanupOldAuditEntries, 24 * 60 * 60 * 1000);
+cleanupOldAuditEntries().catch((err) => console.error('Failed to cleanup old audit entries:', err));
+setInterval(() => { cleanupOldAuditEntries().catch((err) => console.error('Failed to cleanup old audit entries:', err)); }, 24 * 60 * 60 * 1000);
 
 // Start
 try {

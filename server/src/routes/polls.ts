@@ -1,40 +1,42 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'crypto';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { requireAuth, requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import { hasPermission } from '../auth/permissions.js';
 import { sendToMany, broadcastToChannel } from '../ws/index.js';
 import type { Poll, PollOption } from '@voip-server/shared';
 
-function getServerMemberUserIds(serverId: string): string[] {
-  return (db.prepare('SELECT user_id FROM server_members WHERE server_id = ?').all(serverId) as { user_id: string }[])
-    .map(r => r.user_id);
+async function getServerMemberUserIds(serverId: string): Promise<string[]> {
+  const rows = await getDb().query<{ user_id: string }>('SELECT user_id FROM server_members WHERE server_id = ?', [serverId]);
+  return rows.map(r => r.user_id);
 }
 
-function getPollWithDetails(pollId: string, userId: string): Poll | null {
-  const poll = db.prepare(`
+async function getPollWithDetails(pollId: string, userId: string): Promise<Poll | null> {
+  const poll = await getDb().queryOne<any>(`
     SELECT p.*, u.username as creator_username, u.display_name as creator_display_name, u.avatar_url as creator_avatar_url
     FROM polls p
     JOIN users u ON u.id = p.creator_id
     WHERE p.id = ?
-  `).get(pollId) as any;
+  `, [pollId]);
 
   if (!poll) return null;
 
   // On-the-fly expiry check: if ends_at has passed, mark inactive
   if (poll.is_active && poll.ends_at && new Date(poll.ends_at) <= new Date()) {
-    db.prepare('UPDATE polls SET is_active = 0 WHERE id = ?').run(pollId);
+    await getDb().run('UPDATE polls SET is_active = 0 WHERE id = ?', [pollId]);
     poll.is_active = 0;
   }
 
-  const options = db.prepare(`
+  const options = await getDb().query<any>(`
     SELECT o.*,
            (SELECT COUNT(*) FROM poll_votes WHERE option_id = o.id) as vote_count,
            (SELECT 1 FROM poll_votes WHERE option_id = o.id AND user_id = ?) as voted_by_me
     FROM poll_options o
     WHERE o.poll_id = ?
-  `).all(userId, pollId) as any[];
+  `, [userId, pollId]);
+
+  const totalVotes = await getDb().queryOne<{ c: number }>('SELECT COUNT(DISTINCT user_id) as c FROM poll_votes WHERE poll_id = ?', [pollId]);
 
   return {
     ...poll,
@@ -44,18 +46,18 @@ function getPollWithDetails(pollId: string, userId: string): Poll | null {
       ...o,
       voted_by_me: !!o.voted_by_me
     })),
-    total_votes: (db.prepare('SELECT COUNT(DISTINCT user_id) as c FROM poll_votes WHERE poll_id = ?').get(pollId) as any).c
+    total_votes: totalVotes?.c ?? 0
   };
 }
 
-function getPollsWithDetails(serverId: string, userId: string): Poll[] {
-  const polls = db.prepare(`
+async function getPollsWithDetails(serverId: string, userId: string): Promise<Poll[]> {
+  const polls = await getDb().query<any>(`
     SELECT p.*, u.username as creator_username, u.display_name as creator_display_name, u.avatar_url as creator_avatar_url
     FROM polls p
     JOIN users u ON u.id = p.creator_id
     WHERE p.server_id = ?
     ORDER BY p.created_at DESC
-  `).all(serverId) as any[];
+  `, [serverId]);
 
   if (polls.length === 0) return [];
 
@@ -64,7 +66,7 @@ function getPollsWithDetails(serverId: string, userId: string): Poll[] {
   const expiredIds = polls.filter(p => p.is_active && p.ends_at && new Date(p.ends_at) <= now).map(p => p.id);
   if (expiredIds.length > 0) {
     const placeholders = expiredIds.map(() => '?').join(',');
-    db.prepare(`UPDATE polls SET is_active = 0 WHERE id IN (${placeholders})`).run(...expiredIds);
+    await getDb().run(`UPDATE polls SET is_active = 0 WHERE id IN (${placeholders})`, expiredIds);
     for (const p of polls) {
       if (expiredIds.includes(p.id)) p.is_active = 0;
     }
@@ -74,21 +76,21 @@ function getPollsWithDetails(serverId: string, userId: string): Poll[] {
   const placeholders = pollIds.map(() => '?').join(',');
 
   // Batch load all options
-  const allOptions = db.prepare(`
+  const allOptions = await getDb().query<any>(`
     SELECT o.*,
            (SELECT COUNT(*) FROM poll_votes WHERE option_id = o.id) as vote_count,
            (SELECT 1 FROM poll_votes WHERE option_id = o.id AND user_id = ?) as voted_by_me
     FROM poll_options o
     WHERE o.poll_id IN (${placeholders})
-  `).all(userId, ...pollIds) as any[];
+  `, [userId, ...pollIds]);
 
   // Batch load total votes
-  const voteCounts = db.prepare(`
+  const voteCounts = await getDb().query<any>(`
     SELECT poll_id, COUNT(DISTINCT user_id) as c
     FROM poll_votes
     WHERE poll_id IN (${placeholders})
     GROUP BY poll_id
-  `).all(...pollIds) as any[];
+  `, pollIds);
 
   const optionsByPoll = new Map<string, any[]>();
   for (const o of allOptions) {
@@ -117,20 +119,20 @@ export default async function pollRoutes(app: FastifyInstance) {
       const serverId = getServerId(request);
       const userId = request.user.userId;
 
-      return getPollsWithDetails(serverId, userId);
+      return await getPollsWithDetails(serverId, userId);
     }
   );
 
   // Create a poll
-  app.post<{ 
-    Params: { serverId: string }; 
-    Body: { 
-      question: string; 
-      options: string[]; 
-      allow_multiple?: boolean; 
+  app.post<{
+    Params: { serverId: string };
+    Body: {
+      question: string;
+      options: string[];
+      allow_multiple?: boolean;
       channel_id?: string;
       ends_at?: string;
-    } 
+    }
   }>(
     '/api/servers/:serverId/polls',
     { preHandler: [requireAuth, requireServerMember] },
@@ -144,44 +146,43 @@ export default async function pollRoutes(app: FastifyInstance) {
 
       const pollId = randomUUID();
       const messageId = randomUUID();
-      
+
       const expiryDate = ends_at || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-      
-      db.transaction(() => {
-        db.prepare(`
+
+      await getDb().transaction(async (tx) => {
+        await tx.run(`
           INSERT INTO polls (id, server_id, channel_id, creator_id, question, allow_multiple, ends_at)
           VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(pollId, serverId, channel_id || null, request.user.userId, question, allow_multiple ? 1 : 0, expiryDate);
+        `, [pollId, serverId, channel_id || null, request.user.userId, question, allow_multiple ? 1 : 0, expiryDate]);
 
-        const insertOption = db.prepare('INSERT INTO poll_options (id, poll_id, text) VALUES (?, ?, ?)');
         for (const optText of options) {
-          insertOption.run(randomUUID(), pollId, optText);
+          await tx.run('INSERT INTO poll_options (id, poll_id, text) VALUES (?, ?, ?)', [randomUUID(), pollId, optText]);
         }
 
         if (channel_id) {
           // Create linked message
-          db.prepare(`
+          await tx.run(`
             INSERT INTO messages (id, channel_id, user_id, content, poll_id)
             VALUES (?, ?, ?, ?, ?)
-          `).run(messageId, channel_id, request.user.userId, `Created a poll: ${question}`, pollId);
+          `, [messageId, channel_id, request.user.userId, `Created a poll: ${question}`, pollId]);
         }
-      })();
+      });
 
-      const poll = getPollWithDetails(pollId, request.user.userId);
-      
+      const poll = await getPollWithDetails(pollId, request.user.userId);
+
       if (channel_id) {
         // Fetch and broadcast message
-        const message = db.prepare(`
+        const message = await getDb().queryOne<any>(`
           SELECT m.*, u.username, u.display_name, u.avatar_url,
                  r.color as role_color
           FROM messages m
           JOIN users u ON u.id = m.user_id
           LEFT JOIN roles r ON r.id = u.role_id
           WHERE m.id = ?
-        `).get(messageId) as any;
+        `, [messageId]);
 
         if (message) {
-          broadcastToChannel(channel_id, {
+          await broadcastToChannel(channel_id, {
             type: 'chat:message',
             message: {
               ...message,
@@ -190,9 +191,9 @@ export default async function pollRoutes(app: FastifyInstance) {
           } as any);
         }
       }
-      
+
       // Broadcast to server
-      const memberIds = getServerMemberUserIds(serverId);
+      const memberIds = await getServerMemberUserIds(serverId);
       sendToMany(memberIds, {
         type: 'poll:created',
         serverId,
@@ -213,30 +214,28 @@ export default async function pollRoutes(app: FastifyInstance) {
       const userId = request.user.userId;
       const serverId = getServerId(request);
 
-      const poll = db.prepare('SELECT id, is_active, allow_multiple FROM polls WHERE id = ?').get(pollId) as any;
+      const poll = await getDb().queryOne<{ id: string; is_active: number; allow_multiple: number }>('SELECT id, is_active, allow_multiple FROM polls WHERE id = ?', [pollId]);
       if (!poll || !poll.is_active) {
         return reply.code(404).send({ error: 'Poll not found or inactive' });
       }
 
-      db.transaction(() => {
+      await getDb().transaction(async (tx) => {
         // Clear existing votes for this user in this poll
-        db.prepare('DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?').run(pollId, userId);
+        await tx.run('DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?', [pollId, userId]);
 
-        const insertVote = db.prepare('INSERT INTO poll_votes (poll_id, user_id, option_id) VALUES (?, ?, ?)');
-        
         if (poll.allow_multiple) {
           for (const oid of optionIds) {
-            insertVote.run(pollId, userId, oid);
+            await tx.run('INSERT INTO poll_votes (poll_id, user_id, option_id) VALUES (?, ?, ?)', [pollId, userId, oid]);
           }
         } else if (optionIds.length > 0) {
-          insertVote.run(pollId, userId, optionIds[0]);
+          await tx.run('INSERT INTO poll_votes (poll_id, user_id, option_id) VALUES (?, ?, ?)', [pollId, userId, optionIds[0]]);
         }
-      })();
+      });
 
-      const updatedPoll = getPollWithDetails(pollId, userId);
-      
+      const updatedPoll = await getPollWithDetails(pollId, userId);
+
       // Broadcast update
-      const memberIds = getServerMemberUserIds(serverId);
+      const memberIds = await getServerMemberUserIds(serverId);
       sendToMany(memberIds, {
         type: 'poll:updated',
         serverId,
@@ -258,20 +257,20 @@ export default async function pollRoutes(app: FastifyInstance) {
       const serverId = getServerId(request);
       const userId = request.user.userId;
 
-      const poll = db.prepare('SELECT id, creator_id, is_active, channel_id FROM polls WHERE id = ? AND server_id = ?').get(pollId, serverId) as any;
+      const poll = await getDb().queryOne<any>('SELECT id, creator_id, is_active, channel_id FROM polls WHERE id = ? AND server_id = ?', [pollId, serverId]);
       if (!poll) return reply.code(404).send({ error: 'Poll not found' });
       if (!poll.is_active) return reply.code(400).send({ error: 'Poll is already closed' });
 
-      if (poll.creator_id !== userId && !hasPermission(userId, 'administrator', serverId)) {
+      if (poll.creator_id !== userId && !await hasPermission(userId, 'administrator', serverId)) {
         return reply.code(403).send({ error: 'Only the poll creator or an admin can close this poll' });
       }
 
-      db.prepare('UPDATE polls SET is_active = 0 WHERE id = ?').run(pollId);
+      await getDb().run('UPDATE polls SET is_active = 0 WHERE id = ?', [pollId]);
 
-      const updatedPoll = getPollWithDetails(pollId, userId);
+      const updatedPoll = await getPollWithDetails(pollId, userId);
 
       // Broadcast closure
-      const memberIds = getServerMemberUserIds(serverId);
+      const memberIds = await getServerMemberUserIds(serverId);
       sendToMany(memberIds, {
         type: 'poll:updated',
         serverId,
@@ -293,18 +292,18 @@ export default async function pollRoutes(app: FastifyInstance) {
       const { pollId } = request.params;
       const serverId = getServerId(request);
 
-      const poll = db.prepare('SELECT creator_id FROM polls WHERE id = ?').get(pollId) as any;
+      const poll = await getDb().queryOne<{ creator_id: string }>('SELECT creator_id FROM polls WHERE id = ?', [pollId]);
       if (!poll) return reply.code(404).send({ error: 'Poll not found' });
 
       // Only creator or admin can delete
-      if (poll.creator_id !== request.user.userId && !hasPermission(request.user.userId, 'administrator', serverId)) {
+      if (poll.creator_id !== request.user.userId && !await hasPermission(request.user.userId, 'administrator', serverId)) {
         return reply.code(403).send({ error: 'No permission to delete this poll' });
       }
 
-      db.prepare('DELETE FROM polls WHERE id = ?').run(pollId);
+      await getDb().run('DELETE FROM polls WHERE id = ?', [pollId]);
 
       // Broadcast deletion
-      const memberIds = getServerMemberUserIds(serverId);
+      const memberIds = await getServerMemberUserIds(serverId);
       sendToMany(memberIds, {
         type: 'poll:deleted',
         serverId,

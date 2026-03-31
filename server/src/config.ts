@@ -76,4 +76,29 @@ export const config = {
     minPort: envInt('MEDIASOUP_MIN_PORT', 40000),
     maxPort: envInt('MEDIASOUP_MAX_PORT', 40100),
   },
+
+  // Database adapter
+  dbType: env('DB_TYPE', 'sqlite') as 'sqlite' | 'postgres',
+  databaseUrl: env('DATABASE_URL', ''),
+
+  // Redis (optional — if empty, use in-memory adapters)
+  redisUrl: env('REDIS_URL', ''),
+
+  // Voice adapter
+  voiceType: env('VOICE_TYPE', 'mediasoup') as 'mediasoup' | 'livekit',
+  livekit: {
+    url: env('LIVEKIT_URL', ''),
+    apiKey: env('LIVEKIT_API_KEY', ''),
+    apiSecret: env('LIVEKIT_API_SECRET', ''),
+  },
+
+  // Storage adapter
+  storageType: env('STORAGE_TYPE', 'local') as 'local' | 's3',
+  s3: {
+    endpoint: env('S3_ENDPOINT', ''),
+    bucket: env('S3_BUCKET', ''),
+    accessKey: env('S3_ACCESS_KEY', ''),
+    secretKey: env('S3_SECRET_KEY', ''),
+    publicUrl: env('S3_PUBLIC_URL', ''),
+  },
 } as const;

@@ -1,5 +1,5 @@
 import { randomUUID, randomInt, createHmac } from 'crypto';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { config } from '../config.js';
 
 type CodeType = 'verification' | 'mfa' | 'password_reset';
@@ -12,12 +12,12 @@ export function generateCode(): string {
   return String(randomInt(100000, 999999));
 }
 
-export function createEmailCode(userId: string, type: CodeType): string {
+export async function createEmailCode(userId: string, type: CodeType): Promise<string> {
   // Invalidate existing unused codes for this user/type
-  db.prepare('UPDATE email_codes SET used = 1 WHERE user_id = ? AND type = ? AND used = 0').run(
+  await getDb().run('UPDATE email_codes SET used = 1 WHERE user_id = ? AND type = ? AND used = 0', [
     userId,
     type,
-  );
+  ]);
 
   const code = generateCode();
   const id = randomUUID();
@@ -28,26 +28,26 @@ export function createEmailCode(userId: string, type: CodeType): string {
     .replace('Z', '');
 
   // Store hashed code in DB; return plaintext for emailing
-  db.prepare(
+  await getDb().run(
     'INSERT INTO email_codes (id, user_id, code, type, expires_at) VALUES (?, ?, ?, ?, ?)',
-  ).run(id, userId, hashCode(code), type, expiresAt);
+    [id, userId, hashCode(code), type, expiresAt],
+  );
 
   return code;
 }
 
-export function validateEmailCode(userId: string, code: string, type: CodeType): boolean {
-  const row = db
-    .prepare(
-      "SELECT id FROM email_codes WHERE user_id = ? AND code = ? AND type = ? AND used = 0 AND expires_at > datetime('now')",
-    )
-    .get(userId, hashCode(code), type) as { id: string } | undefined;
+export async function validateEmailCode(userId: string, code: string, type: CodeType): Promise<boolean> {
+  const row = await getDb().queryOne<{ id: string }>(
+    "SELECT id FROM email_codes WHERE user_id = ? AND code = ? AND type = ? AND used = 0 AND expires_at > datetime('now')",
+    [userId, hashCode(code), type],
+  );
 
   if (!row) return false;
 
-  db.prepare('UPDATE email_codes SET used = 1 WHERE id = ?').run(row.id);
+  await getDb().run('UPDATE email_codes SET used = 1 WHERE id = ?', [row.id]);
   return true;
 }
 
-export function cleanupExpiredCodes() {
-  db.prepare("DELETE FROM email_codes WHERE expires_at < datetime('now')").run();
+export async function cleanupExpiredCodes(): Promise<void> {
+  await getDb().run("DELETE FROM email_codes WHERE expires_at < datetime('now')");
 }

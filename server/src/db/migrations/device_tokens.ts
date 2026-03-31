@@ -1,7 +1,7 @@
-import db from '../connection.js';
+import { getDb } from '../../adapters/index.js';
 
-export function migrateDeviceTokens() {
-  db.exec(`
+export async function migrateDeviceTokens() {
+  await getDb().exec(`
     CREATE TABLE IF NOT EXISTS device_tokens (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

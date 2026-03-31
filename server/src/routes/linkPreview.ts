@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { lookup } from 'dns/promises';
 import { Agent as UndiciAgent, fetch as undiciFetch } from 'undici';
 import { requireAuth } from '../auth/middleware.js';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 
 interface LinkPreview {
   url: string;
@@ -227,9 +227,10 @@ export default async function linkPreviewRoutes(app: FastifyInstance) {
       }
 
       // Check cache
-      const cached = db.prepare('SELECT * FROM link_previews WHERE url = ?').get(url) as
-        | LinkPreview
-        | undefined;
+      const cached = await getDb().queryOne<LinkPreview>(
+        'SELECT * FROM link_previews WHERE url = ?',
+        [url],
+      );
 
       if (cached) {
         const fetchedAt = new Date(cached.fetched_at + 'Z').getTime();
@@ -245,7 +246,7 @@ export default async function linkPreviewRoutes(app: FastifyInstance) {
           };
         }
         // Expired — delete and re-fetch
-        db.prepare('DELETE FROM link_previews WHERE url = ?').run(url);
+        await getDb().run('DELETE FROM link_previews WHERE url = ?', [url]);
       }
 
       try {
@@ -391,10 +392,11 @@ export default async function linkPreviewRoutes(app: FastifyInstance) {
 
         // Only cache if we got at least a title
         if (title) {
-          db.prepare(
+          await getDb().run(
             `INSERT OR REPLACE INTO link_previews (url, title, description, image, site_name, author, favicon)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          ).run(url, title, description, image, siteName, author, favicon);
+            [url, title, description, image, siteName, author, favicon],
+          );
         }
 
         return {

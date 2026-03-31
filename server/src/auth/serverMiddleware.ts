@@ -1,9 +1,9 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 
-export function requireServerMember(request: FastifyRequest, reply: FastifyReply, done: () => void) {
+export async function requireServerMember(request: FastifyRequest, reply: FastifyReply) {
   // Skip if a previous preHandler already sent a response (e.g. auth or permission denied)
-  if (reply.sent) return done();
+  if (reply.sent) return;
 
   const serverId = (request.params as any).serverId;
   if (!serverId) {
@@ -16,9 +16,10 @@ export function requireServerMember(request: FastifyRequest, reply: FastifyReply
     return;
   }
 
-  const member = db.prepare(
-    'SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?'
-  ).get(serverId, request.user.userId);
+  const member = await getDb().queryOne(
+    'SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?',
+    [serverId, request.user.userId],
+  );
 
   if (!member) {
     reply.code(403).send({ error: 'Not a member of this server' });
@@ -27,7 +28,6 @@ export function requireServerMember(request: FastifyRequest, reply: FastifyReply
 
   // Attach serverId to request for downstream use
   (request as any).serverId = serverId;
-  done();
 }
 
 export function getServerId(request: FastifyRequest): string {

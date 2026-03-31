@@ -5,7 +5,7 @@ import { handleMessage } from './handlers.js';
 import { getAllRoomMembers } from '../media/signaling.js';
 import { onUserIdle, onUserActive } from '../media/afkManager.js';
 import type { ServerEvent, UserStatus, Channel } from '@voip-server/shared';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { getCachedChannelAccess } from '../auth/permissions.js';
 
 // WebSocket limits
@@ -60,31 +60,27 @@ export function isUserOnline(userId: string): boolean {
   return clients.has(userId);
 }
 
-export function getDisplayName(userId: string): string | undefined {
+export async function getDisplayName(userId: string): Promise<string | undefined> {
   const client = clients.get(userId);
   if (client) return client.display_name;
-  const row = db.prepare('SELECT display_name FROM users WHERE id = ?').get(userId) as
-    | { display_name: string }
-    | undefined;
+  const row = await getDb().queryOne<{ display_name: string }>('SELECT display_name FROM users WHERE id = ?', [userId]);
   return row?.display_name;
 }
 
-export function getAvatarUrl(userId: string): string | null {
+export async function getAvatarUrl(userId: string): Promise<string | null> {
   const client = clients.get(userId);
   if (client) return client.avatar_url ?? null;
-  const row = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(userId) as
-    | { avatar_url: string | null }
-    | undefined;
+  const row = await getDb().queryOne<{ avatar_url: string | null }>('SELECT avatar_url FROM users WHERE id = ?', [userId]);
   return row?.avatar_url ?? null;
 }
 
-export function getOnlineUsers(serverId?: string): {
+export async function getOnlineUsers(serverId?: string): Promise<{
   userId: string;
   username: string;
   display_name?: string;
   status: UserStatus;
   activity?: string;
-}[] {
+}[]> {
   const result = Array.from(clients.values())
     .filter((c) => c.status !== 'invisible')
     .filter((c) => !serverId || c.serverIds?.includes(serverId))
@@ -103,10 +99,7 @@ export function getOnlineUsers(serverId?: string): {
 
   // Add enabled bots as always-online
   if (serverId) {
-    const bots = db.prepare('SELECT b.user_id, b.name FROM bots b WHERE b.enabled = 1 AND b.server_id = ?').all(serverId) as {
-      user_id: string;
-      name: string;
-    }[];
+    const bots = await getDb().query<{ user_id: string; name: string }>('SELECT b.user_id, b.name FROM bots b WHERE b.enabled = 1 AND b.server_id = ?', [serverId]);
     for (const bot of bots) {
       result.push({
         userId: bot.user_id,
@@ -117,10 +110,7 @@ export function getOnlineUsers(serverId?: string): {
       });
     }
   } else {
-    const bots = db.prepare('SELECT b.user_id, b.name FROM bots b WHERE b.enabled = 1').all() as {
-      user_id: string;
-      name: string;
-    }[];
+    const bots = await getDb().query<{ user_id: string; name: string }>('SELECT b.user_id, b.name FROM bots b WHERE b.enabled = 1', []);
     for (const bot of bots) {
       result.push({
         userId: bot.user_id,
@@ -205,7 +195,7 @@ export function removeFakeClient(userId: string) {
   }
 }
 
-export function setClientStatus(userId: string, status: UserStatus) {
+export async function setClientStatus(userId: string, status: UserStatus) {
   const client = clients.get(userId);
   if (!client) return;
 
@@ -221,10 +211,10 @@ export function setClientStatus(userId: string, status: UserStatus) {
 
   // Persist to DB (don't save 'idle' — it's a transient auto-idle state, not a preference)
   if (status !== 'idle') {
-    db.prepare('UPDATE users SET status_preference = ? WHERE id = ?').run(status, userId);
+    await getDb().run('UPDATE users SET status_preference = ? WHERE id = ?', [status, userId]);
   }
 
-  const displayName = getDisplayName(userId);
+  const displayName = await getDisplayName(userId);
 
   if (oldStatus === 'invisible' && status !== 'invisible') {
     // invisible → visible: appear online
@@ -267,10 +257,11 @@ export function setClientStatus(userId: string, status: UserStatus) {
   }
 }
 
-export function getDmParticipantIds(channelId: string): string[] {
-  const rows = db
-    .prepare('SELECT user_id FROM dm_participants WHERE channel_id = ?')
-    .all(channelId) as { user_id: string }[];
+export async function getDmParticipantIds(channelId: string): Promise<string[]> {
+  const rows = await getDb().query<{ user_id: string }>(
+    'SELECT user_id FROM dm_participants WHERE channel_id = ?',
+    [channelId],
+  );
   return rows.map((r) => r.user_id);
 }
 
@@ -292,17 +283,16 @@ export function invalidateChannelCache(channelId: string) {
   channelHasViewOverridesCache.delete(channelId);
 }
 
-export function broadcastToChannel(channelId: string, event: ServerEvent, excludeUserId?: string) {
+export async function broadcastToChannel(channelId: string, event: ServerEvent, excludeUserId?: string) {
   // Check if this is a DM channel or a server channel
-  const channel = db.prepare('SELECT server_id FROM channels WHERE id = ?').get(channelId) as { server_id: string | null } | undefined;
+  const channel = await getDb().queryOne<{ server_id: string | null }>('SELECT server_id FROM channels WHERE id = ?', [channelId]);
 
   let hasOverrides = channelHasViewOverridesCache.get(channelId);
   if (hasOverrides === undefined) {
-    const override = db
-      .prepare(
-        'SELECT 1 FROM channel_permission_overrides WHERE channel_id = ? AND view_channel IS NOT NULL',
-      )
-      .get(channelId);
+    const override = await getDb().queryOne<any>(
+      'SELECT 1 FROM channel_permission_overrides WHERE channel_id = ? AND view_channel IS NOT NULL',
+      [channelId],
+    );
     hasOverrides = !!override;
     channelHasViewOverridesCache.set(channelId, hasOverrides);
   }
@@ -314,11 +304,11 @@ export function broadcastToChannel(channelId: string, event: ServerEvent, exclud
     }
     return;
   }
-  const userIds = getCachedChannelAccess(channelId);
+  const userIds = await getCachedChannelAccess(channelId);
   sendToMany(userIds, event, excludeUserId);
 }
 
-export function broadcastChannelAccessChange(
+export async function broadcastChannelAccessChange(
   channelId: string,
   beforeSet: Set<string> | null,
   afterSet: Set<string> | null,
@@ -330,7 +320,7 @@ export function broadcastChannelAccessChange(
   const deletedMsg = JSON.stringify({ type: 'channel:deleted', channelId });
 
   // Scope to server members if channel belongs to a server
-  const channelRow = db.prepare('SELECT server_id FROM channels WHERE id = ?').get(channelId) as { server_id: string | null } | undefined;
+  const channelRow = await getDb().queryOne<{ server_id: string | null }>('SELECT server_id FROM channels WHERE id = ?', [channelId]);
   const serverId = channelRow?.server_id;
 
   for (const [userId, client] of clients) {
@@ -372,7 +362,7 @@ export function setupWebSocket(app: FastifyInstance) {
     clearInterval(interval);
   });
 
-  app.get('/ws', { websocket: true }, (socket, request) => {
+  app.get('/ws', { websocket: true }, async (socket, request) => {
     // Authenticate from cookie or query parameter (for desktop app)
     let token = (request.query as Record<string, string>)?.token || '';
 
@@ -403,9 +393,7 @@ export function setupWebSocket(app: FastifyInstance) {
     }
 
     // Check ban status from DB (#6)
-    const dbUser = db.prepare('SELECT role, banned FROM users WHERE id = ?').get(user.userId) as
-      | { role: string; banned: number }
-      | undefined;
+    const dbUser = await getDb().queryOne<{ role: string; banned: number }>('SELECT role, banned FROM users WHERE id = ?', [user.userId]);
     if (!dbUser || dbUser.banned) {
       socket.close(4003, 'Account banned');
       return;
@@ -427,19 +415,19 @@ export function setupWebSocket(app: FastifyInstance) {
     }
 
     // Read status preference, display name, and avatar from DB
-    const profileRow = db
-      .prepare('SELECT status_preference, display_name, avatar_url FROM users WHERE id = ?')
-      .get(user.userId) as
-      | { status_preference: string; display_name: string; avatar_url: string | null }
-      | undefined;
+    const profileRow = await getDb().queryOne<{ status_preference: string; display_name: string; avatar_url: string | null }>(
+      'SELECT status_preference, display_name, avatar_url FROM users WHERE id = ?',
+      [user.userId],
+    );
     // Treat 'idle' as 'online' on connect — idle is a transient auto state, not a preference
     const rawStatus = profileRow?.status_preference || 'online';
     const preferredStatus = (rawStatus === 'idle' ? 'online' : rawStatus) as UserStatus;
 
     // Fetch server memberships for this user
-    const serverRows = db.prepare(
-      'SELECT server_id FROM server_members WHERE user_id = ?'
-    ).all(user.userId) as { server_id: string }[];
+    const serverRows = await getDb().query<{ server_id: string }>(
+      'SELECT server_id FROM server_members WHERE user_id = ?',
+      [user.userId],
+    );
 
     clients.set(user.userId, {
       ws: socket,
@@ -460,7 +448,7 @@ export function setupWebSocket(app: FastifyInstance) {
           type: 'presence:update',
           userId: user.userId,
           username: user.username,
-          display_name: getDisplayName(user.userId),
+          display_name: await getDisplayName(user.userId),
           online: true,
           status: preferredStatus,
         },
@@ -471,12 +459,12 @@ export function setupWebSocket(app: FastifyInstance) {
     // Send current online users to the new client (with own status)
     sendTo(user.userId, {
       type: 'presence:list',
-      users: getOnlineUsers(),
+      users: await getOnlineUsers(),
       ownStatus: preferredStatus,
     });
 
     // Send current voice channel members to the new client
-    const channelMembers = getAllRoomMembers();
+    const channelMembers = await getAllRoomMembers();
     if (Object.keys(channelMembers).length > 0) {
       sendTo(user.userId, { type: 'voice:channelMembers', channels: channelMembers });
     }
@@ -487,7 +475,7 @@ export function setupWebSocket(app: FastifyInstance) {
     let lastBanCheck = Date.now();
     const eventRate: EventRateState = { counts: new Map(), windowStart: Date.now() };
 
-    socket.on('message', (raw: RawData) => {
+    socket.on('message', async (raw: RawData) => {
       try {
         // Check message size (#12)
         const rawBuf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw as ArrayBuffer);
@@ -515,9 +503,10 @@ export function setupWebSocket(app: FastifyInstance) {
         if (eventType === 'chat:send' || eventType === 'chat:edit') {
           if (!lastBanCheck || now - lastBanCheck > 30_000) {
             lastBanCheck = now;
-            const freshUser = db
-              .prepare('SELECT banned FROM users WHERE id = ?')
-              .get(user.userId) as { banned: number } | undefined;
+            const freshUser = await getDb().queryOne<{ banned: number }>(
+              'SELECT banned FROM users WHERE id = ?',
+              [user.userId],
+            );
             if (!freshUser || freshUser.banned) {
               socket.close(4003, 'Account banned');
               return;
@@ -539,7 +528,7 @@ export function setupWebSocket(app: FastifyInstance) {
           }
         }
 
-        handleMessage(user, data);
+        await handleMessage(user, data);
       } catch (err) {
         console.error('[WS] Error handling message from', user.userId, err);
         sendTo(user.userId, { type: 'error', message: 'Invalid message format' });
@@ -562,12 +551,14 @@ export function setupWebSocket(app: FastifyInstance) {
 
       // Don't broadcast offline if user was invisible
       if (!wasInvisible) {
-        broadcast({
-          type: 'presence:update',
-          userId: user.userId,
-          username: user.username,
-          display_name: getDisplayName(user.userId),
-          online: false,
+        getDisplayName(user.userId).then((displayName) => {
+          broadcast({
+            type: 'presence:update',
+            userId: user.userId,
+            username: user.username,
+            display_name: displayName,
+            online: false,
+          });
         });
       }
     });

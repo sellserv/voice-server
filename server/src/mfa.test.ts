@@ -1,29 +1,30 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createHash } from 'crypto';
+import { createHmac } from 'crypto';
 import Fastify from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import * as OTPAuth from 'otpauth';
-import { initSchema } from './db/schema.js';
 import authRoutes from './routes/auth.js';
 import mfaRoutes from './routes/mfa.js';
-import db from './db/connection.js';
+import { config } from './config.js';
+import { setupTestDb, getTestRawDb } from './test-helpers.js';
 
 function hashCode(code: string): string {
-  return createHash('sha256').update(code).digest('hex');
+  return createHmac('sha256', config.jwtSecret).update(code).digest('hex');
 }
 
 describe('MFA Integration (TOTP)', () => {
   const app = Fastify();
-  
+
   beforeAll(async () => {
+    await setupTestDb();
     await app.register(fastifyCookie);
     await app.register(authRoutes);
     await app.register(mfaRoutes);
-    initSchema();
-    db.exec('PRAGMA foreign_keys = OFF');
-    db.prepare('DELETE FROM users').run();
-    db.prepare('DELETE FROM auth_sessions').run();
-    db.exec('PRAGMA foreign_keys = ON');
+    const raw = getTestRawDb();
+    raw.exec('PRAGMA foreign_keys = OFF');
+    raw.prepare('DELETE FROM users').run();
+    raw.prepare('DELETE FROM auth_sessions').run();
+    raw.exec('PRAGMA foreign_keys = ON');
   });
 
   afterAll(async () => {
@@ -34,31 +35,34 @@ describe('MFA Integration (TOTP)', () => {
   let authCookies: Record<string, string>;
 
   it('should register and verify a user', async () => {
+    const raw = getTestRawDb();
     const regRes = await app.inject({
       method: 'POST',
       url: '/api/auth/register',
       payload: {
         username: 'mfauser',
-        password: 'Password12345678',
+        password: 'TestPassword123!',
         email: 'mfa@example.com',
       },
     });
     userId = JSON.parse(regRes.body).user_id;
-    db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(userId);
+    raw.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(userId);
   });
 
   it('should setup TOTP MFA', async () => {
+    const raw = getTestRawDb();
+
     // 1. Login to get initial session
     await app.inject({
       method: 'POST',
       url: '/api/auth/login',
-      payload: { username: 'mfauser', password: 'Password12345678' }
+      payload: { username: 'mfauser', password: 'TestPassword123!' }
     });
-    
+
     // 2. Overwrite email MFA code
     const testMfaCode = '111222';
-    db.prepare("UPDATE email_codes SET code = ? WHERE user_id = ? AND type = 'mfa'").run(hashCode(testMfaCode), userId);
-    
+    raw.prepare("UPDATE email_codes SET code = ? WHERE user_id = ? AND type = 'mfa'").run(hashCode(testMfaCode), userId);
+
     // 3. Verify email MFA
     const mfaRes = await app.inject({
       method: 'POST',
@@ -100,22 +104,24 @@ describe('MFA Integration (TOTP)', () => {
     expect(verifyRes.statusCode).toBe(200);
 
     // 7. Check user table for TOTP status
-    const user = db.prepare('SELECT totp_enabled, mfa_method FROM users WHERE id = ?').get(userId) as any;
+    const user = raw.prepare('SELECT totp_enabled, mfa_method FROM users WHERE id = ?').get(userId) as any;
     expect(user.totp_enabled).toBe(1);
     expect(user.mfa_method).toBe('totp');
   });
 
   it('should login with TOTP MFA', async () => {
+    const raw = getTestRawDb();
+
     // 1. Initial Login
     const loginRes = await app.inject({
       method: 'POST',
       url: '/api/auth/login',
-      payload: { username: 'mfauser', password: 'Password12345678' }
+      payload: { username: 'mfauser', password: 'TestPassword123!' }
     });
     expect(JSON.parse(loginRes.body).mfa_method).toBe('totp');
 
     // 2. Generate TOTP code
-    const user = db.prepare('SELECT totp_secret FROM users WHERE id = ?').get(userId) as any;
+    const user = raw.prepare('SELECT totp_secret FROM users WHERE id = ?').get(userId) as any;
     const totp = new OTPAuth.TOTP({
       secret: OTPAuth.Secret.fromBase32(user.totp_secret),
       algorithm: 'SHA1',

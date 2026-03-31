@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'crypto';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { requireAuth, requirePermission } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 import type { ChannelGroup, GroupPermissionOverride } from '@voip-server/shared';
@@ -17,11 +17,12 @@ function toChannelGroup(row: any): ChannelGroup {
   return { ...row, permissions_enabled: !!row.permissions_enabled };
 }
 
-function getGroupOverrides(groupId: string): GroupPermissionOverride[] {
-  const rows = db
-    .prepare('SELECT * FROM group_permission_overrides WHERE group_id = ?')
-    .all(groupId) as any[];
-  return rows.map((row) => ({
+async function getGroupOverrides(groupId: string): Promise<GroupPermissionOverride[]> {
+  const rows = await getDb().query(
+    'SELECT * FROM group_permission_overrides WHERE group_id = ?',
+    [groupId],
+  );
+  return rows.map((row: any) => ({
     id: row.id,
     group_id: row.group_id,
     target_type: row.target_type,
@@ -39,12 +40,12 @@ function getGroupOverrides(groupId: string): GroupPermissionOverride[] {
   }));
 }
 
-function getChannelsInGroup(groupId: string): { id: string }[] {
-  return db.prepare('SELECT id FROM channels WHERE group_id = ?').all(groupId) as { id: string }[];
+async function getChannelsInGroup(groupId: string): Promise<{ id: string }[]> {
+  return await getDb().query<{ id: string }>('SELECT id FROM channels WHERE group_id = ?', [groupId]);
 }
 
-function invalidateGroupChannelCaches(groupId: string) {
-  const channels = getChannelsInGroup(groupId);
+async function invalidateGroupChannelCaches(groupId: string) {
+  const channels = await getChannelsInGroup(groupId);
   for (const ch of channels) {
     invalidateChannelCache(ch.id);
     invalidateChannelAccessCache(ch.id);
@@ -55,7 +56,7 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
   // List all channel groups (auth only) — server-scoped
   app.get('/api/servers/:serverId/channel-groups', { preHandler: [requireAuth, requireServerMember] }, async (request) => {
     const serverId = getServerId(request);
-    const rows = db.prepare('SELECT * FROM channel_groups WHERE server_id = ? ORDER BY sort_order, created_at').all(serverId);
+    const rows = await getDb().query('SELECT * FROM channel_groups WHERE server_id = ? ORDER BY sort_order, created_at', [serverId]);
     return rows.map(toChannelGroup);
   });
 
@@ -71,19 +72,18 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Group name must be 1-32 characters' });
       }
 
-      const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM channel_groups WHERE server_id = ?').get(serverId) as {
-        m: number | null;
-      };
+      const maxOrder = await getDb().queryOne<{ m: number | null }>('SELECT MAX(sort_order) as m FROM channel_groups WHERE server_id = ?', [serverId]);
       const id = randomUUID();
 
-      db.prepare('INSERT INTO channel_groups (id, name, sort_order, server_id) VALUES (?, ?, ?, ?)').run(
+      await getDb().run('INSERT INTO channel_groups (id, name, sort_order, server_id) VALUES (?, ?, ?, ?)', [
         id,
         name.trim(),
-        (maxOrder.m ?? -1) + 1,
+        (maxOrder?.m ?? -1) + 1,
         serverId,
-      );
+      ]);
 
-      const group = toChannelGroup(db.prepare('SELECT * FROM channel_groups WHERE id = ?').get(id));
+      const raw = await getDb().queryOne('SELECT * FROM channel_groups WHERE id = ?', [id]);
+      const group = toChannelGroup(raw);
       broadcastToServer(serverId, { type: 'channelGroup:created', group, serverId });
 
       reply.code(201);
@@ -107,36 +107,36 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Group name must be 1-32 characters' });
       }
 
-      const existing = db.prepare('SELECT * FROM channel_groups WHERE id = ? AND server_id = ?').get(id, serverId);
+      const existing = await getDb().queryOne('SELECT * FROM channel_groups WHERE id = ? AND server_id = ?', [id, serverId]);
       if (!existing) {
         return reply.code(404).send({ error: 'Channel group not found' });
       }
 
       if (name !== undefined) {
-        db.prepare('UPDATE channel_groups SET name = ? WHERE id = ? AND server_id = ?').run(name.trim(), id, serverId);
+        await getDb().run('UPDATE channel_groups SET name = ? WHERE id = ? AND server_id = ?', [name.trim(), id, serverId]);
       }
 
       if (permissions_enabled !== undefined) {
-        db.prepare('UPDATE channel_groups SET permissions_enabled = ? WHERE id = ? AND server_id = ?').run(
+        await getDb().run('UPDATE channel_groups SET permissions_enabled = ? WHERE id = ? AND server_id = ?', [
           permissions_enabled ? 1 : 0,
           id,
           serverId,
-        );
+        ]);
 
         // Invalidate caches for all channels in the group since permission resolution changed
-        invalidateGroupChannelCaches(id);
+        await invalidateGroupChannelCaches(id);
 
         // Broadcast access changes for all channels in the group
-        const groupChannels = getChannelsInGroup(id);
+        const groupChannels = await getChannelsInGroup(id);
         for (const ch of groupChannels) {
-          const afterUsers = getUsersWithChannelAccess(ch.id);
+          const afterUsers = await getUsersWithChannelAccess(ch.id);
           const afterSet = afterUsers.length > 0 ? new Set(afterUsers) : null;
-          const channelData = db.prepare('SELECT * FROM channels WHERE id = ?').get(ch.id) as any;
-          broadcastChannelAccessChange(ch.id, null, afterSet, channelData);
+          const channelData = await getDb().queryOne('SELECT * FROM channels WHERE id = ?', [ch.id]);
+          await broadcastChannelAccessChange(ch.id, null, afterSet, channelData);
         }
       }
 
-      const raw = db.prepare('SELECT * FROM channel_groups WHERE id = ?').get(id) as any;
+      const raw = await getDb().queryOne('SELECT * FROM channel_groups WHERE id = ?', [id]) as any;
       const group: ChannelGroup = { ...raw, permissions_enabled: !!raw.permissions_enabled };
       broadcastToServer(serverId, { type: 'channelGroup:updated', group, serverId });
 
@@ -152,12 +152,12 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
       const serverId = getServerId(request);
       const { id } = request.params;
 
-      const existing = db.prepare('SELECT * FROM channel_groups WHERE id = ? AND server_id = ?').get(id, serverId);
+      const existing = await getDb().queryOne('SELECT * FROM channel_groups WHERE id = ? AND server_id = ?', [id, serverId]);
       if (!existing) {
         return reply.code(404).send({ error: 'Channel group not found' });
       }
 
-      db.prepare('DELETE FROM channel_groups WHERE id = ? AND server_id = ?').run(id, serverId);
+      await getDb().run('DELETE FROM channel_groups WHERE id = ? AND server_id = ?', [id, serverId]);
       broadcastToServer(serverId, { type: 'channelGroup:deleted', groupId: id, serverId });
 
       return { ok: true };
@@ -175,11 +175,11 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'order must be an array of group IDs' });
       }
 
-      const update = db.prepare('UPDATE channel_groups SET sort_order = ? WHERE id = ? AND server_id = ?');
-      const txn = db.transaction(() => {
-        order.forEach((id, i) => update.run(i, id, serverId));
+      await getDb().transaction(async (tx) => {
+        for (let i = 0; i < order.length; i++) {
+          await tx.run('UPDATE channel_groups SET sort_order = ? WHERE id = ? AND server_id = ?', [i, order[i], serverId]);
+        }
       });
-      txn();
 
       broadcastToServer(serverId, { type: 'channelGroups:reordered', order, serverId });
 
@@ -196,11 +196,11 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const serverId = getServerId(request);
       const { id } = request.params;
-      const group = db.prepare('SELECT id FROM channel_groups WHERE id = ? AND server_id = ?').get(id, serverId);
+      const group = await getDb().queryOne('SELECT id FROM channel_groups WHERE id = ? AND server_id = ?', [id, serverId]);
       if (!group) {
         return reply.code(404).send({ error: 'Channel group not found' });
       }
-      return getGroupOverrides(id);
+      return await getGroupOverrides(id);
     },
   );
 
@@ -229,25 +229,25 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'target_type must be "role" or "user"' });
       }
 
-      const group = db.prepare('SELECT id FROM channel_groups WHERE id = ? AND server_id = ?').get(id, serverId);
+      const group = await getDb().queryOne('SELECT id FROM channel_groups WHERE id = ? AND server_id = ?', [id, serverId]);
       if (!group) {
         return reply.code(404).send({ error: 'Channel group not found' });
       }
 
       // Validate target exists
       if (target_type === 'role') {
-        const role = db.prepare('SELECT id FROM roles WHERE id = ?').get(target_id);
+        const role = await getDb().queryOne('SELECT id FROM roles WHERE id = ?', [target_id]);
         if (!role) return reply.code(400).send({ error: 'Role not found' });
       } else {
-        const user = db.prepare('SELECT id FROM users WHERE id = ?').get(target_id);
+        const user = await getDb().queryOne('SELECT id FROM users WHERE id = ?', [target_id]);
         if (!user) return reply.code(400).send({ error: 'User not found' });
       }
 
       // Compute "before" access for all channels in this group
-      const groupChannels = getChannelsInGroup(id);
+      const groupChannels = await getChannelsInGroup(id);
       const beforeSets = new Map<string, Set<string> | null>();
       for (const ch of groupChannels) {
-        const users = getUsersWithChannelAccess(ch.id);
+        const users = await getUsersWithChannelAccess(ch.id);
         beforeSets.set(ch.id, users.length > 0 ? new Set(users) : null);
       }
 
@@ -265,11 +265,10 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
       ] as const;
 
       // Check if override already exists
-      const existing = db
-        .prepare(
-          'SELECT id FROM group_permission_overrides WHERE group_id = ? AND target_type = ? AND target_id = ?',
-        )
-        .get(id, target_type, target_id) as { id: string } | undefined;
+      const existing = await getDb().queryOne<{ id: string }>(
+        'SELECT id FROM group_permission_overrides WHERE group_id = ? AND target_type = ? AND target_id = ?',
+        [id, target_type, target_id],
+      );
 
       if (existing) {
         const sets: string[] = [];
@@ -283,9 +282,7 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
         }
         if (sets.length > 0) {
           values.push(existing.id as any);
-          db.prepare(`UPDATE group_permission_overrides SET ${sets.join(', ')} WHERE id = ?`).run(
-            ...values,
-          );
+          await getDb().run(`UPDATE group_permission_overrides SET ${sets.join(', ')} WHERE id = ?`, values);
         }
       } else {
         const overrideId = randomUUID();
@@ -299,32 +296,33 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
         }
 
         const placeholders = cols.map(() => '?').join(', ');
-        db.prepare(
+        await getDb().run(
           `INSERT INTO group_permission_overrides (${cols.join(', ')}) VALUES (${placeholders})`,
-        ).run(...vals);
+          vals,
+        );
       }
 
       // Invalidate caches for all channels in the group
-      invalidateGroupChannelCaches(id);
+      await invalidateGroupChannelCaches(id);
 
       // If view_channel was affected, broadcast access changes for all channels in the group
       if ('view_channel' in permissions) {
         for (const ch of groupChannels) {
-          const afterUsers = getUsersWithChannelAccess(ch.id);
+          const afterUsers = await getUsersWithChannelAccess(ch.id);
           const afterSet = afterUsers.length > 0 ? new Set(afterUsers) : null;
-          const channelData = db.prepare('SELECT * FROM channels WHERE id = ?').get(ch.id) as any;
-          broadcastChannelAccessChange(ch.id, beforeSets.get(ch.id) ?? null, afterSet, channelData);
+          const channelData = await getDb().queryOne('SELECT * FROM channels WHERE id = ?', [ch.id]);
+          await broadcastChannelAccessChange(ch.id, beforeSets.get(ch.id) ?? null, afterSet, channelData);
         }
       }
 
-      logAuditEvent('permission_change', request.user.userId, id, request.ip, {
+      await logAuditEvent('permission_change', request.user.userId, id, request.ip, {
         action: 'set_group',
         targetType: target_type,
         targetId: target_id,
       });
 
       // Broadcast group overrides update
-      const overrides = getGroupOverrides(id);
+      const overrides = await getGroupOverrides(id);
       broadcastToServer(serverId, { type: 'groupOverrides:updated', groupId: id, overrides });
 
       return overrides;
@@ -343,42 +341,43 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'targetType must be "role" or "user"' });
       }
 
-      const group = db.prepare('SELECT id FROM channel_groups WHERE id = ? AND server_id = ?').get(id, serverId);
+      const group = await getDb().queryOne('SELECT id FROM channel_groups WHERE id = ? AND server_id = ?', [id, serverId]);
       if (!group) {
         return reply.code(404).send({ error: 'Channel group not found' });
       }
 
       // Compute "before" access for all channels in this group
-      const groupChannels = getChannelsInGroup(id);
+      const groupChannels = await getChannelsInGroup(id);
       const beforeSets = new Map<string, Set<string> | null>();
       for (const ch of groupChannels) {
-        const users = getUsersWithChannelAccess(ch.id);
+        const users = await getUsersWithChannelAccess(ch.id);
         beforeSets.set(ch.id, users.length > 0 ? new Set(users) : null);
       }
 
-      db.prepare(
+      await getDb().run(
         'DELETE FROM group_permission_overrides WHERE group_id = ? AND target_type = ? AND target_id = ?',
-      ).run(id, targetType, targetId);
+        [id, targetType, targetId],
+      );
 
       // Invalidate caches for all channels in the group
-      invalidateGroupChannelCaches(id);
+      await invalidateGroupChannelCaches(id);
 
       // Broadcast access changes for all channels in the group
       for (const ch of groupChannels) {
-        const afterUsers = getUsersWithChannelAccess(ch.id);
+        const afterUsers = await getUsersWithChannelAccess(ch.id);
         const afterSet = afterUsers.length > 0 ? new Set(afterUsers) : null;
-        const channelData = db.prepare('SELECT * FROM channels WHERE id = ?').get(ch.id) as any;
-        broadcastChannelAccessChange(ch.id, beforeSets.get(ch.id) ?? null, afterSet, channelData);
+        const channelData = await getDb().queryOne('SELECT * FROM channels WHERE id = ?', [ch.id]);
+        await broadcastChannelAccessChange(ch.id, beforeSets.get(ch.id) ?? null, afterSet, channelData);
       }
 
-      logAuditEvent('permission_change', request.user.userId, id, request.ip, {
+      await logAuditEvent('permission_change', request.user.userId, id, request.ip, {
         action: 'delete_group',
         targetType,
         targetId,
       });
 
       // Broadcast group overrides update
-      const overrides = getGroupOverrides(id);
+      const overrides = await getGroupOverrides(id);
       broadcastToServer(serverId, { type: 'groupOverrides:updated', groupId: id, overrides });
 
       return { ok: true };
@@ -390,41 +389,40 @@ export default async function channelGroupRoutes(app: FastifyInstance) {
     const serverId = getServerId(request);
     const userId = request.user.userId;
     const canManage =
-      hasPermission(userId, 'manage_channels_groups') || hasPermission(userId, 'administrator');
+      await hasPermission(userId, 'manage_channels_groups') || await hasPermission(userId, 'administrator');
 
     let rows: any[];
     if (canManage) {
-      rows = db.prepare(
+      rows = await getDb().query(
         `SELECT gpo.* FROM group_permission_overrides gpo
          JOIN channel_groups cg ON cg.id = gpo.group_id
-         WHERE cg.server_id = ?`
-      ).all(serverId) as any[];
+         WHERE cg.server_id = ?`,
+        [serverId],
+      );
     } else {
-      const roleIds = getUserRoleIds(userId);
+      const roleIds = await getUserRoleIds(userId);
       if (roleIds.length > 0) {
         const placeholders = roleIds.map(() => '?').join(',');
-        rows = db
-          .prepare(
-            `SELECT gpo.* FROM group_permission_overrides gpo
+        rows = await getDb().query(
+          `SELECT gpo.* FROM group_permission_overrides gpo
              JOIN channel_groups cg ON cg.id = gpo.group_id
              WHERE cg.server_id = ?
                AND ((gpo.target_type = 'user' AND gpo.target_id = ?)
                  OR (gpo.target_type = 'role' AND gpo.target_id IN (${placeholders})))`,
-          )
-          .all(serverId, userId, ...roleIds) as any[];
+          [serverId, userId, ...roleIds],
+        );
       } else {
-        rows = db
-          .prepare(
-            `SELECT gpo.* FROM group_permission_overrides gpo
+        rows = await getDb().query(
+          `SELECT gpo.* FROM group_permission_overrides gpo
              JOIN channel_groups cg ON cg.id = gpo.group_id
              WHERE cg.server_id = ?
                AND gpo.target_type = 'user' AND gpo.target_id = ?`,
-          )
-          .all(serverId, userId) as any[];
+          [serverId, userId],
+        );
       }
     }
 
-    return rows.map((row) => ({
+    return rows.map((row: any) => ({
       id: row.id,
       group_id: row.group_id,
       target_type: row.target_type,

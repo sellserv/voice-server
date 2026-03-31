@@ -1,6 +1,6 @@
 import admin from 'firebase-admin';
 import { config } from '../config.js';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { createPendingNotification, cleanExpiredNotifications } from './pending.js';
 
 let firebaseApp: admin.app.App | null = null;
@@ -33,13 +33,14 @@ export async function sendDataPush(
   const fb = getFirebase();
   if (!fb) return;
 
-  const tokens = db
-    .prepare('SELECT token FROM device_tokens WHERE user_id = ?')
-    .all(userId) as { token: string }[];
+  const tokens = await getDb().query<{ token: string }>(
+    'SELECT token FROM device_tokens WHERE user_id = ?',
+    [userId],
+  );
 
   if (tokens.length === 0) return;
 
-  const notificationId = createPendingNotification(userId, type, data);
+  const notificationId = await createPendingNotification(userId, type, data);
 
   const messaging = fb.messaging();
   const results = await Promise.allSettled(
@@ -63,9 +64,9 @@ export async function sendDataPush(
         err?.code === 'messaging/registration-token-not-registered' ||
         err?.code === 'messaging/invalid-registration-token'
       ) {
-        db.prepare('DELETE FROM device_tokens WHERE token = ?').run(
+        await getDb().run('DELETE FROM device_tokens WHERE token = ?', [
           tokens[i].token,
-        );
+        ]);
       }
     }
   }
@@ -79,7 +80,11 @@ let cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
 export function startPendingCleanup(): void {
   if (cleanupInterval) return;
-  cleanupInterval = setInterval(cleanExpiredNotifications, 60_000);
+  cleanupInterval = setInterval(() => {
+    cleanExpiredNotifications().catch((err) =>
+      console.error('Failed to clean expired notifications:', err),
+    );
+  }, 60_000);
 }
 
 export function stopPendingCleanup(): void {
@@ -87,5 +92,7 @@ export function stopPendingCleanup(): void {
     clearInterval(cleanupInterval);
     cleanupInterval = null;
   }
-  cleanExpiredNotifications();
+  cleanExpiredNotifications().catch((err) =>
+    console.error('Failed to clean expired notifications:', err),
+  );
 }

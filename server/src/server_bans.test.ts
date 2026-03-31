@@ -1,34 +1,35 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createHash } from 'crypto';
+import { createHmac } from 'crypto';
 import Fastify from 'fastify';
 import fastifyCookie from '@fastify/cookie';
-import { initSchema } from './db/schema.js';
 import authRoutes from './routes/auth.js';
 import serverRoutes from './routes/servers.ts';
 import adminRoutes from './routes/admin.js';
-import db from './db/connection.js';
+import { config } from './config.js';
+import { setupTestDb, getTestRawDb } from './test-helpers.js';
 
 function hashCode(code: string): string {
-  return createHash('sha256').update(code).digest('hex');
+  return createHmac('sha256', config.jwtSecret).update(code).digest('hex');
 }
 
 describe('Server-Scoped Bans Integration', () => {
   const app = Fastify();
-  
+
   beforeAll(async () => {
+    await setupTestDb();
     await app.register(fastifyCookie);
     await app.register(authRoutes);
     await app.register(serverRoutes);
     await app.register(adminRoutes);
     console.log('DEBUG: Registered routes:');
     console.log(app.printRoutes());
-    initSchema();
-    db.exec('PRAGMA foreign_keys = OFF');
-    db.prepare('DELETE FROM users').run();
-    db.prepare('DELETE FROM servers').run();
-    db.prepare('DELETE FROM auth_sessions').run();
-    db.prepare('DELETE FROM server_bans').run();
-    db.exec('PRAGMA foreign_keys = ON');
+    const raw = getTestRawDb();
+    raw.exec('PRAGMA foreign_keys = OFF');
+    raw.prepare('DELETE FROM users').run();
+    raw.prepare('DELETE FROM servers').run();
+    raw.prepare('DELETE FROM auth_sessions').run();
+    raw.prepare('DELETE FROM server_bans').run();
+    raw.exec('PRAGMA foreign_keys = ON');
   });
 
   afterAll(async () => {
@@ -43,24 +44,26 @@ describe('Server-Scoped Bans Integration', () => {
   let serverId: string;
 
   it('should setup users and a server', async () => {
+    const raw = getTestRawDb();
+
     // 1. Create admin
     const regAdmin = await app.inject({
       method: 'POST',
       url: '/api/auth/register',
-      payload: { username: 'admin_user', password: 'Password12345678', email: 'admin@example.com' }
+      payload: { username: 'admin_user', password: 'TestPassword123!', email: 'admin@example.com' }
     });
     const adminId = JSON.parse(regAdmin.body).user_id;
-    db.prepare("UPDATE users SET email_verified = 1, role = 'admin' WHERE id = ?").run(adminId);
+    raw.prepare("UPDATE users SET email_verified = 1, role = 'admin' WHERE id = ?").run(adminId);
 
     const loginAdmin = await app.inject({
       method: 'POST',
       url: '/api/auth/login',
-      payload: { username: 'admin_user', password: 'Password12345678' }
+      payload: { username: 'admin_user', password: 'TestPassword123!' }
     });
-    
+
     // Admin needs to finish MFA to get CSRF from body
     const adminMfaCode = '111222';
-    db.prepare("UPDATE email_codes SET code = ? WHERE user_id = ? AND type = 'mfa'").run(hashCode(adminMfaCode), adminId);
+    raw.prepare("UPDATE email_codes SET code = ? WHERE user_id = ? AND type = 'mfa'").run(hashCode(adminMfaCode), adminId);
     const adminMfaRes = await app.inject({
       method: 'POST',
       url: '/api/auth/login/mfa',
@@ -74,19 +77,19 @@ describe('Server-Scoped Bans Integration', () => {
     const regUser = await app.inject({
       method: 'POST',
       url: '/api/auth/register',
-      payload: { username: 'target_user', password: 'Password12345678', email: 'target@example.com' }
+      payload: { username: 'target_user', password: 'TestPassword123!', email: 'target@example.com' }
     });
     userId = JSON.parse(regUser.body).user_id;
-    db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(userId);
+    raw.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(userId);
 
     const loginUser = await app.inject({
       method: 'POST',
       url: '/api/auth/login',
-      payload: { username: 'target_user', password: 'Password12345678' }
+      payload: { username: 'target_user', password: 'TestPassword123!' }
     });
-    
+
     const userMfaCode = '333444';
-    db.prepare("UPDATE email_codes SET code = ? WHERE user_id = ? AND type = 'mfa'").run(hashCode(userMfaCode), userId);
+    raw.prepare("UPDATE email_codes SET code = ? WHERE user_id = ? AND type = 'mfa'").run(hashCode(userMfaCode), userId);
     const userMfaRes = await app.inject({
       method: 'POST',
       url: '/api/auth/login/mfa',
@@ -108,6 +111,7 @@ describe('Server-Scoped Bans Integration', () => {
   });
 
   it('should ban a user and prevent them from joining via invite', async () => {
+    const raw = getTestRawDb();
     const adminCsrf = adminCookies.csrfToken;
     const userCsrf = userCookies.csrfToken;
 
@@ -123,7 +127,7 @@ describe('Server-Scoped Bans Integration', () => {
     expect(banRes.statusCode).toBe(200);
 
     // Verify in DB
-    const ban = db.prepare('SELECT * FROM server_bans WHERE server_id = ? AND user_id = ?').get(serverId, userId);
+    const ban = raw.prepare('SELECT * FROM server_bans WHERE server_id = ? AND user_id = ?').get(serverId, userId);
     expect(ban).toBeDefined();
 
     // 2. Create invite code

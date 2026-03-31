@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { validateEmailCode, createEmailCode } from '../email/codes.js';
 import { sendEmail } from '../email/sender.js';
 import { verificationEmail, mfaEmail } from '../email/templates.js';
@@ -45,7 +45,7 @@ export default async function emailRoutes(app: FastifyInstance) {
         return reply.code(429).send({ error: 'Too many failed attempts. Try again later.' });
       }
 
-      const valid = validateEmailCode(user_id, code, 'verification');
+      const valid = await validateEmailCode(user_id, code, 'verification');
       if (!valid) {
         // Track failed attempt
         const existing = verifyAttempts.get(user_id);
@@ -60,7 +60,7 @@ export default async function emailRoutes(app: FastifyInstance) {
       // Clear attempts on success
       verifyAttempts.delete(user_id);
 
-      db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(user_id);
+      await getDb().run('UPDATE users SET email_verified = 1 WHERE id = ?', [user_id]);
 
       return { ok: true };
     },
@@ -78,12 +78,13 @@ export default async function emailRoutes(app: FastifyInstance) {
       }
 
       // Always return ok to avoid leaking whether user_id is valid
-      const user = db
-        .prepare('SELECT email, email_verified FROM users WHERE id = ?')
-        .get(user_id) as any;
+      const user = await getDb().queryOne<{ email: string; email_verified: number }>(
+        'SELECT email, email_verified FROM users WHERE id = ?',
+        [user_id],
+      );
       if (user?.email && !user.email_verified) {
-        const code = createEmailCode(user_id, 'verification');
-        const template = verificationEmail(code);
+        const code = await createEmailCode(user_id, 'verification');
+        const template = await verificationEmail(code);
         await sendEmail(user.email, template.subject, template.html);
       }
 
@@ -103,12 +104,13 @@ export default async function emailRoutes(app: FastifyInstance) {
       }
 
       // Always return ok to avoid leaking whether user_id is valid
-      const user = db
-        .prepare('SELECT email, email_verified FROM users WHERE id = ?')
-        .get(user_id) as any;
+      const user = await getDb().queryOne<{ email: string; email_verified: number }>(
+        'SELECT email, email_verified FROM users WHERE id = ?',
+        [user_id],
+      );
       if (user?.email && user.email_verified) {
-        const code = createEmailCode(user_id, 'mfa');
-        const template = mfaEmail(code);
+        const code = await createEmailCode(user_id, 'mfa');
+        const template = await mfaEmail(code);
         await sendEmail(user.email, template.subject, template.html);
       }
 

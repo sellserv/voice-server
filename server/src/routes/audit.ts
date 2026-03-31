@@ -15,7 +15,7 @@ export default async function auditRoutes(app: FastifyInstance) {
         event_type?: string;
         user_id?: string;
       };
-      return getAuditLog({
+      return await getAuditLog({
         page: page ? parseInt(page) : undefined,
         limit: limit ? Math.min(parseInt(limit), 100) : undefined,
         eventType: event_type,

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import db from '../db/connection.js';
+import { getDb } from '../adapters/index.js';
 import { requireAuth } from '../auth/middleware.js';
 import { requireServerMember, getServerId } from '../auth/serverMiddleware.js';
 
@@ -21,21 +21,21 @@ export default async function channelNotificationRoutes(app: FastifyInstance) {
       }
 
       const serverId = getServerId(request);
-      const channel = db.prepare('SELECT id FROM channels WHERE id = ? AND server_id = ?').get(channelId, serverId);
+      const channel = await getDb().queryOne('SELECT id FROM channels WHERE id = ? AND server_id = ?', [channelId, serverId]);
       if (!channel) {
         return reply.code(404).send({ error: 'Channel not found' });
       }
 
-      db.prepare(`
+      await getDb().run(`
         INSERT INTO channel_notification_overrides (user_id, channel_id, level, muted_until)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(user_id, channel_id) DO UPDATE SET
           level = COALESCE(?, level),
           muted_until = ?
-      `).run(
+      `, [
         userId, channelId, level || 'default', muted_until || null,
         level, muted_until !== undefined ? muted_until : null,
-      );
+      ]);
 
       return { ok: true };
     },
@@ -48,7 +48,7 @@ export default async function channelNotificationRoutes(app: FastifyInstance) {
     async (request) => {
       const userId = request.user.userId;
       const { channelId } = request.params;
-      db.prepare('DELETE FROM channel_notification_overrides WHERE user_id = ? AND channel_id = ?').run(userId, channelId);
+      await getDb().run('DELETE FROM channel_notification_overrides WHERE user_id = ? AND channel_id = ?', [userId, channelId]);
       return { ok: true };
     },
   );
@@ -62,18 +62,19 @@ export default async function channelNotificationRoutes(app: FastifyInstance) {
       const { channelId } = request.params;
       const { muted_until } = request.body;
 
-      const dm = db.prepare(
+      const dm = await getDb().queryOne(
         "SELECT c.id FROM channels c JOIN dm_participants dp ON dp.channel_id = c.id WHERE c.id = ? AND c.type = 'dm' AND dp.user_id = ?",
-      ).get(channelId, userId);
+        [channelId, userId],
+      );
       if (!dm) {
         return reply.code(404).send({ error: 'DM channel not found' });
       }
 
-      db.prepare(`
+      await getDb().run(`
         INSERT INTO dm_notification_overrides (user_id, channel_id, muted_until)
         VALUES (?, ?, ?)
         ON CONFLICT(user_id, channel_id) DO UPDATE SET muted_until = ?
-      `).run(userId, channelId, muted_until, muted_until);
+      `, [userId, channelId, muted_until, muted_until]);
 
       return { ok: true };
     },
@@ -86,7 +87,7 @@ export default async function channelNotificationRoutes(app: FastifyInstance) {
     async (request) => {
       const userId = request.user.userId;
       const { channelId } = request.params;
-      db.prepare('DELETE FROM dm_notification_overrides WHERE user_id = ? AND channel_id = ?').run(userId, channelId);
+      await getDb().run('DELETE FROM dm_notification_overrides WHERE user_id = ? AND channel_id = ?', [userId, channelId]);
       return { ok: true };
     },
   );
@@ -99,12 +100,12 @@ export default async function channelNotificationRoutes(app: FastifyInstance) {
       const userId = request.user.userId;
       const serverId = getServerId(request);
 
-      const overrides = db.prepare(`
+      const overrides = await getDb().query<{ channel_id: string; level: string; muted_until: string | null }>(`
         SELECT cno.channel_id, cno.level, cno.muted_until
         FROM channel_notification_overrides cno
         JOIN channels c ON c.id = cno.channel_id
         WHERE cno.user_id = ? AND c.server_id = ?
-      `).all(userId, serverId) as { channel_id: string; level: string; muted_until: string | null }[];
+      `, [userId, serverId]);
 
       return overrides;
     },

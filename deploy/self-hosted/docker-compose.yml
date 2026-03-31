@@ -1,0 +1,16 @@
+services:
+  sellserv:
+    image: ghcr.io/sellserv/voice-server:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "40000-40100:40000-40100/udp"
+    volumes:
+      - data:/app/data
+      - uploads:/app/uploads
+    env_file:
+      - .env
+
+volumes:
+  data:
+  uploads:

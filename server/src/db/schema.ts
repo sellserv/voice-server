@@ -1,5 +1,8 @@
-import db from './connection.js';
+import { getDb } from '../adapters/index.js';
 import { randomUUID } from 'crypto';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+import { config } from '../config.js';
 import { migrateDeviceTokens } from './migrations/device_tokens.js';
 
 const ALL_PERMISSIONS = JSON.stringify({
@@ -83,8 +86,17 @@ const BOT_PERMISSIONS = JSON.stringify({
   manage_server: false,
 });
 
-export function initSchema() {
-  db.exec(`
+export async function initSchema() {
+  if (config.dbType === 'postgres') {
+    const schemaPath = resolve(import.meta.dirname, 'schema.postgres.sql');
+    const sql = readFileSync(schemaPath, 'utf-8');
+    await getDb().exec(sql);
+    return;
+  }
+
+  const db = getDb();
+
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       username TEXT UNIQUE NOT NULL,
@@ -168,38 +180,38 @@ export function initSchema() {
 
   // Migrate: add TOTP columns to users table
   try {
-    db.exec('ALTER TABLE users ADD COLUMN totp_secret TEXT');
+    await db.exec('ALTER TABLE users ADD COLUMN totp_secret TEXT');
   } catch {}
   try {
-    db.exec('ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0');
+    await db.exec('ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0');
   } catch {}
 
   // Migrate: add password_changed_at column
   try {
-    db.exec('ALTER TABLE users ADD COLUMN password_changed_at TEXT');
+    await db.exec('ALTER TABLE users ADD COLUMN password_changed_at TEXT');
   } catch {}
 
   // Migrate: add account lockout columns
   try {
-    db.exec('ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0');
+    await db.exec('ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0');
   } catch {}
   try {
-    db.exec('ALTER TABLE users ADD COLUMN locked_at TEXT');
+    await db.exec('ALTER TABLE users ADD COLUMN locked_at TEXT');
   } catch {}
 
   // Migrate: add email columns
   try {
-    db.exec('ALTER TABLE users ADD COLUMN email TEXT');
+    await db.exec('ALTER TABLE users ADD COLUMN email TEXT');
   } catch {}
   try {
-    db.exec('ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0');
+    await db.exec('ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0');
   } catch {}
   try {
-    db.exec("ALTER TABLE users ADD COLUMN mfa_method TEXT NOT NULL DEFAULT 'email'");
+    await db.exec("ALTER TABLE users ADD COLUMN mfa_method TEXT NOT NULL DEFAULT 'email'");
   } catch {}
 
   // Create email_codes table
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS email_codes (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -214,14 +226,14 @@ export function initSchema() {
 
   // Unique index on email (partial — only non-null)
   try {
-    db.exec(
+    await db.exec(
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL',
     );
   } catch {}
 
   // ─── New tables: server_settings, roles, soundboard_sounds, custom_emojis ───
 
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS server_settings (
       id INTEGER PRIMARY KEY CHECK(id = 1),
       name TEXT NOT NULL DEFAULT 'SellServ Voice',
@@ -248,47 +260,47 @@ export function initSchema() {
 
   // Migrate: add welcome_channel_id to server_settings
   try {
-    db.exec('ALTER TABLE server_settings ADD COLUMN welcome_channel_id TEXT');
+    await db.exec('ALTER TABLE server_settings ADD COLUMN welcome_channel_id TEXT');
   } catch {}
 
   // Migrate: add enabled_apps column to server_settings (JSON array of enabled app ids)
   try {
-    db.exec("ALTER TABLE server_settings ADD COLUMN enabled_apps TEXT NOT NULL DEFAULT '[]'");
+    await db.exec("ALTER TABLE server_settings ADD COLUMN enabled_apps TEXT NOT NULL DEFAULT '[]'");
   } catch {}
 
   // Migrate: add bio and banner_url columns
   try {
-    db.exec("ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''");
+    await db.exec("ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''");
   } catch {}
   try {
-    db.exec('ALTER TABLE users ADD COLUMN banner_url TEXT');
+    await db.exec('ALTER TABLE users ADD COLUMN banner_url TEXT');
   } catch {}
 
   // Migrate: add role_id column to users
   try {
-    db.exec('ALTER TABLE users ADD COLUMN role_id TEXT');
+    await db.exec('ALTER TABLE users ADD COLUMN role_id TEXT');
   } catch {}
 
   // Migrate: add status_preference column to users
   try {
-    db.exec("ALTER TABLE users ADD COLUMN status_preference TEXT NOT NULL DEFAULT 'online'");
+    await db.exec("ALTER TABLE users ADD COLUMN status_preference TEXT NOT NULL DEFAULT 'online'");
   } catch {}
 
   // Migrate: add topic column to channels
   try {
-    db.exec('ALTER TABLE channels ADD COLUMN topic TEXT');
+    await db.exec('ALTER TABLE channels ADD COLUMN topic TEXT');
   } catch {}
 
   // Migrate: update channels CHECK constraint to allow 'dm' type
   // SQLite can't ALTER CHECK constraints, so we recreate the table
   {
-    const tableInfo = db
-      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='channels'")
-      .get() as { sql: string } | undefined;
+    const tableInfo = await db.queryOne<{ sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='channels'",
+    );
     if (tableInfo && !tableInfo.sql.includes("'dm'")) {
-      db.pragma('foreign_keys = OFF');
+      await db.exec('PRAGMA foreign_keys = OFF');
       try {
-        db.exec(`CREATE TABLE channels_new (
+        await db.exec(`CREATE TABLE channels_new (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           type TEXT NOT NULL CHECK(type IN ('text', 'voice', 'dm')),
@@ -296,27 +308,27 @@ export function initSchema() {
           topic TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )`);
-        db.exec(
+        await db.exec(
           `INSERT INTO channels_new SELECT id, name, type, sort_order, topic, created_at FROM channels`,
         );
-        db.exec(`DROP TABLE channels`);
-        db.exec(`ALTER TABLE channels_new RENAME TO channels`);
-        db.exec(
+        await db.exec(`DROP TABLE channels`);
+        await db.exec(`ALTER TABLE channels_new RENAME TO channels`);
+        await db.exec(
           `CREATE INDEX IF NOT EXISTS idx_messages_channel_time ON messages(channel_id, created_at)`,
         );
       } catch (err) {
         console.error('Failed to migrate channels table for DM support:', err);
         // Clean up partial migration
         try {
-          db.exec('DROP TABLE IF EXISTS channels_new');
+          await db.exec('DROP TABLE IF EXISTS channels_new');
         } catch {}
       }
-      db.pragma('foreign_keys = ON');
+      await db.exec('PRAGMA foreign_keys = ON');
     }
   }
 
   // Create dm_participants table for DM channels
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS dm_participants (
       channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -326,7 +338,7 @@ export function initSchema() {
 
   // Create FTS5 virtual table for message search
   try {
-    db.exec(`
+    await db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
         content, content=messages, content_rowid=rowid
       );
@@ -342,38 +354,38 @@ export function initSchema() {
       END;
     `);
     // Populate FTS index from existing messages
-    const ftsCount = db.prepare('SELECT COUNT(*) as c FROM messages_fts').get() as { c: number };
-    if (ftsCount.c === 0) {
-      db.exec('INSERT INTO messages_fts(rowid, content) SELECT rowid, content FROM messages');
+    const ftsCount = await db.queryOne<{ c: number }>('SELECT COUNT(*) as c FROM messages_fts');
+    if (ftsCount!.c === 0) {
+      await db.exec('INSERT INTO messages_fts(rowid, content) SELECT rowid, content FROM messages');
     }
   } catch {}
 
   // Migrate: add reply_to_id column to messages
   try {
-    db.exec(
+    await db.exec(
       'ALTER TABLE messages ADD COLUMN reply_to_id TEXT REFERENCES messages(id) ON DELETE SET NULL',
     );
   } catch {}
 
   // Migrate: add pinned and pinned_by columns to messages
   try {
-    db.exec('ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
+    await db.exec('ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
   } catch {}
   try {
-    db.exec('ALTER TABLE messages ADD COLUMN pinned_by TEXT');
+    await db.exec('ALTER TABLE messages ADD COLUMN pinned_by TEXT');
   } catch {}
 
   // Migrate: add source column to files
   try {
-    db.exec("ALTER TABLE files ADD COLUMN source TEXT NOT NULL DEFAULT 'upload'");
+    await db.exec("ALTER TABLE files ADD COLUMN source TEXT NOT NULL DEFAULT 'upload'");
   } catch {}
 
   // Migrate: add restricted column to channels + access control junction tables
   try {
-    db.exec('ALTER TABLE channels ADD COLUMN restricted INTEGER NOT NULL DEFAULT 0');
+    await db.exec('ALTER TABLE channels ADD COLUMN restricted INTEGER NOT NULL DEFAULT 0');
   } catch {}
 
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS channel_access_roles (
       channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
       role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
@@ -388,7 +400,7 @@ export function initSchema() {
   `);
 
   // Migrate: add channel_groups table
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS channel_groups (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -399,18 +411,18 @@ export function initSchema() {
 
   // Migrate: add permissions_enabled column to channel_groups
   try {
-    db.exec('ALTER TABLE channel_groups ADD COLUMN permissions_enabled INTEGER NOT NULL DEFAULT 0');
+    await db.exec('ALTER TABLE channel_groups ADD COLUMN permissions_enabled INTEGER NOT NULL DEFAULT 0');
   } catch {}
 
   // Migrate: add group_id column to channels
   try {
-    db.exec(
+    await db.exec(
       'ALTER TABLE channels ADD COLUMN group_id TEXT REFERENCES channel_groups(id) ON DELETE SET NULL',
     );
   } catch {}
 
   // Migrate: add channel_permission_overrides table
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS channel_permission_overrides (
       id TEXT PRIMARY KEY,
       channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
@@ -432,42 +444,46 @@ export function initSchema() {
 
   // Migrate: convert existing restricted channels to permission overrides
   {
-    const restrictedChannels = db.prepare('SELECT id FROM channels WHERE restricted = 1').all() as {
-      id: string;
-    }[];
+    const restrictedChannels = await db.query<{ id: string }>('SELECT id FROM channels WHERE restricted = 1');
     if (restrictedChannels.length > 0) {
       // Check if we've already migrated (any overrides exist for these channels)
-      const firstChannelOverrides = db
-        .prepare('SELECT 1 FROM channel_permission_overrides WHERE channel_id = ?')
-        .get(restrictedChannels[0].id);
+      const firstChannelOverrides = await db.queryOne(
+        'SELECT 1 FROM channel_permission_overrides WHERE channel_id = ?',
+        [restrictedChannels[0].id],
+      );
       if (!firstChannelOverrides) {
-        const defRole = db.prepare('SELECT id FROM roles WHERE is_default = 1').get() as
-          | { id: string }
-          | undefined;
+        const defRole = await db.queryOne<{ id: string }>(
+          'SELECT id FROM roles WHERE is_default = 1',
+        );
         for (const ch of restrictedChannels) {
           // Deny view_channel for default role
           if (defRole) {
-            db.prepare(
+            await db.run(
               'INSERT OR IGNORE INTO channel_permission_overrides (id, channel_id, target_type, target_id, view_channel) VALUES (?, ?, ?, ?, ?)',
-            ).run(randomUUID(), ch.id, 'role', defRole.id, 0);
+              [randomUUID(), ch.id, 'role', defRole.id, 0],
+            );
           }
           // Allow view_channel for each allowed role
-          const allowedRoles = db
-            .prepare('SELECT role_id FROM channel_access_roles WHERE channel_id = ?')
-            .all(ch.id) as { role_id: string }[];
+          const allowedRoles = await db.query<{ role_id: string }>(
+            'SELECT role_id FROM channel_access_roles WHERE channel_id = ?',
+            [ch.id],
+          );
           for (const r of allowedRoles) {
-            db.prepare(
+            await db.run(
               'INSERT OR IGNORE INTO channel_permission_overrides (id, channel_id, target_type, target_id, view_channel) VALUES (?, ?, ?, ?, ?)',
-            ).run(randomUUID(), ch.id, 'role', r.role_id, 1);
+              [randomUUID(), ch.id, 'role', r.role_id, 1],
+            );
           }
           // Allow view_channel for each allowed user
-          const allowedUsers = db
-            .prepare('SELECT user_id FROM channel_access_users WHERE channel_id = ?')
-            .all(ch.id) as { user_id: string }[];
+          const allowedUsers = await db.query<{ user_id: string }>(
+            'SELECT user_id FROM channel_access_users WHERE channel_id = ?',
+            [ch.id],
+          );
           for (const u of allowedUsers) {
-            db.prepare(
+            await db.run(
               'INSERT OR IGNORE INTO channel_permission_overrides (id, channel_id, target_type, target_id, view_channel) VALUES (?, ?, ?, ?, ?)',
-            ).run(randomUUID(), ch.id, 'user', u.user_id, 1);
+              [randomUUID(), ch.id, 'user', u.user_id, 1],
+            );
           }
         }
         console.log(
@@ -478,7 +494,7 @@ export function initSchema() {
   }
 
   // Migrate: add group_permission_overrides table
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS group_permission_overrides (
       id TEXT PRIMARY KEY,
       group_id TEXT NOT NULL REFERENCES channel_groups(id) ON DELETE CASCADE,
@@ -500,19 +516,18 @@ export function initSchema() {
 
   // Backfill view_channel into existing role permission blobs
   {
-    const allRoles = db.prepare('SELECT id, permissions FROM roles').all() as {
-      id: string;
-      permissions: string;
-    }[];
+    const allRoles = await db.query<{ id: string; permissions: string }>(
+      'SELECT id, permissions FROM roles',
+    );
     for (const role of allRoles) {
       try {
         const perms = JSON.parse(role.permissions);
         if (perms.view_channel === undefined) {
           perms.view_channel = true;
-          db.prepare('UPDATE roles SET permissions = ? WHERE id = ?').run(
+          await db.run('UPDATE roles SET permissions = ? WHERE id = ?', [
             JSON.stringify(perms),
             role.id,
-          );
+          ]);
         }
       } catch {}
     }
@@ -520,19 +535,18 @@ export function initSchema() {
 
   // Backfill use_apps into existing role permission blobs
   {
-    const allRoles = db.prepare('SELECT id, permissions FROM roles').all() as {
-      id: string;
-      permissions: string;
-    }[];
+    const allRoles = await db.query<{ id: string; permissions: string }>(
+      'SELECT id, permissions FROM roles',
+    );
     for (const role of allRoles) {
       try {
         const perms = JSON.parse(role.permissions);
         if (perms.use_apps === undefined) {
           perms.use_apps = true;
-          db.prepare('UPDATE roles SET permissions = ? WHERE id = ?').run(
+          await db.run('UPDATE roles SET permissions = ? WHERE id = ?', [
             JSON.stringify(perms),
             role.id,
-          );
+          ]);
         }
       } catch {}
     }
@@ -540,19 +554,18 @@ export function initSchema() {
 
   // Backfill view_audit_log into existing role permission blobs
   {
-    const allRoles = db.prepare('SELECT id, permissions FROM roles').all() as {
-      id: string;
-      permissions: string;
-    }[];
+    const allRoles = await db.query<{ id: string; permissions: string }>(
+      'SELECT id, permissions FROM roles',
+    );
     for (const role of allRoles) {
       try {
         const perms = JSON.parse(role.permissions);
         if (perms.view_audit_log === undefined) {
           perms.view_audit_log = false;
-          db.prepare('UPDATE roles SET permissions = ? WHERE id = ?').run(
+          await db.run('UPDATE roles SET permissions = ? WHERE id = ?', [
             JSON.stringify(perms),
             role.id,
-          );
+          ]);
         }
       } catch {}
     }
@@ -560,19 +573,18 @@ export function initSchema() {
 
   // Backfill manage_bots into existing role permission blobs
   {
-    const allRoles = db.prepare('SELECT id, permissions FROM roles').all() as {
-      id: string;
-      permissions: string;
-    }[];
+    const allRoles = await db.query<{ id: string; permissions: string }>(
+      'SELECT id, permissions FROM roles',
+    );
     for (const role of allRoles) {
       try {
         const perms = JSON.parse(role.permissions);
         if (perms.manage_bots === undefined) {
           perms.manage_bots = false;
-          db.prepare('UPDATE roles SET permissions = ? WHERE id = ?').run(
+          await db.run('UPDATE roles SET permissions = ? WHERE id = ?', [
             JSON.stringify(perms),
             role.id,
-          );
+          ]);
         }
       } catch {}
     }
@@ -580,19 +592,18 @@ export function initSchema() {
 
   // Backfill manage_server into existing role permission blobs
   {
-    const allRoles = db.prepare('SELECT id, permissions FROM roles').all() as {
-      id: string;
-      permissions: string;
-    }[];
+    const allRoles = await db.query<{ id: string; permissions: string }>(
+      'SELECT id, permissions FROM roles',
+    );
     for (const role of allRoles) {
       try {
         const perms = JSON.parse(role.permissions);
         if (perms.manage_server === undefined) {
           perms.manage_server = false;
-          db.prepare('UPDATE roles SET permissions = ? WHERE id = ?').run(
+          await db.run('UPDATE roles SET permissions = ? WHERE id = ?', [
             JSON.stringify(perms),
             role.id,
-          );
+          ]);
         }
       } catch {}
     }
@@ -600,106 +611,102 @@ export function initSchema() {
 
   // Backfill kick_members into existing role permission blobs
   {
-    const allRoles = db.prepare('SELECT id, permissions FROM roles').all() as {
-      id: string;
-      permissions: string;
-    }[];
+    const allRoles = await db.query<{ id: string; permissions: string }>(
+      'SELECT id, permissions FROM roles',
+    );
     for (const role of allRoles) {
       try {
         const perms = JSON.parse(role.permissions);
         if (perms.kick_members === undefined) {
           perms.kick_members = !!perms.ban_members;
-          db.prepare('UPDATE roles SET permissions = ? WHERE id = ?').run(
+          await db.run('UPDATE roles SET permissions = ? WHERE id = ?', [
             JSON.stringify(perms),
             role.id,
-          );
+          ]);
         }
       } catch {}
     }
   }
 
   // Seed server_settings singleton
-  const settingsCount = db.prepare('SELECT COUNT(*) as c FROM server_settings').get() as {
-    c: number;
-  };
+  const settingsCount = (await db.queryOne<{ c: number }>('SELECT COUNT(*) as c FROM server_settings'))!;
   if (settingsCount.c === 0) {
-    db.prepare("INSERT INTO server_settings (id, name) VALUES (1, 'SellServ Voice')").run();
+    await db.run("INSERT INTO server_settings (id, name) VALUES (1, 'SellServ Voice')");
   }
 
   // Seed default roles if none exist
-  const roleCount = db.prepare('SELECT COUNT(*) as c FROM roles').get() as { c: number };
+  const roleCount = (await db.queryOne<{ c: number }>('SELECT COUNT(*) as c FROM roles'))!;
   if (roleCount.c === 0) {
     const adminRoleId = randomUUID();
     const memberRoleId = randomUUID();
     const botRoleId = randomUUID();
-    db.prepare(
+    await db.run(
       'INSERT INTO roles (id, name, color, position, permissions, is_default) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(adminRoleId, 'Admin', '#e74c3c', 0, ALL_PERMISSIONS, 0);
-    db.prepare(
+      [adminRoleId, 'Admin', '#e74c3c', 0, ALL_PERMISSIONS, 0],
+    );
+    await db.run(
       'INSERT INTO roles (id, name, color, position, permissions, is_default) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(memberRoleId, 'Member', '#99aab5', 1, MEMBER_PERMISSIONS, 1);
-    db.prepare(
+      [memberRoleId, 'Member', '#99aab5', 1, MEMBER_PERMISSIONS, 1],
+    );
+    await db.run(
       'INSERT INTO roles (id, name, color, position, permissions, is_default) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(botRoleId, 'Bot', '#7289da', 2, BOT_PERMISSIONS, 0);
+      [botRoleId, 'Bot', '#7289da', 2, BOT_PERMISSIONS, 0],
+    );
 
     // Backfill existing users: admins get Admin role, members get Member role
-    db.prepare("UPDATE users SET role_id = ? WHERE role = 'admin'").run(adminRoleId);
-    db.prepare("UPDATE users SET role_id = ? WHERE role = 'member'").run(memberRoleId);
+    await db.run("UPDATE users SET role_id = ? WHERE role = 'admin'", [adminRoleId]);
+    await db.run("UPDATE users SET role_id = ? WHERE role = 'member'", [memberRoleId]);
   }
 
   // Migrate: add is_bot column to users (must happen before Bot role migration)
   try {
-    db.exec('ALTER TABLE users ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0');
+    await db.exec('ALTER TABLE users ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0');
   } catch {}
 
   // Migrate: create Bot role if it doesn't exist and assign bot users to it
   {
-    const botRole = db.prepare("SELECT id FROM roles WHERE name = 'Bot'").get() as
-      | { id: string }
-      | undefined;
+    const botRole = await db.queryOne<{ id: string }>("SELECT id FROM roles WHERE name = 'Bot'");
     if (!botRole) {
       const botRoleId = randomUUID();
       // Insert at position 2 (after Admin=0, Member=1)
-      db.prepare(
+      await db.run(
         'INSERT INTO roles (id, name, color, position, permissions, is_default) VALUES (?, ?, ?, ?, ?, ?)',
-      ).run(botRoleId, 'Bot', '#7289da', 2, BOT_PERMISSIONS, 0);
+        [botRoleId, 'Bot', '#7289da', 2, BOT_PERMISSIONS, 0],
+      );
       // Reassign all bot users to the new Bot role
-      db.prepare('UPDATE users SET role_id = ? WHERE is_bot = 1').run(botRoleId);
+      await db.run('UPDATE users SET role_id = ? WHERE is_bot = 1', [botRoleId]);
       console.log('Created Bot role and assigned bot users to it');
     } else {
       // Ensure all bot users are on the Bot role
-      db.prepare('UPDATE users SET role_id = ? WHERE is_bot = 1 AND role_id != ?').run(
+      await db.run('UPDATE users SET role_id = ? WHERE is_bot = 1 AND role_id != ?', [
         botRole.id,
         botRole.id,
-      );
+      ]);
     }
   }
 
   // Migrate: fix broken avatar_url / banner_url values ('/uploads/undefined')
   {
-    const broken = db
-      .prepare(
-        "SELECT id FROM users WHERE avatar_url = '/uploads/undefined' OR banner_url = '/uploads/undefined'",
-      )
-      .all() as { id: string }[];
+    const broken = await db.query<{ id: string }>(
+      "SELECT id FROM users WHERE avatar_url = '/uploads/undefined' OR banner_url = '/uploads/undefined'",
+    );
     if (broken.length > 0) {
-      const findLatestImage = db.prepare(
-        "SELECT stored_name FROM files WHERE user_id = ? AND mime_type LIKE 'image/%' ORDER BY created_at DESC LIMIT 1",
-      );
-      const updateAvatar = db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?');
-      const updateBanner = db.prepare('UPDATE users SET banner_url = ? WHERE id = ?');
-      const getUser = db.prepare('SELECT avatar_url, banner_url FROM users WHERE id = ?');
-
       for (const { id } of broken) {
-        const user = getUser.get(id) as { avatar_url: string | null; banner_url: string | null };
-        const img = findLatestImage.get(id) as { stored_name: string } | undefined;
+        const user = await db.queryOne<{ avatar_url: string | null; banner_url: string | null }>(
+          'SELECT avatar_url, banner_url FROM users WHERE id = ?',
+          [id],
+        );
+        const img = await db.queryOne<{ stored_name: string }>(
+          "SELECT stored_name FROM files WHERE user_id = ? AND mime_type LIKE 'image/%' ORDER BY created_at DESC LIMIT 1",
+          [id],
+        );
         const fixedUrl = img ? `/uploads/${img.stored_name}` : null;
 
-        if (user.avatar_url === '/uploads/undefined') {
-          updateAvatar.run(fixedUrl, id);
+        if (user?.avatar_url === '/uploads/undefined') {
+          await db.run('UPDATE users SET avatar_url = ? WHERE id = ?', [fixedUrl, id]);
         }
-        if (user.banner_url === '/uploads/undefined') {
-          updateBanner.run(null, id); // banners are harder to guess; clear instead
+        if (user?.banner_url === '/uploads/undefined') {
+          await db.run('UPDATE users SET banner_url = ? WHERE id = ?', [null, id]); // banners are harder to guess; clear instead
         }
       }
       console.log(`Fixed ${broken.length} user(s) with broken avatar/banner URLs`);
@@ -708,14 +715,14 @@ export function initSchema() {
 
   // Migrate: add name_font and name_color columns to users
   try {
-    db.exec('ALTER TABLE users ADD COLUMN name_font TEXT DEFAULT NULL');
+    await db.exec('ALTER TABLE users ADD COLUMN name_font TEXT DEFAULT NULL');
   } catch {}
   try {
-    db.exec('ALTER TABLE users ADD COLUMN name_color TEXT DEFAULT NULL');
+    await db.exec('ALTER TABLE users ADD COLUMN name_color TEXT DEFAULT NULL');
   } catch {}
 
   // Create bots table
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS bots (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id),
@@ -731,37 +738,40 @@ export function initSchema() {
 
   // Migrate: add dm_enabled and dm_greeting columns to bots
   try {
-    db.exec('ALTER TABLE bots ADD COLUMN dm_enabled INTEGER NOT NULL DEFAULT 0');
+    await db.exec('ALTER TABLE bots ADD COLUMN dm_enabled INTEGER NOT NULL DEFAULT 0');
   } catch {}
   try {
-    db.exec(
+    await db.exec(
       "ALTER TABLE bots ADD COLUMN dm_greeting TEXT NOT NULL DEFAULT 'Welcome to the server! A moderator will need to assign you a role for more access.'",
     );
   } catch {}
   try {
-    db.exec('ALTER TABLE bots ADD COLUMN config TEXT');
+    await db.exec('ALTER TABLE bots ADD COLUMN config TEXT');
   } catch {}
 
   // Ensure any user without a role_id gets the default role
-  const defaultRole = db.prepare('SELECT id FROM roles WHERE is_default = 1').get() as
-    | { id: string }
-    | undefined;
+  const defaultRole = await db.queryOne<{ id: string }>(
+    'SELECT id FROM roles WHERE is_default = 1',
+  );
   if (defaultRole) {
-    db.prepare('UPDATE users SET role_id = ? WHERE role_id IS NULL').run(defaultRole.id);
+    await db.run('UPDATE users SET role_id = ? WHERE role_id IS NULL', [defaultRole.id]);
   }
 
   // Seed default channels if none exist
-  const count = db.prepare('SELECT COUNT(*) as c FROM channels').get() as { c: number };
+  const count = (await db.queryOne<{ c: number }>('SELECT COUNT(*) as c FROM channels'))!;
   if (count.c === 0) {
-    const insert = db.prepare(
+    await db.run(
       'INSERT INTO channels (id, name, type, sort_order) VALUES (?, ?, ?, ?)',
+      [randomUUID(), 'general', 'text', 0],
     );
-    insert.run(randomUUID(), 'general', 'text', 0);
-    insert.run(randomUUID(), 'voice', 'voice', 1);
+    await db.run(
+      'INSERT INTO channels (id, name, type, sort_order) VALUES (?, ?, ?, ?)',
+      [randomUUID(), 'voice', 'voice', 1],
+    );
   }
 
   // Link preview cache table
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS link_previews (
       url TEXT PRIMARY KEY,
       title TEXT,
@@ -775,57 +785,56 @@ export function initSchema() {
 
   // Seed welcome bot user + config
   {
-    const botUser = db.prepare("SELECT id FROM users WHERE id = 'bot-welcome'").get();
+    const botUser = await db.queryOne("SELECT id FROM users WHERE id = 'bot-welcome'");
     if (!botUser) {
-      const botRole = db.prepare("SELECT id FROM roles WHERE name = 'Bot'").get() as
-        | { id: string }
-        | undefined;
-      const fallbackRole = db.prepare('SELECT id FROM roles WHERE is_default = 1').get() as
-        | { id: string }
-        | undefined;
-      db.prepare(
+      const botRole = await db.queryOne<{ id: string }>("SELECT id FROM roles WHERE name = 'Bot'");
+      const fallbackRole = await db.queryOne<{ id: string }>(
+        'SELECT id FROM roles WHERE is_default = 1',
+      );
+      await db.run(
         "INSERT INTO users (id, username, display_name, password_hash, role, role_id, is_bot, avatar_url, created_at) VALUES ('bot-welcome', 'welcome-bot', 'Welcome Bot', '', 'member', ?, 1, '/bot-avatar.svg', datetime('now'))",
-      ).run(botRole?.id ?? fallbackRole?.id ?? null);
+        [botRole?.id ?? fallbackRole?.id ?? null],
+      );
     }
-    const botRow = db.prepare("SELECT id FROM bots WHERE type = 'welcome'").get();
+    const botRow = await db.queryOne("SELECT id FROM bots WHERE type = 'welcome'");
     if (!botRow) {
-      db.prepare(
+      await db.run(
         "INSERT INTO bots (id, user_id, type, name, enabled, greeting, created_at) VALUES ('bot-welcome', 'bot-welcome', 'welcome', 'Welcome Bot', 0, 'Welcome to the server, {user}! 👋', datetime('now'))",
-      ).run();
+      );
     }
   }
 
   // Migrate: set default bot avatar for existing bots without one
-  db.prepare(
+  await db.run(
     "UPDATE users SET avatar_url = '/bot-avatar.svg' WHERE is_bot = 1 AND avatar_url IS NULL",
-  ).run();
+  );
 
   // Migrate: add emoji_id and emoji columns to soundboard_sounds
   try {
-    db.exec('ALTER TABLE soundboard_sounds ADD COLUMN emoji_id TEXT REFERENCES custom_emojis(id)');
+    await db.exec('ALTER TABLE soundboard_sounds ADD COLUMN emoji_id TEXT REFERENCES custom_emojis(id)');
   } catch {}
   try {
-    db.exec('ALTER TABLE soundboard_sounds ADD COLUMN emoji TEXT');
+    await db.exec('ALTER TABLE soundboard_sounds ADD COLUMN emoji TEXT');
   } catch {}
 
   // Migrate: rename 'watch-together' app to 'watch-party' in server_settings
   {
-    const row = db.prepare('SELECT enabled_apps FROM server_settings WHERE id = 1').get() as
-      | { enabled_apps: string }
-      | undefined;
+    const row = await db.queryOne<{ enabled_apps: string }>(
+      'SELECT enabled_apps FROM server_settings WHERE id = 1',
+    );
     if (row) {
       const apps: string[] = JSON.parse(row.enabled_apps);
       if (apps.includes('watch-together')) {
         const updated = apps.map((a) => (a === 'watch-together' ? 'watch-party' : a));
-        db.prepare('UPDATE server_settings SET enabled_apps = ? WHERE id = 1').run(
+        await db.run('UPDATE server_settings SET enabled_apps = ? WHERE id = 1', [
           JSON.stringify(updated),
-        );
+        ]);
       }
     }
   }
 
   // Audit log table
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS audit_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       event_type TEXT NOT NULL,
@@ -841,7 +850,7 @@ export function initSchema() {
   `);
 
   // Performance indexes for frequently queried foreign keys
-  db.exec(`
+  await db.exec(`
     CREATE INDEX IF NOT EXISTS idx_users_role_id ON users(role_id);
     CREATE INDEX IF NOT EXISTS idx_dm_participants_user_id ON dm_participants(user_id);
     CREATE INDEX IF NOT EXISTS idx_channels_group_id ON channels(group_id);
@@ -855,7 +864,7 @@ export function initSchema() {
   `);
 
   // Migrate: create user_roles junction table for multi-role support
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS user_roles (
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
@@ -866,14 +875,14 @@ export function initSchema() {
 
   // Backfill user_roles from existing users.role_id (fills in any users missing from junction table)
   // Only backfill role_ids that still exist in the roles table (servers/roles may have been deleted)
-  db.exec(
+  await db.exec(
     'INSERT OR IGNORE INTO user_roles (user_id, role_id) SELECT u.id, u.role_id FROM users u JOIN roles r ON r.id = u.role_id WHERE u.role_id IS NOT NULL',
   );
 
   // ─── Multi-server (guilds) support ───
 
   // Create servers, server_members, instance_settings tables
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS servers (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -940,56 +949,58 @@ export function initSchema() {
   `);
 
   // Migrate: add server_id column to tables
-  try { db.exec('ALTER TABLE channels ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
-  try { db.exec('ALTER TABLE channel_groups ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
-  try { db.exec('ALTER TABLE roles ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
-  try { db.exec('ALTER TABLE channel_permission_overrides ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
-  try { db.exec('ALTER TABLE group_permission_overrides ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
-  try { db.exec('ALTER TABLE custom_emojis ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
-  try { db.exec('ALTER TABLE soundboard_sounds ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
-  try { db.exec('ALTER TABLE invite_codes ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
-  try { db.exec('ALTER TABLE bots ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
-  try { db.exec('ALTER TABLE audit_log ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
+  try { await db.exec('ALTER TABLE channels ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
+  try { await db.exec('ALTER TABLE channel_groups ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
+  try { await db.exec('ALTER TABLE roles ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
+  try { await db.exec('ALTER TABLE channel_permission_overrides ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
+  try { await db.exec('ALTER TABLE group_permission_overrides ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
+  try { await db.exec('ALTER TABLE custom_emojis ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
+  try { await db.exec('ALTER TABLE soundboard_sounds ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
+  try { await db.exec('ALTER TABLE invite_codes ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
+  try { await db.exec('ALTER TABLE bots ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
+  try { await db.exec('ALTER TABLE audit_log ADD COLUMN server_id TEXT REFERENCES servers(id)'); } catch {}
 
   // Create default server from existing data if servers table is empty
   {
-    const serverCount = (db.prepare('SELECT COUNT(*) as c FROM servers').get() as any).c;
+    const serverCount = (await db.queryOne<{ c: number }>('SELECT COUNT(*) as c FROM servers'))!.c;
     if (serverCount === 0) {
-      const firstAdmin = db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get() as any;
-      const anyUser = db.prepare('SELECT id FROM users LIMIT 1').get() as any;
+      const firstAdmin = await db.queryOne<{ id: string }>("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
+      const anyUser = await db.queryOne<{ id: string }>('SELECT id FROM users LIMIT 1');
       const ownerId = firstAdmin?.id || anyUser?.id;
       if (!ownerId) return; // no users exist, nothing to migrate
 
-      const settings = db.prepare('SELECT name, icon_file_id FROM server_settings WHERE id = 1').get() as any;
+      const settings = await db.queryOne<{ name: string; icon_file_id: string | null }>(
+        'SELECT name, icon_file_id FROM server_settings WHERE id = 1',
+      );
       const defaultServerId = randomUUID();
 
-      const migrate = db.transaction(() => {
-        db.prepare('INSERT INTO servers (id, name, icon_file_id, owner_id) VALUES (?, ?, ?, ?)').run(
+      await db.transaction(async (tx) => {
+        await tx.run('INSERT INTO servers (id, name, icon_file_id, owner_id) VALUES (?, ?, ?, ?)', [
           defaultServerId,
           settings?.name || 'My Server',
           settings?.icon_file_id || null,
-          ownerId
-        );
+          ownerId,
+        ]);
 
         // Add all existing users as members
-        const users = db.prepare('SELECT id FROM users').all() as any[];
-        const insertMember = db.prepare('INSERT OR IGNORE INTO server_members (server_id, user_id) VALUES (?, ?)');
-        for (const u of users) insertMember.run(defaultServerId, u.id);
+        const users = await tx.query<{ id: string }>('SELECT id FROM users');
+        for (const u of users) {
+          await tx.run('INSERT OR IGNORE INTO server_members (server_id, user_id) VALUES (?, ?)', [defaultServerId, u.id]);
+        }
 
         // Backfill server_id on all existing data (try-catch for fresh installs where tables may not exist yet)
-        try { db.prepare('UPDATE channels SET server_id = ? WHERE server_id IS NULL AND type != \'dm\'').run(defaultServerId); } catch {}
+        try { await tx.run('UPDATE channels SET server_id = ? WHERE server_id IS NULL AND type != \'dm\'', [defaultServerId]); } catch {}
         for (const table of ['channel_groups', 'roles', 'custom_emojis', 'soundboard_sounds', 'invite_codes', 'bots', 'audit_log', 'server_bans', 'polls']) {
-          try { db.prepare(`UPDATE ${table} SET server_id = ? WHERE server_id IS NULL`).run(defaultServerId); } catch {}
+          try { await tx.run(`UPDATE ${table} SET server_id = ? WHERE server_id IS NULL`, [defaultServerId]); } catch {}
         }
-        try { db.prepare('UPDATE channel_permission_overrides SET server_id = ? WHERE server_id IS NULL').run(defaultServerId); } catch {}
-        try { db.prepare('UPDATE group_permission_overrides SET server_id = ? WHERE server_id IS NULL').run(defaultServerId); } catch {}
+        try { await tx.run('UPDATE channel_permission_overrides SET server_id = ? WHERE server_id IS NULL', [defaultServerId]); } catch {}
+        try { await tx.run('UPDATE group_permission_overrides SET server_id = ? WHERE server_id IS NULL', [defaultServerId]); } catch {}
       });
-      migrate();
     }
   }
 
   // Multi-server indexes
-  db.exec(`
+  await db.exec(`
     CREATE INDEX IF NOT EXISTS idx_channels_server ON channels(server_id);
     CREATE INDEX IF NOT EXISTS idx_roles_server ON roles(server_id);
     CREATE INDEX IF NOT EXISTS idx_channel_groups_server ON channel_groups(server_id);
@@ -1002,62 +1013,61 @@ export function initSchema() {
 
   // Ensure every server has a welcome bot
   {
-    const serversWithoutBot = db.prepare(
+    const serversWithoutBot = await db.query<{ id: string }>(
       `SELECT s.id FROM servers s
-       WHERE NOT EXISTS (SELECT 1 FROM bots b WHERE b.server_id = s.id AND b.type = 'welcome')`
-    ).all() as { id: string }[];
-    const botUserExists = db.prepare("SELECT id FROM users WHERE id = 'bot-welcome'").get();
+       WHERE NOT EXISTS (SELECT 1 FROM bots b WHERE b.server_id = s.id AND b.type = 'welcome')`,
+    );
+    const botUserExists = await db.queryOne("SELECT id FROM users WHERE id = 'bot-welcome'");
     if (botUserExists && serversWithoutBot.length > 0) {
-      const insertBot = db.prepare(
-        "INSERT INTO bots (id, user_id, type, name, enabled, greeting, server_id, created_at) VALUES (?, 'bot-welcome', 'welcome', 'Welcome Bot', 0, 'Welcome to the server, {user}! 👋', ?, datetime('now'))"
-      );
       for (const server of serversWithoutBot) {
-        insertBot.run(randomUUID(), server.id);
+        await db.run(
+          "INSERT INTO bots (id, user_id, type, name, enabled, greeting, server_id, created_at) VALUES (?, 'bot-welcome', 'welcome', 'Welcome Bot', 0, 'Welcome to the server, {user}! 👋', ?, datetime('now'))",
+          [randomUUID(), server.id],
+        );
       }
     }
   }
 
   // Seed automod bot user + ensure every server has one
   {
-    const automodUser = db.prepare("SELECT id FROM users WHERE id = 'bot-automod'").get();
+    const automodUser = await db.queryOne("SELECT id FROM users WHERE id = 'bot-automod'");
     if (!automodUser) {
-      const botRole = db.prepare("SELECT id FROM roles WHERE name = 'Bot'").get() as
-        | { id: string }
-        | undefined;
-      const fallbackRole = db.prepare('SELECT id FROM roles WHERE is_default = 1').get() as
-        | { id: string }
-        | undefined;
-      db.prepare(
+      const botRole = await db.queryOne<{ id: string }>("SELECT id FROM roles WHERE name = 'Bot'");
+      const fallbackRole = await db.queryOne<{ id: string }>(
+        'SELECT id FROM roles WHERE is_default = 1',
+      );
+      await db.run(
         "INSERT INTO users (id, username, display_name, password_hash, role, role_id, is_bot, avatar_url, created_at) VALUES ('bot-automod', 'automod-bot', 'Automod', '', 'member', ?, 1, '/bot-avatar.svg', datetime('now'))",
-      ).run(botRole?.id ?? fallbackRole?.id ?? null);
+        [botRole?.id ?? fallbackRole?.id ?? null],
+      );
     }
-    const serversWithoutAutomod = db.prepare(
+    const serversWithoutAutomod = await db.query<{ id: string }>(
       `SELECT s.id FROM servers s
-       WHERE NOT EXISTS (SELECT 1 FROM bots b WHERE b.server_id = s.id AND b.type = 'automod')`
-    ).all() as { id: string }[];
+       WHERE NOT EXISTS (SELECT 1 FROM bots b WHERE b.server_id = s.id AND b.type = 'automod')`,
+    );
     if (serversWithoutAutomod.length > 0) {
       const defaultConfig = JSON.stringify({ blockedWords: [], action: 'delete', warnMessage: 'Your message was removed for containing a blocked word.' });
-      const insertBot = db.prepare(
-        "INSERT INTO bots (id, user_id, type, name, enabled, config, server_id, created_at) VALUES (?, 'bot-automod', 'automod', 'Automod', 0, ?, ?, datetime('now'))"
-      );
       for (const server of serversWithoutAutomod) {
-        insertBot.run(randomUUID(), defaultConfig, server.id);
+        await db.run(
+          "INSERT INTO bots (id, user_id, type, name, enabled, config, server_id, created_at) VALUES (?, 'bot-automod', 'automod', 'Automod', 0, ?, ?, datetime('now'))",
+          [randomUUID(), defaultConfig, server.id],
+        );
       }
     }
     // Ensure automod bot user is a member of every server that has an automod bot
     // Only for servers that still exist (cleanup may have removed some)
-    const serversWithAutomod = db.prepare(
-      `SELECT DISTINCT b.server_id FROM bots b JOIN servers s ON s.id = b.server_id WHERE b.type = 'automod'`
-    ).all() as { server_id: string }[];
+    const serversWithAutomod = await db.query<{ server_id: string }>(
+      `SELECT DISTINCT b.server_id FROM bots b JOIN servers s ON s.id = b.server_id WHERE b.type = 'automod'`,
+    );
     for (const { server_id } of serversWithAutomod) {
-      db.prepare("INSERT OR IGNORE INTO server_members (server_id, user_id) VALUES (?, 'bot-automod')").run(server_id);
+      await db.run("INSERT OR IGNORE INTO server_members (server_id, user_id) VALUES (?, 'bot-automod')", [server_id]);
     }
     // Clean up orphaned bot entries pointing to deleted servers
-    db.prepare("DELETE FROM bots WHERE server_id NOT IN (SELECT id FROM servers)").run();
+    await db.run("DELETE FROM bots WHERE server_id NOT IN (SELECT id FROM servers)");
   }
 
   // Server invitations table
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS server_invitations (
       id TEXT PRIMARY KEY,
       server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
@@ -1070,11 +1080,11 @@ export function initSchema() {
   `);
 
   // Migrate: add AFK channel settings to servers
-  try { db.exec('ALTER TABLE servers ADD COLUMN afk_channel_id TEXT REFERENCES channels(id) ON DELETE SET NULL'); } catch {}
-  try { db.exec('ALTER TABLE servers ADD COLUMN afk_timeout INTEGER NOT NULL DEFAULT 300'); } catch {}
+  try { await db.exec('ALTER TABLE servers ADD COLUMN afk_channel_id TEXT REFERENCES channels(id) ON DELETE SET NULL'); } catch {}
+  try { await db.exec('ALTER TABLE servers ADD COLUMN afk_timeout INTEGER NOT NULL DEFAULT 300'); } catch {}
 
   // Friendships table (friends, pending requests, blocks)
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS friendships (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1089,16 +1099,18 @@ export function initSchema() {
 
   // Migration: add notification_level to server_members
   try {
-    db.exec(`ALTER TABLE server_members ADD COLUMN notification_level TEXT NOT NULL DEFAULT 'default'`);
+    await db.exec(`ALTER TABLE server_members ADD COLUMN notification_level TEXT NOT NULL DEFAULT 'default'`);
   } catch {}
 
   // Migration: remove UNIQUE constraint on roles.name (must be unique per server, not globally)
   try {
-    const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='roles'").get() as { sql: string } | undefined;
+    const tableInfo = await db.queryOne<{ sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='roles'",
+    );
     if (tableInfo && tableInfo.sql.includes('UNIQUE')) {
-      db.pragma('foreign_keys = OFF');
+      await db.exec('PRAGMA foreign_keys = OFF');
       try {
-        db.exec(`
+        await db.exec(`
           CREATE TABLE roles_new (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -1113,7 +1125,7 @@ export function initSchema() {
           ALTER TABLE roles_new RENAME TO roles;
         `);
       } finally {
-        db.pragma('foreign_keys = ON');
+        await db.exec('PRAGMA foreign_keys = ON');
       }
     }
   } catch (err) {
@@ -1122,9 +1134,11 @@ export function initSchema() {
 
   // Migration: ensure custom_emojis has created_at column and per-server UNIQUE(name, server_id)
   try {
-    const emojiTable = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='custom_emojis'").get() as { sql: string } | undefined;
+    const emojiTable = await db.queryOne<{ sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='custom_emojis'",
+    );
     if (emojiTable) {
-      const cols = db.pragma('table_info(custom_emojis)') as { name: string }[];
+      const cols = await db.query<{ name: string }>('PRAGMA table_info(custom_emojis)');
       const colNames = new Set(cols.map(c => c.name));
       const hasCreatedAt = colNames.has('created_at');
       // Need to fix if: missing created_at OR has wrong UNIQUE constraint (anything other than UNIQUE(name, server_id))
@@ -1132,10 +1146,10 @@ export function initSchema() {
 
       if (needsTableRecreate) {
         console.log('[Migration] Rebuilding custom_emojis table (created_at:', hasCreatedAt, ', sql:', emojiTable.sql.substring(0, 100), ')');
-        db.pragma('foreign_keys = OFF');
+        await db.exec('PRAGMA foreign_keys = OFF');
         try {
-          db.exec('DROP TABLE IF EXISTS custom_emojis_new');
-          db.exec(`
+          await db.exec('DROP TABLE IF EXISTS custom_emojis_new');
+          await db.exec(`
             CREATE TABLE custom_emojis_new (
               id TEXT PRIMARY KEY,
               name TEXT NOT NULL,
@@ -1151,16 +1165,16 @@ export function initSchema() {
           if (colNames.has('server_id')) sharedCols.push('server_id');
           const insertCols = [...sharedCols, 'created_at'];
           const selectExprs = [...sharedCols, hasCreatedAt ? "COALESCE(created_at, datetime('now'))" : "datetime('now')"];
-          db.exec(`
+          await db.exec(`
             INSERT OR IGNORE INTO custom_emojis_new (${insertCols.join(', ')})
             SELECT ${selectExprs.join(', ')} FROM custom_emojis;
           `);
-          db.exec('DROP TABLE custom_emojis');
-          db.exec('ALTER TABLE custom_emojis_new RENAME TO custom_emojis');
-          db.exec('CREATE INDEX IF NOT EXISTS idx_custom_emojis_server ON custom_emojis(server_id)');
+          await db.exec('DROP TABLE custom_emojis');
+          await db.exec('ALTER TABLE custom_emojis_new RENAME TO custom_emojis');
+          await db.exec('CREATE INDEX IF NOT EXISTS idx_custom_emojis_server ON custom_emojis(server_id)');
           console.log('[Migration] custom_emojis table rebuilt successfully');
         } finally {
-          db.pragma('foreign_keys = ON');
+          await db.exec('PRAGMA foreign_keys = ON');
         }
       }
     }
@@ -1171,35 +1185,39 @@ export function initSchema() {
   // ─── Data repair: ensure server owners have admin roles ───
   // If user_roles entries were lost (e.g. from unscoped DELETE bug), restore them
   {
-    const servers = db.prepare('SELECT id, owner_id FROM servers').all() as { id: string; owner_id: string }[];
+    const servers = await db.query<{ id: string; owner_id: string }>(
+      'SELECT id, owner_id FROM servers',
+    );
     for (const server of servers) {
       // Find the Admin role for this server (position 0 = highest)
-      const adminRole = db.prepare(
+      const adminRole = await db.queryOne<{ id: string }>(
         "SELECT id FROM roles WHERE server_id = ? AND name = 'Admin' ORDER BY position ASC LIMIT 1",
-      ).get(server.id) as { id: string } | undefined;
+        [server.id],
+      );
       if (adminRole) {
-        db.prepare('INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)').run(
+        await db.run('INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)', [
           server.owner_id, adminRole.id,
-        );
+        ]);
       }
     }
   }
 
   // Ensure instance admins (users.role = 'admin') have a global Admin role in user_roles
   {
-    const globalAdminRole = db.prepare(
+    const globalAdminRole = await db.queryOne<{ id: string }>(
       "SELECT id FROM roles WHERE server_id IS NULL AND name = 'Admin' LIMIT 1",
-    ).get() as { id: string } | undefined;
+    );
     if (globalAdminRole) {
-      db.prepare(
+      await db.run(
         `INSERT OR IGNORE INTO user_roles (user_id, role_id)
          SELECT id, ? FROM users WHERE role = 'admin'`,
-      ).run(globalAdminRole.id);
+        [globalAdminRole.id],
+      );
     }
   }
 
   // Used reset tokens table (prevents token replay after server restart)
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS used_reset_tokens (
       jti TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -1209,10 +1227,10 @@ export function initSchema() {
     );
   `);
   // Cleanup expired reset tokens
-  db.prepare("DELETE FROM used_reset_tokens WHERE expires_at < datetime('now')").run();
+  await db.run("DELETE FROM used_reset_tokens WHERE expires_at < datetime('now')");
 
   // Reports table (message reports from users)
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS reports (
       id TEXT PRIMARY KEY,
       reporter_id TEXT NOT NULL REFERENCES users(id),
@@ -1233,72 +1251,74 @@ export function initSchema() {
   `);
 
   // Clean up orphaned users.role_id references
-  db.exec(
+  await db.exec(
     'UPDATE users SET role_id = NULL WHERE role_id IS NOT NULL AND role_id NOT IN (SELECT id FROM roles)',
   );
 
   // Migration: add enabled_apps to servers table
   try {
-    db.exec('ALTER TABLE servers ADD COLUMN enabled_apps TEXT NOT NULL DEFAULT \'["soundboard", "watch-party", "voice-changer", "effects", "polls"]\'');
+    await db.exec('ALTER TABLE servers ADD COLUMN enabled_apps TEXT NOT NULL DEFAULT \'["soundboard", "watch-party", "voice-changer", "effects", "polls"]\'');
     // Backfill from global settings if available
-    const globalSettings = db.prepare('SELECT enabled_apps FROM server_settings WHERE id = 1').get() as { enabled_apps: string } | undefined;
+    const globalSettings = await db.queryOne<{ enabled_apps: string }>(
+      'SELECT enabled_apps FROM server_settings WHERE id = 1',
+    );
     if (globalSettings?.enabled_apps) {
-      db.prepare('UPDATE servers SET enabled_apps = ?').run(globalSettings.enabled_apps);
+      await db.run('UPDATE servers SET enabled_apps = ?', [globalSettings.enabled_apps]);
     }
   } catch {}
 
   // Migration: add poll_id to messages table
   try {
-    db.exec('ALTER TABLE messages ADD COLUMN poll_id TEXT REFERENCES polls(id) ON DELETE SET NULL');
+    await db.exec('ALTER TABLE messages ADD COLUMN poll_id TEXT REFERENCES polls(id) ON DELETE SET NULL');
   } catch {}
 
   // Migration: add reply_to_id to messages table
   try {
-    db.exec('ALTER TABLE messages ADD COLUMN reply_to_id TEXT REFERENCES messages(id) ON DELETE SET NULL');
+    await db.exec('ALTER TABLE messages ADD COLUMN reply_to_id TEXT REFERENCES messages(id) ON DELETE SET NULL');
   } catch {}
 
   // Migration: add invite_id to messages table
   try {
-    db.exec('ALTER TABLE messages ADD COLUMN invite_id TEXT REFERENCES server_invitations(id) ON DELETE SET NULL');
+    await db.exec('ALTER TABLE messages ADD COLUMN invite_id TEXT REFERENCES server_invitations(id) ON DELETE SET NULL');
   } catch {}
 
   // Migration: add banner_url to server_members
   try {
-    db.exec('ALTER TABLE server_members ADD COLUMN banner_url TEXT');
+    await db.exec('ALTER TABLE server_members ADD COLUMN banner_url TEXT');
   } catch {}
 
   // Migration: add allow_registration to instance_settings
   try {
-    db.exec('ALTER TABLE instance_settings ADD COLUMN allow_registration INTEGER NOT NULL DEFAULT 1');
+    await db.exec('ALTER TABLE instance_settings ADD COLUMN allow_registration INTEGER NOT NULL DEFAULT 1');
   } catch {}
 
   // Migration: add instance_name to instance_settings
   try {
-    db.exec("ALTER TABLE instance_settings ADD COLUMN instance_name TEXT NOT NULL DEFAULT 'SellServ Voice'");
+    await db.exec("ALTER TABLE instance_settings ADD COLUMN instance_name TEXT NOT NULL DEFAULT 'SellServ Voice'");
   } catch {}
 
   // Migration: add type and metadata columns to messages (for call system messages)
   try {
-    db.exec("ALTER TABLE messages ADD COLUMN type TEXT NOT NULL DEFAULT 'user'");
+    await db.exec("ALTER TABLE messages ADD COLUMN type TEXT NOT NULL DEFAULT 'user'");
   } catch {}
   try {
-    db.exec('ALTER TABLE messages ADD COLUMN metadata TEXT');
+    await db.exec('ALTER TABLE messages ADD COLUMN metadata TEXT');
   } catch {}
 
   // ─── Premium subscription infrastructure ───
 
   // Migration: add pro column to roles (marks a role as granting premium status)
   try {
-    db.exec('ALTER TABLE roles ADD COLUMN pro INTEGER NOT NULL DEFAULT 0');
+    await db.exec('ALTER TABLE roles ADD COLUMN pro INTEGER NOT NULL DEFAULT 0');
   } catch {}
 
   // Migration: add premium_tier to users (cached premium status)
   try {
-    db.exec("ALTER TABLE users ADD COLUMN premium_tier TEXT NOT NULL DEFAULT 'free'");
+    await db.exec("ALTER TABLE users ADD COLUMN premium_tier TEXT NOT NULL DEFAULT 'free'");
   } catch {}
 
   // Create subscriptions table for Stripe billing
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS subscriptions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1315,57 +1335,58 @@ export function initSchema() {
 
   // Seed default global "Pro" role if it doesn't exist
   {
-    const proRole = db.prepare(
+    const proRole = await db.queryOne(
       "SELECT id FROM roles WHERE server_id IS NULL AND pro = 1 LIMIT 1",
-    ).get();
+    );
     if (!proRole) {
       const id = randomUUID();
-      db.prepare(
+      await db.run(
         `INSERT INTO roles (id, name, color, position, permissions, is_default, server_id, pro)
          VALUES (?, 'Pro', '#f59e0b', 100, '{}', 0, NULL, 1)`,
-      ).run(id);
+        [id],
+      );
     }
   }
 
   // Migration: add alpha_billing toggle to instance_settings
   try {
-    db.exec('ALTER TABLE instance_settings ADD COLUMN alpha_billing INTEGER NOT NULL DEFAULT 0');
+    await db.exec('ALTER TABLE instance_settings ADD COLUMN alpha_billing INTEGER NOT NULL DEFAULT 0');
     // Seed from env var on first migration only
     if (process.env.ALPHA_PHASE === 'true') {
-      db.prepare('UPDATE instance_settings SET alpha_billing = 1 WHERE id = 1').run();
+      await db.run('UPDATE instance_settings SET alpha_billing = 1 WHERE id = 1');
     }
   } catch {}
 
   // Migration: add legal URLs to instance_settings
   try {
-    db.exec("ALTER TABLE instance_settings ADD COLUMN terms_url TEXT NOT NULL DEFAULT ''");
+    await db.exec("ALTER TABLE instance_settings ADD COLUMN terms_url TEXT NOT NULL DEFAULT ''");
   } catch {}
   try {
-    db.exec("ALTER TABLE instance_settings ADD COLUMN privacy_url TEXT NOT NULL DEFAULT ''");
+    await db.exec("ALTER TABLE instance_settings ADD COLUMN privacy_url TEXT NOT NULL DEFAULT ''");
   } catch {}
 
   // Migration: add author column to link_previews
   try {
-    db.exec('ALTER TABLE link_previews ADD COLUMN author TEXT');
+    await db.exec('ALTER TABLE link_previews ADD COLUMN author TEXT');
   } catch {}
 
   // Migration: add suppress_everyone to server_members
   try {
-    db.exec('ALTER TABLE server_members ADD COLUMN suppress_everyone INTEGER NOT NULL DEFAULT 0');
+    await db.exec('ALTER TABLE server_members ADD COLUMN suppress_everyone INTEGER NOT NULL DEFAULT 0');
   } catch {}
 
   // Migration: add muted_until to server_members
   try {
-    db.exec('ALTER TABLE server_members ADD COLUMN muted_until TEXT');
+    await db.exec('ALTER TABLE server_members ADD COLUMN muted_until TEXT');
   } catch {}
 
   // Migration: normalize 'default' notification_level to 'mentions'
   try {
-    db.exec("UPDATE server_members SET notification_level = 'mentions' WHERE notification_level = 'default'");
+    await db.exec("UPDATE server_members SET notification_level = 'mentions' WHERE notification_level = 'default'");
   } catch {}
 
   // Channel notification overrides
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS channel_notification_overrides (
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
@@ -1376,7 +1397,7 @@ export function initSchema() {
   `);
 
   // DM notification overrides (mute only)
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS dm_notification_overrides (
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
@@ -1386,7 +1407,7 @@ export function initSchema() {
   `);
 
   // Pending notifications for data-only push
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS pending_notifications (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1400,7 +1421,7 @@ export function initSchema() {
   `);
 
   // OAuth2 authorization codes + tokens (for admin console OAuth2 provider)
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS oauth2_codes (
       code TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1429,5 +1450,5 @@ export function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_oauth2_tokens_expires ON oauth2_tokens(expires_at);
   `);
 
-  migrateDeviceTokens();
+  await migrateDeviceTokens();
 }
