@@ -71,7 +71,7 @@
 
 SellServ Voice runs in two modes from the same codebase — a simple self-hosted setup or a scaled production deployment.
 
-### Self-Hosted (Default)
+### Self-Hosted
 
 Single container, zero external dependencies. Everything just works.
 
@@ -87,9 +87,9 @@ Single container, zero external dependencies. Everything just works.
 | Desktop | Electron + electron-builder |
 | Mobile | Capacitor (Android) |
 
-### Production (Official Instance)
+### Production
 
-Multi-container deployment for scaling to thousands of users. Activated via environment variables — same Docker image.
+Multi-container deployment for scaling to thousands of users. Same Docker image, activated via environment variables.
 
 | Layer | Technology |
 |---|---|
