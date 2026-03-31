@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '$lib/api';
   import { hasPermissionStore } from '$lib/stores/permissions';
+  import { toast } from '$lib/stores/toast';
   import type { InviteCode } from '@voip-server/shared';
   import { getActiveServerId } from '$lib/stores/servers';
 
@@ -17,7 +18,9 @@
       .then((codes) => {
         inviteCodes = codes;
       })
-      .catch(() => {});
+      .catch((err: any) => {
+        toast.error(err.message || 'Failed to load invite codes');
+      });
   });
 
   async function createInviteCode() {

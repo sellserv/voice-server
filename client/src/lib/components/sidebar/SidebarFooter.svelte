@@ -45,9 +45,7 @@
 
 <div class="sidebar-footer">
   {#if showStatusPicker}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="status-picker-backdrop" onclick={() => (showStatusPicker = false)}></div>
+    <button type="button" class="status-picker-backdrop" onclick={() => (showStatusPicker = false)} aria-label="Close status picker"></button>
     <div class="status-picker">
       <div class="status-picker-header">Set Status</div>
       <button class="status-option" onclick={() => setStatus('online')}>
@@ -67,9 +65,7 @@
 
   <div class="user-footer">
     <div class="user-pill-container">
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="user-pill" onclick={() => (showStatusPicker = !showStatusPicker)} title="Change Status">
+      <button type="button" class="user-pill" onclick={() => (showStatusPicker = !showStatusPicker)} title="Change Status" aria-label="Change Status" aria-expanded={showStatusPicker}>
         <Avatar
           src={$currentUser?.avatar_url}
           alt={$currentUser?.display_name || $currentUser?.username || '?'}
@@ -81,7 +77,7 @@
           <span class="user-name">{$currentUser?.display_name}</span>
           <span class="user-tag">@{$currentUser?.username}</span>
         </div>
-      </div>
+      </button>
 
       <div class="footer-actions">
         {#if $inVoiceChannel}
@@ -153,6 +149,10 @@
     padding: 2px;
     border-radius: 4px;
     transition: background 0.1s var(--ease-out);
+    background: none;
+    border: none;
+    color: inherit;
+    text-align: left;
   }
 
   .user-pill:hover {
@@ -227,6 +227,10 @@
     position: fixed;
     inset: 0;
     z-index: 1000;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: default;
   }
 
   .status-picker {

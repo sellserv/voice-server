@@ -102,6 +102,7 @@
   import { officialInstance } from '$lib/stores/features';
   import SettingsModal from '$lib/components/SettingsModal.svelte';
   import ServerSettings from '$lib/components/ServerSettings.svelte';
+  import { APP_NAME } from '$lib/constants';
 
   let { children } = $props();
 
@@ -140,7 +141,7 @@
   // Reactive tab title with unread count
   $effect(() => {
     const total = Array.from($unreadCounts.values()).reduce((a, b) => a + b, 0);
-    const name = $serverSettings?.name || 'SellServ Voice';
+    const name = $serverSettings?.name || APP_NAME;
     document.title = total > 0 ? `(${total}) ${name}` : name;
   });
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { updateReady, openStoreUpdate, openDownloadsPage } from '$lib/updater';
+  import { APP_NAME } from '$lib/constants';
 
   let dismissed = $state(false);
 
@@ -21,9 +22,9 @@
     <div class="modal" onclick={(e) => e.stopPropagation()}>
       <h3 class="title">Update Available</h3>
       {#if $updateReady?.store}
-        <p class="message">A new version of SellServ Voice (v{$updateReady?.version}) is available in the Microsoft Store.</p>
+        <p class="message">A new version of {APP_NAME} (v{$updateReady?.version}) is available in the Microsoft Store.</p>
       {:else}
-        <p class="message">A new version of SellServ Voice (v{$updateReady?.version}) is available. Visit the downloads page to get the latest version.</p>
+        <p class="message">A new version of {APP_NAME} (v{$updateReady?.version}) is available. Visit the downloads page to get the latest version.</p>
       {/if}
       <div class="actions">
         <button class="btn update" onclick={handleUpdate}>{$updateReady?.store ? 'Update' : 'Download'}</button>

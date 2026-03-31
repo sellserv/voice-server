@@ -2,9 +2,10 @@ import { writable } from 'svelte/store';
 import { api } from '$lib/api';
 import type { ServerSettings } from '@voip-server/shared';
 import { getActiveServerId } from './servers';
+import { APP_NAME } from '$lib/constants';
 
 export const serverSettings = writable<ServerSettings>({
-  name: 'SellServ Voice',
+  name: APP_NAME,
   icon_url: null,
   enabled_apps: [],
   afk_channel_id: null,

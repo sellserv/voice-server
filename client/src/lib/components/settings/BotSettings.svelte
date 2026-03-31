@@ -44,7 +44,9 @@
         bots = b;
         initAutomodState(b);
       })
-      .catch(() => {});
+      .catch((err: any) => {
+        toast.error(err.message || 'Failed to load bots');
+      });
     loadChannels();
   });
 

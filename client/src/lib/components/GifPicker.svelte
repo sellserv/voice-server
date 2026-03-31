@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { api } from '$lib/api';
+  import { toast } from '$lib/stores/toast';
 
   let { onSelect }: { onSelect: (gifUrl: string) => void } = $props();
 
@@ -24,8 +25,9 @@
     try {
       const data = await api.get<{ data: any[] }>('/api/giphy/search');
       gifs = data.data ?? [];
-    } catch {
+    } catch (err: any) {
       gifs = [];
+      toast.error(err.message || 'Failed to load GIFs');
     } finally {
       loading = false;
     }
@@ -40,8 +42,9 @@
     try {
       const data = await api.get<{ data: any[] }>(`/api/giphy/search?q=${encodeURIComponent(q)}`);
       gifs = data.data ?? [];
-    } catch {
+    } catch (err: any) {
       gifs = [];
+      toast.error(err.message || 'Failed to search GIFs');
     } finally {
       loading = false;
     }

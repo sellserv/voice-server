@@ -15,6 +15,7 @@
   import ChatPane from './ChatPane.svelte';
   import { resolveAsset } from '$lib/stores/server';
   import Icon from './Icon.svelte';
+  import { toast } from '$lib/stores/toast';
 
   let {
     videoId,
@@ -121,7 +122,7 @@
         await new Promise((r) => setTimeout(r, 500));
         if (el === iframeEl && videoId) attachPlayer();
       } catch {
-        // ignore
+        toast.error('Failed to load video player');
       }
     }
     init();

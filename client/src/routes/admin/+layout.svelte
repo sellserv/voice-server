@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { currentUser } from '$lib/stores/auth';
   import { officialInstance } from '$lib/stores/features';
+  import { APP_NAME } from '$lib/constants';
 
   $effect(() => {
     if ($currentUser && !$currentUser.is_instance_admin) {
@@ -29,7 +30,7 @@
   <div class="admin-layout">
     <nav class="top-bar">
       <div class="top-left">
-        <span class="brand">SellServ Admin</span>
+        <span class="brand">{APP_NAME} Admin</span>
       </div>
       <div class="top-right">
         <a href="/" class="back-link">Back to Chat</a>

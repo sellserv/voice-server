@@ -6,6 +6,7 @@
   import { get } from 'svelte/store';
   import { resolveAsset } from '$lib/stores/server';
   import Icon from './Icon.svelte';
+  import { toast } from '$lib/stores/toast';
 
   let elapsed = $state(0);
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -67,8 +68,9 @@
       try {
         await startVideo();
         cameraOn = true;
-      } catch (err) {
+      } catch (err: any) {
         console.error('Failed to start camera:', err);
+        toast.error(err.message || 'Failed to start camera');
       }
     }
   }
@@ -79,8 +81,9 @@
       try {
         await startVideo();
         cameraOn = true;
-      } catch (err) {
+      } catch (err: any) {
         console.error('Failed to start camera after accepting:', err);
+        toast.error(err.message || 'Failed to start camera');
       }
     }, 1500);
   }

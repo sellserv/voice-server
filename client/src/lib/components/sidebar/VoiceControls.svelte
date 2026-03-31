@@ -10,6 +10,7 @@
   import { isScreenSharing } from '$lib/stores/screenShare';
   import { leaveVoice, startScreenShare, stopScreenShare } from '$lib/webrtc';
   import Icon from '../Icon.svelte';
+  import { toast } from '$lib/stores/toast';
 
   let pingBars = $derived(
     $pingMs === null ? 1 : $pingMs < 50 ? 4 : $pingMs < 100 ? 3 : $pingMs < 200 ? 2 : 1,
@@ -37,6 +38,7 @@
         await startScreenShare();
       } catch (e: any) {
         console.error('Screen share failed:', e);
+        toast.error(e.message || 'Failed to share screen');
       }
     }
   }
@@ -44,9 +46,7 @@
 
 {#if $inVoiceChannel}
   <div class="voice-status">
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="voice-status-info" onclick={() => ($showPingGraph = !$showPingGraph)}>
+    <button type="button" class="voice-status-info" onclick={() => ($showPingGraph = !$showPingGraph)} aria-label="Toggle ping graph">
       <svg class="wifi-icon" viewBox="0 0 24 24" fill="none">
         <rect x="2" y="18" width="4" height="4" rx="0.5" fill={pingBars >= 1 ? pingColor : 'var(--bg-light)'} />
         <rect x="8" y="14" width="4" height="8" rx="0.5" fill={pingBars >= 2 ? pingColor : 'var(--bg-light)'} />
@@ -59,7 +59,7 @@
           <span class="voice-status-ping">{$pingMs}ms</span>
         {/if}
       </div>
-    </div>
+    </button>
     <div class="voice-status-actions">
       <button
         class="voice-status-btn"
@@ -101,6 +101,10 @@
     transition: all 0.2s var(--ease-out);
     flex: 1;
     min-width: 0;
+    background: none;
+    border: none;
+    text-align: left;
+    color: inherit;
   }
 
   .voice-status-info:hover {

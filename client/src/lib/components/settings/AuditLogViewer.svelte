@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '$lib/api';
   import { getActiveServerId } from '$lib/stores/servers';
+  import { toast } from '$lib/stores/toast';
 
   interface AuditEntry {
     id: number;
@@ -50,9 +51,10 @@
       const res = await api.get<AuditLogResponse>(url);
       entries = res.entries;
       total = res.total;
-    } catch {
+    } catch (err: any) {
       entries = [];
       total = 0;
+      toast.error(err.message || 'Failed to load audit log');
     } finally {
       loading = false;
     }

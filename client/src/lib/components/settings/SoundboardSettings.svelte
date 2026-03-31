@@ -44,13 +44,17 @@
       .then((s) => {
         sounds = s;
       })
-      .catch(() => {});
+      .catch((err: any) => {
+        toast.error(err.message || 'Failed to load soundboard');
+      });
     api
       .get<any[]>(`/api/servers/${serverId}/custom-emojis`)
       .then((e) => {
         customEmojis = e;
       })
-      .catch(() => {});
+      .catch((err: any) => {
+        toast.error(err.message || 'Failed to load emojis');
+      });
   });
 
   $effect(() => {

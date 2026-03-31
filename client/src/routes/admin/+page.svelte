@@ -2,14 +2,15 @@
   import { api } from '$lib/api';
   import { confirm } from '$lib/stores/toast';
   import { officialInstance } from '$lib/stores/features';
+  import { APP_NAME } from '$lib/constants';
 
   let stats: any = $state(null);
   let loading = $state(true);
   let error = $state('');
   let registrationOpen = $state(true);
   let alphaBilling = $state(false);
-  let instanceName = $state('SellServ Voice');
-  let instanceNameInput = $state('SellServ Voice');
+  let instanceName = $state(APP_NAME);
+  let instanceNameInput = $state(APP_NAME);
   let termsUrl = $state('');
   let termsUrlInput = $state('');
   let privacyUrl = $state('');
@@ -26,7 +27,7 @@
       stats = st;
       registrationOpen = !!is.allow_registration;
       alphaBilling = !!is.alpha_billing;
-      instanceName = is.instance_name || 'SellServ Voice';
+      instanceName = is.instance_name || APP_NAME;
       instanceNameInput = instanceName;
       termsUrl = is.terms_url || '';
       termsUrlInput = termsUrl;
@@ -81,7 +82,7 @@
     if (!instanceNameInput.trim() || instanceNameInput.trim() === instanceName) return;
     try {
       const result = await api.patch<any>('/api/admin/instance-settings', { instance_name: instanceNameInput.trim() });
-      instanceName = result.instance_name || 'SellServ Voice';
+      instanceName = result.instance_name || APP_NAME;
       instanceNameInput = instanceName;
     } catch (e: any) {
       error = e?.message || 'Failed to update instance name';

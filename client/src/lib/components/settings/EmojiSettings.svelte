@@ -21,7 +21,9 @@
       .then((e) => {
         emojis = e;
       })
-      .catch(() => {});
+      .catch((err: any) => {
+        toast.error(err.message || 'Failed to load emojis');
+      });
   });
 
   function handleEmojiFile(e: Event) {

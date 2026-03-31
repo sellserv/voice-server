@@ -41,8 +41,9 @@
     try {
       const serverId = getActiveServerId();
       pendingInvites = await api.get(`/api/servers/${serverId}/pending-invitations`);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to load pending invites:', e);
+      toast.error(e.message || 'Failed to load pending invitations');
     } finally {
       loadingInvites = false;
     }
@@ -60,8 +61,9 @@
       try {
         const serverId = getActiveServerId();
         inviteResults = await api.get(`/api/servers/${serverId}/invitable-users?q=${encodeURIComponent(query)}`);
-      } catch {
+      } catch (err: any) {
         inviteResults = [];
+        toast.error(err.message || 'Failed to search users');
       } finally {
         inviteSearching = false;
       }

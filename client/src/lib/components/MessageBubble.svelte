@@ -68,8 +68,9 @@
       api.get(`/api/invitations/${message.invite_id}`).then((inv: ServerInvitation) => {
         inviteData = inv;
         loadingInvite = false;
-      }).catch(() => {
+      }).catch((err: any) => {
         loadingInvite = false;
+        toast.error(err.message || 'Failed to load invite');
       });
     }
   });

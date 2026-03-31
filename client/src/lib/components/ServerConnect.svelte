@@ -1,5 +1,6 @@
 <script lang="ts">
   import { serverUrl } from '$lib/stores/server';
+  import { APP_NAME } from '$lib/constants';
 
   let showCustom = $state(false);
   let url = $state('');
@@ -46,7 +47,7 @@
 
 <div class="connect-container">
   <div class="connect-wrapper">
-    <h1 class="brand">SellServ Voice</h1>
+    <h1 class="brand">{APP_NAME}</h1>
     <p class="tagline">Choose where to connect</p>
 
     <!-- Official Instance Card -->

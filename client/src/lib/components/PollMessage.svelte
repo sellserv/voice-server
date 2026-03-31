@@ -6,6 +6,7 @@
   import { sendWs, onWsEvent } from '$lib/ws';
   import type { Poll } from '@voip-server/shared';
   import Icon from './Icon.svelte';
+  import { toast } from '$lib/stores/toast';
 
   let { pollId }: { pollId: string } = $props();
 
@@ -23,6 +24,7 @@
       poll = polls.find(p => p.id === pollId) || null;
     } catch (err: any) {
       console.error('Failed to load poll:', err);
+      toast.error(err.message || 'Failed to load poll');
     } finally {
       loading = false;
     }
@@ -91,6 +93,7 @@
       await api.patch(`/api/servers/${serverId}/polls/${pollId}/close`, {});
     } catch (err: any) {
       console.error('Failed to close poll:', err);
+      toast.error(err.message || 'Failed to close poll');
     } finally {
       closing = false;
     }

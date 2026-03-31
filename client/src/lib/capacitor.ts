@@ -1,4 +1,5 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { APP_NAME } from './constants.js';
 import { Preferences } from '@capacitor/preferences';
 import { PushNotifications } from '@capacitor/push-notifications';
 
@@ -63,7 +64,7 @@ export async function initPushNotifications(): Promise<void> {
 
       const { LocalNotifications } = await import('@capacitor/local-notifications');
 
-      let title = 'SellServ Voice';
+      let title = APP_NAME;
       let body = 'New notification';
 
       switch (result.type) {

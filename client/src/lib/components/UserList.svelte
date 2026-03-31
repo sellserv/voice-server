@@ -122,6 +122,14 @@
     anchorEl = event.currentTarget as HTMLElement;
   }
 
+  function handleUserKeydown(user: UserInfo, event: KeyboardEvent) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      selectedUser = user;
+      anchorEl = event.currentTarget as HTMLElement;
+    }
+  }
+
   async function handleDmClick(e: MouseEvent, userId: string) {
     e.stopPropagation();
     try {
@@ -144,9 +152,13 @@
     <div class="users">
       {#each group.users as user (user.userId)}
         {@const userData = userMap.get(user.userId)}
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="user" onclick={(e) => userData && handleUserClick(userData, e)}>
+        <div
+          class="user"
+          role="button"
+          tabindex="0"
+          onclick={(e) => userData && handleUserClick(userData, e)}
+          onkeydown={(e) => userData && handleUserKeydown(userData, e)}
+        >
           <Avatar
             src={userData?.avatar_url}
             alt={userData?.display_name || userData?.username || user.display_name || user.username}
@@ -183,9 +195,13 @@
     <div class="users">
       {#each onlineBots as user (user.userId)}
         {@const userData = userMap.get(user.userId)}
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="user" onclick={(e) => userData && handleUserClick(userData, e)}>
+        <div
+          class="user"
+          role="button"
+          tabindex="0"
+          onclick={(e) => userData && handleUserClick(userData, e)}
+          onkeydown={(e) => userData && handleUserKeydown(userData, e)}
+        >
           <Avatar
             src={userData?.avatar_url}
             alt={userData?.display_name || userData?.username || user.display_name || user.username}
@@ -211,9 +227,13 @@
     <h3 class="title offline-title">Offline — {offlineUsers.length}</h3>
     <div class="users">
       {#each offlineUsers as user (user.id)}
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="user offline" onclick={(e) => handleUserClick(user, e)}>
+        <div
+          class="user offline"
+          role="button"
+          tabindex="0"
+          onclick={(e) => handleUserClick(user, e)}
+          onkeydown={(e) => handleUserKeydown(user, e)}
+        >
           <Avatar
             src={user.avatar_url}
             alt={user.display_name || user.username}
@@ -302,6 +322,11 @@
     cursor: pointer;
     position: relative;
     min-width: 0;
+  }
+
+  .user:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
 
   .user:hover {

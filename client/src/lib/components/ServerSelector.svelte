@@ -1,5 +1,6 @@
 <script lang="ts">
   import { serverUrl } from '$lib/stores/server';
+  import { APP_NAME } from '$lib/constants';
 
   let customUrl = $state('');
   let error = $state('');
@@ -48,9 +49,9 @@
 <div class="selector-container">
   <div class="selector-card">
     <div class="logo">
-      <img src="/icon-512x512.png" alt="SellServ Voice" class="logo-img" />
+      <img src="/icon-512x512.png" alt={APP_NAME} class="logo-img" />
     </div>
-    <h1 class="title">SellServ Voice</h1>
+    <h1 class="title">{APP_NAME}</h1>
 
     <button class="instance-option official" onclick={connectOfficial}>
       <div class="instance-icon official-icon">&#10022;</div>

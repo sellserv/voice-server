@@ -19,6 +19,7 @@
     forgotPasswordState,
     accountLocked,
   } from '$lib/stores/auth';
+  import { APP_NAME } from '$lib/constants';
   import { loadChannels } from '$lib/stores/channels';
   import { connectWs } from '$lib/ws';
   import { api } from '$lib/api';
@@ -38,7 +39,7 @@
   let registrationOpen = $state(true);
   let termsUrl = $state('');
   let privacyUrl = $state('');
-  let serverName = $state('SellServ Voice');
+  let serverName = $state(APP_NAME);
 
   async function loadPublicSettings() {
     try {
@@ -908,6 +909,7 @@
                   placeholder="Your username"
                   required
                   autocomplete="username"
+                  aria-invalid={!!error}
                 />
               </label>
 
@@ -920,6 +922,7 @@
                     placeholder="you@example.com"
                     required
                     autocomplete="email"
+                    aria-invalid={!!error}
                   />
                 </label>
 
@@ -939,6 +942,7 @@
                   placeholder="••••••••••••"
                   required
                   autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
+                  aria-invalid={!!error}
                 />
               </label>
 

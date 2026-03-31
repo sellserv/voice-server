@@ -548,6 +548,7 @@
       }
     } catch (err: any) {
       console.error('Failed to save profile:', err);
+      toast.error(err.message || 'Failed to save profile');
     } finally {
       saving = false;
     }
@@ -590,8 +591,9 @@
         videoPreviewStream = await navigator.mediaDevices.getUserMedia({
           video: $selectedVideoDeviceId ? { deviceId: { exact: $selectedVideoDeviceId } } : true,
         });
-      } catch (err) {
+      } catch (err: any) {
         console.error('Failed to start video preview:', err);
+        toast.error(err.message || 'Failed to start camera preview');
       }
     }
   }
@@ -857,8 +859,8 @@
                     <div class="detail-value">
                       {#if showUsernameEdit}
                         <div class="username-edit-form">
-                          <input type="text" class="text-input" bind:value={usernameValue} placeholder="New username" maxlength="24" />
-                          <input type="text" class="text-input" bind:value={usernameMfaCode} placeholder={usernameMfaMethod === 'totp' ? 'Authenticator code' : 'Email code'} maxlength="6" />
+                          <input type="text" class="text-input" bind:value={usernameValue} placeholder="New username" maxlength="24" aria-label="New username" />
+                          <input type="text" class="text-input" bind:value={usernameMfaCode} placeholder={usernameMfaMethod === 'totp' ? 'Authenticator code' : 'Email code'} maxlength="6" aria-label={usernameMfaMethod === 'totp' ? 'Authenticator code' : 'Email verification code'} />
                           <div class="username-edit-actions">
                             <button class="btn-accent" onclick={handleChangeUsername} disabled={usernameLoading || !usernameValue.trim() || !usernameMfaCode.trim()}>
                               {usernameLoading ? 'Saving...' : 'Save'}
@@ -883,13 +885,13 @@
                     <div class="detail-value">
                       {#if emailVerifying}
                         <div class="email-verify-row">
-                          <input type="text" class="text-input" bind:value={emailCode} placeholder="Enter verification code" />
+                          <input type="text" class="text-input" bind:value={emailCode} placeholder="Enter verification code" aria-label="Email verification code" />
                           <button class="btn-accent" onclick={handleVerifyEmailChange} disabled={emailLoading || !emailCode}>Verify</button>
                           <button class="btn-text" onclick={() => emailVerifying = false}>Cancel</button>
                         </div>
                       {:else if showEmailEdit}
                         <div class="email-edit-row">
-                          <input type="email" class="text-input" bind:value={emailValue} placeholder="New email address" />
+                          <input type="email" class="text-input" bind:value={emailValue} placeholder="New email address" aria-label="New email address" />
                           <button class="btn-accent" onclick={handleChangeEmail} disabled={emailLoading || !emailValue || emailValue === $currentUser?.email}>Save</button>
                           <button class="btn-text" onclick={() => showEmailEdit = false}>Cancel</button>
                         </div>
@@ -915,16 +917,16 @@
             {#if cpSuccess}<p class="status-msg success">{cpSuccess}</p>{/if}
             
             <div class="form-group">
-              <label>Current Password</label>
-              <input type="password" class="text-input" bind:value={cpCurrentPassword} placeholder="••••••••••••••••" />
+              <label for="cp-current-password">Current Password</label>
+              <input id="cp-current-password" type="password" class="text-input" bind:value={cpCurrentPassword} placeholder="••••••••••••••••" aria-invalid={!!cpError} />
             </div>
             <div class="form-group">
-              <label>New Password</label>
-              <input type="password" class="text-input" bind:value={cpNewPassword} placeholder="Enter new password" />
+              <label for="cp-new-password">New Password</label>
+              <input id="cp-new-password" type="password" class="text-input" bind:value={cpNewPassword} placeholder="Enter new password" aria-invalid={!!cpError} />
             </div>
             <div class="form-group">
-              <label>Confirm New Password</label>
-              <input type="password" class="text-input" bind:value={cpConfirmPassword} placeholder="Confirm new password" />
+              <label for="cp-confirm-password">Confirm New Password</label>
+              <input id="cp-confirm-password" type="password" class="text-input" bind:value={cpConfirmPassword} placeholder="Confirm new password" aria-invalid={!!cpError} />
             </div>
             <button class="btn-accent" onclick={handleChangePassword} disabled={cpLoading || !cpCurrentPassword || !cpNewPassword}>Change Password</button>
           </section>
@@ -942,13 +944,13 @@
               <div class="profile-editor">
                 <div class="editor-left">
                   <div class="form-group">
-                    <label>Display Name</label>
-                    <input type="text" class="text-input" bind:value={displayName} maxlength="32" />
+                    <label for="profile-display-name">Display Name</label>
+                    <input id="profile-display-name" type="text" class="text-input" bind:value={displayName} maxlength="32" />
                   </div>
-                  
+
                   <div class="form-group">
-                    <label>About Me</label>
-                    <textarea class="text-input" bind:value={bio} maxlength="190" rows="4" placeholder="Tell us about yourself..."></textarea>
+                    <label for="profile-bio">About Me</label>
+                    <textarea id="profile-bio" class="text-input" bind:value={bio} maxlength="190" rows="4" placeholder="Tell us about yourself..."></textarea>
                     <div class="char-count">{bio.length}/190</div>
                   </div>
 
