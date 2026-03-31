@@ -128,22 +128,26 @@ app.addHook('onSend', async (request, reply, payload) => {
   return payload;
 });
 
-// Ensure upload dir exists
+// Ensure upload dir exists (always create it; harmless in S3 mode for temp use)
 mkdirSync(config.uploadDir, { recursive: true });
 
-await app.register(fastifyStatic, {
-  root: resolve(config.uploadDir),
-  prefix: '/uploads/',
-  decorateReply: false,
-  setHeaders: (res, path) => {
-    if (/\.(jpe?g|png|gif|webp)$/i.test(path)) {
-      res.setHeader('Content-Disposition', 'inline');
-    } else {
-      res.setHeader('Content-Disposition', 'attachment');
-    }
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-  },
-});
+// Only serve uploads as static files in local storage mode.
+// In S3 mode, file URLs point directly to the CDN/bucket.
+if (config.storageType === 'local') {
+  await app.register(fastifyStatic, {
+    root: resolve(config.uploadDir),
+    prefix: '/uploads/',
+    decorateReply: false,
+    setHeaders: (res, path) => {
+      if (/\.(jpe?g|png|gif|webp)$/i.test(path)) {
+        res.setHeader('Content-Disposition', 'inline');
+      } else {
+        res.setHeader('Content-Disposition', 'attachment');
+      }
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+    },
+  });
+}
 
 // Serve built client in production
 const clientDist = resolve(import.meta.dirname, '../../client/build');

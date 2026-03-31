@@ -61,9 +61,15 @@ export async function initAdapters(): Promise<Adapters> {
     voice = new MediasoupAdapter();
   }
 
-  // Storage — Phase 4 (for now, always use local)
-  const { LocalAdapter } = await import('./storage/local.js');
-  const storage = new LocalAdapter(config.uploadDir);
+  // Storage
+  let storage;
+  if (config.storageType === 's3') {
+    const { S3Adapter } = await import('./storage/s3.js');
+    storage = new S3Adapter(config.s3);
+  } else {
+    const { LocalAdapter } = await import('./storage/local.js');
+    storage = new LocalAdapter(config.uploadDir);
+  }
 
   adapters = { db: dbAdapter, pubsub, state, voice, storage };
   return adapters;

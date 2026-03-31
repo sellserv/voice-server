@@ -2,6 +2,18 @@ import { getServerUrl, getDesktopCsrf, getDesktopToken, isDesktop, isCapacitor, 
 import { toast } from './stores/toast';
 
 let rateLimitWarned = false;
+let serverConfig: { voiceType: string; storageType: string } | null = null;
+
+async function getServerConfig(): Promise<{ voiceType: string; storageType: string }> {
+  if (serverConfig) return serverConfig;
+  try {
+    const res = await fetch(`${getBase()}/api/config`);
+    serverConfig = await res.json();
+  } catch {
+    serverConfig = { voiceType: 'mediasoup', storageType: 'local' };
+  }
+  return serverConfig!;
+}
 
 function getBase(): string {
   return getServerUrl();
@@ -73,8 +85,28 @@ export const api = {
   delete: <T>(path: string) => request<T>('DELETE', path),
 
   upload: async (file: File | Blob, filename?: string) => {
+    const name = filename ?? (file instanceof File ? file.name : 'upload.bin');
+    const config = await getServerConfig();
+
+    if (config.storageType === 's3') {
+      // S3 mode: presign → upload to S3 → confirm
+      const presign = await request<{ uploadUrl: string; key: string; fileUrl: string }>(
+        'POST', '/api/upload/presign', { filename: name, contentType: file.type },
+      );
+      const putRes = await fetch(presign.uploadUrl, {
+        method: 'PUT',
+        body: file,
+        headers: { 'Content-Type': file.type },
+      });
+      if (!putRes.ok) throw new Error('Upload to storage failed');
+      return request('POST', '/api/upload/confirm', {
+        key: presign.key, filename: name, contentType: file.type, sizeBytes: file.size,
+      });
+    }
+
+    // Local mode: upload directly to server
     const form = new FormData();
-    form.append('file', file, filename ?? (file instanceof File ? file.name : 'upload.bin'));
+    form.append('file', file, name);
     const headers: Record<string, string> = { 'X-CSRF-Token': getCsrfToken() };
     if (isDesktop || isCapacitor) {
       const token = getDesktopToken();

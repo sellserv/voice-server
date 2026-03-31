@@ -5,7 +5,7 @@ import { unlink } from 'fs/promises';
 import { pipeline } from 'stream/promises';
 import { extname, basename, relative } from 'path';
 import { resolve } from 'path';
-import { getDb } from '../adapters/index.js';
+import { getDb, getAdapters } from '../adapters/index.js';
 import { config } from '../config.js';
 import { requireAuth } from '../auth/middleware.js';
 import { checkNewUserCooldown } from '../auth/cooldown.js';
@@ -132,6 +132,110 @@ export default async function uploadRoutes(app: FastifyInstance) {
       `INSERT INTO files (id, user_id, original_name, stored_name, mime_type, size_bytes)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [id, request.user.userId, safeOriginalName, storedName, data.mimetype, sizeBytes],
+    );
+
+    const file = await getDb().queryOne<FileRecord>('SELECT * FROM files WHERE id = ?', [id]);
+    return reply.code(201).send(file);
+  });
+
+  // Request presigned upload URL (S3 mode only)
+  app.post('/api/upload/presign', { preHandler: requireAuth }, async (request, reply) => {
+    const { filename, contentType } = request.body as { filename: string; contentType: string };
+
+    if (!ALLOWED_MIMES.has(contentType)) {
+      return reply.code(400).send({ error: `File type not allowed: ${contentType}` });
+    }
+
+    // New-user cooldown
+    const cooldown = await checkNewUserCooldown(request.user.userId);
+    if (cooldown.restricted) {
+      return reply.code(403).send({
+        error: `New accounts cannot upload files yet. Try again in ${cooldown.minutesRemaining} minute(s).`,
+      });
+    }
+
+    // Check daily upload limit
+    const today = new Date().toISOString().split('T')[0];
+    const dailyUsage = await getDb().queryOne<{ total: number }>(
+      `SELECT COALESCE(SUM(size_bytes), 0) as total FROM files
+       WHERE user_id = ? AND created_at >= ?`,
+      [request.user.userId, today],
+    );
+
+    if ((dailyUsage?.total ?? 0) >= config.maxDailyUploadPerUser) {
+      return reply.code(429).send({ error: 'Daily upload limit reached' });
+    }
+
+    // Check total disk usage
+    const totalDisk = await getDb().queryOne<{ total: number }>(
+      'SELECT COALESCE(SUM(size_bytes), 0) as total FROM files',
+    );
+
+    if ((totalDisk?.total ?? 0) >= config.maxTotalDisk) {
+      return reply.code(507).send({ error: 'Server storage full' });
+    }
+
+    const id = randomUUID();
+    const ext = extname(basename(filename)).toLowerCase();
+
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      return reply.code(400).send({ error: `File extension not allowed: ${ext}` });
+    }
+
+    const key = `${id}${ext}`;
+
+    const storage = getAdapters().storage;
+    if (!storage.getPresignedUploadUrl) {
+      return reply.code(400).send({ error: 'Presigned uploads not supported in local storage mode' });
+    }
+
+    const uploadUrl = await storage.getPresignedUploadUrl(key, contentType);
+    const fileUrl = storage.getUrl(key);
+
+    return { uploadUrl, key, fileUrl };
+  });
+
+  // Confirm a direct-to-S3 upload and create the DB record
+  app.post('/api/upload/confirm', { preHandler: requireAuth }, async (request, reply) => {
+    const { key, filename, contentType, sizeBytes } = request.body as {
+      key: string;
+      filename: string;
+      contentType: string;
+      sizeBytes: number;
+    };
+
+    const storage = getAdapters().storage;
+    const exists = await storage.exists(key);
+    if (!exists) {
+      return reply.code(400).send({ error: 'File not found in storage' });
+    }
+
+    // Validate key format: UUID + allowed extension
+    const ext = extname(key).toLowerCase();
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      return reply.code(400).send({ error: `File extension not allowed: ${ext}` });
+    }
+
+    if (!ALLOWED_MIMES.has(contentType)) {
+      return reply.code(400).send({ error: `File type not allowed: ${contentType}` });
+    }
+
+    const userIsPremium = await isPremium(request.user.userId);
+    const maxSize = userIsPremium ? PRO_FILE_SIZE : FREE_FILE_SIZE;
+    if (sizeBytes > maxSize) {
+      const limitMB = Math.round(maxSize / (1024 * 1024));
+      return reply.code(413).send({
+        error: `File too large. ${userIsPremium ? 'Pro' : 'Free'} limit is ${limitMB}MB.`,
+        premiumRequired: !userIsPremium,
+      });
+    }
+
+    const id = key.replace(/\.[^.]+$/, '');
+    const safeOriginalName = basename(filename).replace(/[^a-zA-Z0-9._-]/g, '_');
+
+    await getDb().run(
+      'INSERT INTO files (id, user_id, original_name, stored_name, mime_type, size_bytes) VALUES (?, ?, ?, ?, ?, ?)',
+      [id, request.user.userId, safeOriginalName, key, contentType, sizeBytes],
     );
 
     const file = await getDb().queryOne<FileRecord>('SELECT * FROM files WHERE id = ?', [id]);
