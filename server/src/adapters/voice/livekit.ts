@@ -5,10 +5,10 @@ export class LiveKitAdapter implements VoiceAdapter {
   private roomService: RoomServiceClient;
   private apiKey: string;
   private apiSecret: string;
-  private url: string;
+  private publicUrl: string;
 
-  constructor(url: string, apiKey: string, apiSecret: string) {
-    this.url = url;
+  constructor(url: string, publicUrl: string, apiKey: string, apiSecret: string) {
+    this.publicUrl = publicUrl || url;
     this.apiKey = apiKey;
     this.apiSecret = apiSecret;
     this.roomService = new RoomServiceClient(url, apiKey, apiSecret);
@@ -53,9 +53,9 @@ export class LiveKitAdapter implements VoiceAdapter {
     }
   }
 
-  /** Get the LiveKit server URL (needed by clients to connect) */
+  /** Get the public LiveKit URL for clients to connect to */
   getServerUrl(): string {
-    return this.url;
+    return this.publicUrl;
   }
 
   async close(): Promise<void> {}

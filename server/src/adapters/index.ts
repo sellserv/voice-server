@@ -55,7 +55,7 @@ export async function initAdapters(): Promise<Adapters> {
   let voice;
   if (config.voiceType === 'livekit') {
     const { LiveKitAdapter } = await import('./voice/livekit.js');
-    voice = new LiveKitAdapter(config.livekit.url, config.livekit.apiKey, config.livekit.apiSecret);
+    voice = new LiveKitAdapter(config.livekit.url, config.livekit.publicUrl, config.livekit.apiKey, config.livekit.apiSecret);
   } else {
     const { MediasoupAdapter } = await import('./voice/mediasoup.js');
     voice = new MediasoupAdapter();

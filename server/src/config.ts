@@ -88,6 +88,7 @@ export const config = {
   voiceType: env('VOICE_TYPE', 'mediasoup') as 'mediasoup' | 'livekit',
   livekit: {
     url: env('LIVEKIT_URL', ''),
+    publicUrl: env('LIVEKIT_PUBLIC_URL', '') || env('LIVEKIT_URL', ''),
     apiKey: env('LIVEKIT_API_KEY', ''),
     apiSecret: env('LIVEKIT_API_SECRET', ''),
   },

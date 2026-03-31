@@ -1,3 +1,9 @@
+# LiveKit Server Configuration
+# See https://docs.livekit.io/realtime/self-hosting/deployment/
+#
+# IMPORTANT: The API key and secret below MUST match LIVEKIT_API_KEY
+# and LIVEKIT_API_SECRET in your .env file.
+
 port: 7880
 rtc:
   tcp_port: 7881
@@ -5,7 +11,8 @@ rtc:
   port_range_end: 50100
   use_external_ip: true
 keys:
-  # Must match LIVEKIT_API_KEY and LIVEKIT_API_SECRET in .env
-  change-me: change-me
+  # Format: api_key: api_secret
+  # Replace with your actual values (must match .env)
+  your-api-key: your-api-secret
 logging:
   level: info
