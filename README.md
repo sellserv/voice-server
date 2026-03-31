@@ -69,6 +69,12 @@
 
 ## Tech Stack
 
+SellServ Voice runs in two modes from the same codebase — a simple self-hosted setup or a scaled production deployment.
+
+### Self-Hosted (Default)
+
+Single container, zero external dependencies. Everything just works.
+
 | Layer | Technology |
 |---|---|
 | Runtime | Node.js 22 |
@@ -76,13 +82,32 @@
 | Frontend | SvelteKit + Svelte 5 |
 | Database | SQLite via better-sqlite3 + FTS5 |
 | Voice/Video | mediasoup 3.15 (WebRTC SFU) |
+| File Storage | Local disk |
 | Auth | bcrypt + JWT + otpauth (TOTP) |
 | Desktop | Electron + electron-builder |
 | Mobile | Capacitor (Android) |
 
-## Documentation
+### Production (Official Instance)
 
-For self-hosting guides, system requirements, and setup instructions, visit the **[Documentation](https://info.sellserv.net/docs.html)**.
+Multi-container deployment for scaling to thousands of users. Activated via environment variables — same Docker image.
+
+| Layer | Technology |
+|---|---|
+| Database | PostgreSQL 17 with connection pooling |
+| Cache / Pub/Sub | Valkey (Redis-compatible) |
+| Voice/Video | LiveKit (WebRTC SFU) with E2EE |
+| File Storage | S3-compatible (Cloudflare R2) with CDN |
+
+> Both modes use the same adapter layer. Self-hosters get the simple stack by default. Production features activate when their env vars are set (e.g., `DB_TYPE=postgres`, `REDIS_URL`, `VOICE_TYPE=livekit`, `STORAGE_TYPE=s3`).
+
+## Self-Hosting
+
+Deploy configs are in the `deploy/` directory:
+
+- **`deploy/self-hosted/`** — Single container Docker Compose + `.env.example`
+- **`deploy/production/`** — Multi-container setup (PostgreSQL, Valkey, LiveKit) + `.env.example`
+
+For full guides, visit the **[Documentation](https://info.sellserv.net/docs.html)**.
 
 ## License
 
