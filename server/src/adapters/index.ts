@@ -31,13 +31,25 @@ export async function initAdapters(): Promise<Adapters> {
     dbAdapter = sqliteAdapter;
   }
 
-  // Pub/Sub — Phase 2 (for now, always use memory)
-  const { MemoryPubSubAdapter } = await import('./pubsub/memory.js');
-  const pubsub = new MemoryPubSubAdapter();
+  // Pub/Sub
+  let pubsub;
+  if (config.redisUrl) {
+    const { RedisPubSubAdapter } = await import('./pubsub/redis.js');
+    pubsub = new RedisPubSubAdapter(config.redisUrl);
+  } else {
+    const { MemoryPubSubAdapter } = await import('./pubsub/memory.js');
+    pubsub = new MemoryPubSubAdapter();
+  }
 
-  // State — Phase 2 (for now, always use memory)
-  const { MemoryStateAdapter } = await import('./state/memory.js');
-  const state = new MemoryStateAdapter();
+  // State
+  let state;
+  if (config.redisUrl) {
+    const { RedisStateAdapter } = await import('./state/redis.js');
+    state = new RedisStateAdapter(config.redisUrl);
+  } else {
+    const { MemoryStateAdapter } = await import('./state/memory.js');
+    state = new MemoryStateAdapter();
+  }
 
   // Voice — Phase 3 (for now, always use mediasoup stub)
   const { MediasoupAdapter } = await import('./voice/mediasoup.js');
