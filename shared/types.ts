@@ -885,6 +885,12 @@ export type ServerEvent =
       userId: string;
     }
   | {
+      type: 'voice:token';
+      token: string;
+      url: string;
+      channelId: string;
+    }
+  | {
       type: 'error';
       message: string;
       code?: string;

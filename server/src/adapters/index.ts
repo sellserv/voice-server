@@ -51,9 +51,15 @@ export async function initAdapters(): Promise<Adapters> {
     state = new MemoryStateAdapter();
   }
 
-  // Voice — Phase 3 (for now, always use mediasoup stub)
-  const { MediasoupAdapter } = await import('./voice/mediasoup.js');
-  const voice = new MediasoupAdapter();
+  // Voice
+  let voice;
+  if (config.voiceType === 'livekit') {
+    const { LiveKitAdapter } = await import('./voice/livekit.js');
+    voice = new LiveKitAdapter(config.livekit.url, config.livekit.apiKey, config.livekit.apiSecret);
+  } else {
+    const { MediasoupAdapter } = await import('./voice/mediasoup.js');
+    voice = new MediasoupAdapter();
+  }
 
   // Storage — Phase 4 (for now, always use local)
   const { LocalAdapter } = await import('./storage/local.js');

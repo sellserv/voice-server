@@ -5,7 +5,10 @@ import { hasChannelPermission } from '../auth/permissions.js';
 import { VoiceRoom } from './room.js';
 import { isAfkChannel } from './afkManager.js';
 import { userVoiceChannels, cleanupSoundboardForUser } from '../ws/handlers.js';
+import { config } from '../config.js';
+import { getAdapters } from '../adapters/index.js';
 
+// --- Mediasoup peer tracking ---
 const rooms = new Map<string, VoiceRoom>();
 
 async function getOrCreateRoom(channelId: string): Promise<VoiceRoom> {
@@ -21,6 +24,27 @@ async function getOrCreateRoom(channelId: string): Promise<VoiceRoom> {
   return room;
 }
 
+// --- LiveKit peer tracking ---
+type LiveKitPeer = {
+  userId: string;
+  username: string;
+  display_name?: string;
+  muted: boolean;
+  deafened: boolean;
+};
+const livekitPeers = new Map<string, Map<string, LiveKitPeer>>();
+
+function getLivekitRoom(channelId: string): Map<string, LiveKitPeer> {
+  let channel = livekitPeers.get(channelId);
+  if (!channel) {
+    channel = new Map();
+    livekitPeers.set(channelId, channel);
+  }
+  return channel;
+}
+
+// ---
+
 export function leaveVoiceChannel(userId: string) {
   const channelId = userVoiceChannels.get(userId);
   if (!channelId) return;
@@ -28,16 +52,26 @@ export function leaveVoiceChannel(userId: string) {
   // Stop any active soundboard playbacks before removing from channel
   cleanupSoundboardForUser(userId);
 
-  const room = rooms.get(channelId);
-  if (room) {
-    room.removePeer(userId);
-
-    // Get username from peer list before removal or use a fallback
-    broadcastToChannel(channelId, { type: 'voice:left', channelId, userId, username: '' });
-
-    if (room.isEmpty()) {
-      room.close();
-      rooms.delete(channelId);
+  if (config.voiceType === 'livekit') {
+    const channel = livekitPeers.get(channelId);
+    if (channel) {
+      channel.delete(userId);
+      broadcastToChannel(channelId, { type: 'voice:left', channelId, userId, username: '' });
+      if (channel.size === 0) {
+        livekitPeers.delete(channelId);
+        // Best-effort room cleanup; ignore errors if room is already gone
+        getAdapters().voice.deleteRoom(channelId).catch(() => {});
+      }
+    }
+  } else {
+    const room = rooms.get(channelId);
+    if (room) {
+      room.removePeer(userId);
+      broadcastToChannel(channelId, { type: 'voice:left', channelId, userId, username: '' });
+      if (room.isEmpty()) {
+        room.close();
+        rooms.delete(channelId);
+      }
     }
   }
 
@@ -66,23 +100,46 @@ export async function getAllRoomMembers(): Promise<Record<
       deafened: boolean;
     }[]
   > = {};
-  for (const [channelId, room] of rooms) {
-    const peers = room.getPeerList();
-    if (peers.length > 0) {
-      result[channelId] = await Promise.all(peers.map(async (p) => ({
-        userId: p.userId,
-        username: p.username,
-        display_name: p.display_name,
-        avatar_url: await getAvatarUrl(p.userId),
-        muted: p.muted,
-        deafened: p.deafened,
-      })));
+
+  if (config.voiceType === 'livekit') {
+    for (const [channelId, channel] of livekitPeers) {
+      const peers = Array.from(channel.values());
+      if (peers.length > 0) {
+        result[channelId] = await Promise.all(peers.map(async (p) => ({
+          userId: p.userId,
+          username: p.username,
+          display_name: p.display_name,
+          avatar_url: await getAvatarUrl(p.userId),
+          muted: p.muted,
+          deafened: p.deafened,
+        })));
+      }
+    }
+  } else {
+    for (const [channelId, room] of rooms) {
+      const peers = room.getPeerList();
+      if (peers.length > 0) {
+        result[channelId] = await Promise.all(peers.map(async (p) => ({
+          userId: p.userId,
+          username: p.username,
+          display_name: p.display_name,
+          avatar_url: await getAvatarUrl(p.userId),
+          muted: p.muted,
+          deafened: p.deafened,
+        })));
+      }
     }
   }
+
   return result;
 }
 
 export function getPeersInChannel(channelId: string): string[] {
+  if (config.voiceType === 'livekit') {
+    const channel = livekitPeers.get(channelId);
+    if (!channel) return [];
+    return Array.from(channel.keys());
+  }
   const room = rooms.get(channelId);
   if (!room) return [];
   return Array.from(room.peers.keys());
@@ -90,14 +147,24 @@ export function getPeersInChannel(channelId: string): string[] {
 
 /** Called when the mediasoup worker dies — evict all peers and destroy all rooms */
 export async function clearAllRooms() {
-  for (const [channelId, room] of rooms) {
-    for (const userId of room.peers.keys()) {
-      userVoiceChannels.delete(userId);
-      await broadcastToChannel(channelId, { type: 'voice:left', channelId, userId, username: '' });
+  if (config.voiceType === 'livekit') {
+    for (const [channelId, channel] of livekitPeers) {
+      for (const userId of channel.keys()) {
+        userVoiceChannels.delete(userId);
+        await broadcastToChannel(channelId, { type: 'voice:left', channelId, userId, username: '' });
+      }
     }
-    room.close();
+    livekitPeers.clear();
+  } else {
+    for (const [channelId, room] of rooms) {
+      for (const userId of room.peers.keys()) {
+        userVoiceChannels.delete(userId);
+        await broadcastToChannel(channelId, { type: 'voice:left', channelId, userId, username: '' });
+      }
+      room.close();
+    }
+    rooms.clear();
   }
-  rooms.clear();
 }
 
 export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
@@ -107,42 +174,105 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
         // Leave current room if in one
         leaveVoiceChannel(user.userId);
 
-        const room = await getOrCreateRoom(event.channelId);
-        const peer = room.addPeer(user.userId, user.username, await getDisplayName(user.userId));
-        userVoiceChannels.set(user.userId, event.channelId);
+        if (config.voiceType === 'livekit') {
+          const voiceAdapter = getAdapters().voice;
+          await voiceAdapter.createRoom(event.channelId);
 
-        const avatarUrl = await getAvatarUrl(user.userId);
-        await broadcastToChannel(event.channelId, {
-          type: 'voice:joined',
-          channelId: event.channelId,
-          userId: user.userId,
-          username: user.username,
-          display_name: await getDisplayName(user.userId),
-          avatar_url: avatarUrl,
-          muted: peer.muted,
-          deafened: peer.deafened,
-        });
+          const displayName = await getDisplayName(user.userId);
+          const token = await voiceAdapter.generateJoinToken(
+            event.channelId,
+            user.userId,
+            displayName || user.username,
+          );
+          const url = (voiceAdapter as any).getServerUrl() as string;
 
-        const peersWithAvatar = await Promise.all(room.getPeerList().map(async (p) => ({
-          ...p,
-          avatar_url: await getAvatarUrl(p.userId),
-        })));
-        sendTo(user.userId, {
-          type: 'voice:peers',
-          channelId: event.channelId,
-          peers: peersWithAvatar,
-        });
+          // Send LiveKit credentials to the joining client
+          sendTo(user.userId, { type: 'voice:token', token, url, channelId: event.channelId });
 
-        // Force mute in AFK channel
-        if (await isAfkChannel(event.channelId)) {
-          const afkPeer = room.peers.get(user.userId);
-          if (afkPeer) afkPeer.muted = true;
+          // Track peer locally
+          const channel = getLivekitRoom(event.channelId);
+          channel.set(user.userId, {
+            userId: user.userId,
+            username: user.username,
+            display_name: displayName,
+            muted: false,
+            deafened: false,
+          });
+          userVoiceChannels.set(user.userId, event.channelId);
+
+          const avatarUrl = await getAvatarUrl(user.userId);
           await broadcastToChannel(event.channelId, {
-            type: 'voice:muteUpdate',
+            type: 'voice:joined',
             channelId: event.channelId,
             userId: user.userId,
-            muted: true,
+            username: user.username,
+            display_name: displayName,
+            avatar_url: avatarUrl,
+            muted: false,
+            deafened: false,
           });
+
+          const peersWithAvatar = await Promise.all(
+            Array.from(channel.values()).map(async (p) => ({
+              ...p,
+              avatar_url: await getAvatarUrl(p.userId),
+            })),
+          );
+          sendTo(user.userId, {
+            type: 'voice:peers',
+            channelId: event.channelId,
+            peers: peersWithAvatar,
+          });
+
+          // Force mute in AFK channel
+          if (await isAfkChannel(event.channelId)) {
+            const peer = channel.get(user.userId);
+            if (peer) peer.muted = true;
+            await broadcastToChannel(event.channelId, {
+              type: 'voice:muteUpdate',
+              channelId: event.channelId,
+              userId: user.userId,
+              muted: true,
+            });
+          }
+        } else {
+          const room = await getOrCreateRoom(event.channelId);
+          const peer = room.addPeer(user.userId, user.username, await getDisplayName(user.userId));
+          userVoiceChannels.set(user.userId, event.channelId);
+
+          const avatarUrl = await getAvatarUrl(user.userId);
+          await broadcastToChannel(event.channelId, {
+            type: 'voice:joined',
+            channelId: event.channelId,
+            userId: user.userId,
+            username: user.username,
+            display_name: await getDisplayName(user.userId),
+            avatar_url: avatarUrl,
+            muted: peer.muted,
+            deafened: peer.deafened,
+          });
+
+          const peersWithAvatar = await Promise.all(room.getPeerList().map(async (p) => ({
+            ...p,
+            avatar_url: await getAvatarUrl(p.userId),
+          })));
+          sendTo(user.userId, {
+            type: 'voice:peers',
+            channelId: event.channelId,
+            peers: peersWithAvatar,
+          });
+
+          // Force mute in AFK channel
+          if (await isAfkChannel(event.channelId)) {
+            const afkPeer = room.peers.get(user.userId);
+            if (afkPeer) afkPeer.muted = true;
+            await broadcastToChannel(event.channelId, {
+              type: 'voice:muteUpdate',
+              channelId: event.channelId,
+              userId: user.userId,
+              muted: true,
+            });
+          }
         }
         break;
       }
@@ -174,9 +304,14 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
             });
             break;
           }
-          const room = rooms.get(channelId);
-          const peer = room?.peers.get(user.userId);
-          if (peer) peer.muted = event.muted;
+          if (config.voiceType === 'livekit') {
+            const peer = livekitPeers.get(channelId)?.get(user.userId);
+            if (peer) peer.muted = event.muted;
+          } else {
+            const room = rooms.get(channelId);
+            const peer = room?.peers.get(user.userId);
+            if (peer) peer.muted = event.muted;
+          }
           await broadcastToChannel(channelId, {
             type: 'voice:muteUpdate',
             channelId,
@@ -190,9 +325,14 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
       case 'voice:deafen': {
         const channelId = userVoiceChannels.get(user.userId);
         if (channelId) {
-          const room = rooms.get(channelId);
-          const peer = room?.peers.get(user.userId);
-          if (peer) peer.deafened = event.deafened;
+          if (config.voiceType === 'livekit') {
+            const peer = livekitPeers.get(channelId)?.get(user.userId);
+            if (peer) peer.deafened = event.deafened;
+          } else {
+            const room = rooms.get(channelId);
+            const peer = room?.peers.get(user.userId);
+            if (peer) peer.deafened = event.deafened;
+          }
           await broadcastToChannel(channelId, {
             type: 'voice:deafenUpdate',
             channelId,
@@ -204,6 +344,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
       }
 
       case 'rtc:getRouterCapabilities': {
+        if (config.voiceType === 'livekit') return;
         // Verify the user is actually in this voice channel
         const currentChannel = userVoiceChannels.get(user.userId);
         if (currentChannel !== event.channelId) {
@@ -219,6 +360,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
       }
 
       case 'rtc:createTransport': {
+        if (config.voiceType === 'livekit') return;
         const channelId = userVoiceChannels.get(user.userId);
         if (!channelId) {
           sendTo(user.userId, { type: 'error', message: 'Not in a voice channel' });
@@ -231,6 +373,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
       }
 
       case 'rtc:connectTransport': {
+        if (config.voiceType === 'livekit') return;
         const channelId = userVoiceChannels.get(user.userId);
         if (!channelId) return;
         const room = rooms.get(channelId)!;
@@ -240,6 +383,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
       }
 
       case 'rtc:produce': {
+        if (config.voiceType === 'livekit') return;
         const channelId = userVoiceChannels.get(user.userId);
         if (!channelId) return;
         const room = rooms.get(channelId)!;
@@ -307,6 +451,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
       }
 
       case 'screen:stop': {
+        if (config.voiceType === 'livekit') return;
         const channelId = userVoiceChannels.get(user.userId);
         if (!channelId) return;
         const room = rooms.get(channelId);
@@ -318,6 +463,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
       }
 
       case 'rtc:consume': {
+        if (config.voiceType === 'livekit') return;
         const channelId = userVoiceChannels.get(user.userId);
         if (!channelId) return;
         const room = rooms.get(channelId)!;
@@ -331,6 +477,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
       }
 
       case 'rtc:resumeConsumer': {
+        if (config.voiceType === 'livekit') return;
         const channelId = userVoiceChannels.get(user.userId);
         if (!channelId) return;
         const room = rooms.get(channelId)!;

@@ -219,6 +219,12 @@ setWorkerDiedCallback(async () => {
 // Health check
 app.get('/api/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
 
+// Voice/storage config — used by clients to select the right voice backend
+app.get('/api/config', async () => ({
+  voiceType: config.voiceType,
+  storageType: config.storageType,
+}));
+
 // Public instance info (no auth required) — used by website widget
 app.get('/api/public/instance/info', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (_request, reply) => {
   reply.header('Access-Control-Allow-Origin', '*');
