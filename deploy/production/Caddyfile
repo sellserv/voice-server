@@ -1,0 +1,18 @@
+{
+	auto_https off
+}
+
+{$DOMAIN} {
+	tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
+	reverse_proxy app:3000
+}
+
+{$ADMIN_DOMAIN} {
+	tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
+	reverse_proxy admin-console:3001
+}
+
+{$LIVEKIT_DOMAIN} {
+	tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
+	reverse_proxy livekit:7880
+}
