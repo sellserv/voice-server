@@ -54,11 +54,11 @@ export async function joinVoice(channelId: string): Promise<MediaStream> {
   const { url, token } = await waitForToken();
 
   // Capture mic via shared audio pipeline (voice changer, RNNoise, VAD gate)
-  const pipeline = await initAudioPipeline(async (track) => {
+  const pipeline = await initAudioPipeline((track) => {
     if (room && audioPublication) {
       const localTrack = audioPublication.track;
       if (localTrack) {
-        await localTrack.replaceTrack(track);
+        localTrack.replaceTrack(track, { userProvidedTrack: true }).catch(console.error);
       }
     }
   });
