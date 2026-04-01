@@ -1,9 +1,23 @@
 services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    depends_on:
+      - sellserv
+
   sellserv:
     image: ghcr.io/sellserv/voice-server:latest
     restart: unless-stopped
     ports:
-      - "3000:3000"
       - "40000-40100:40000-40100/udp"
     volumes:
       - data:/app/data
@@ -14,3 +28,5 @@ services:
 volumes:
   data:
   uploads:
+  caddy-data:
+  caddy-config:
