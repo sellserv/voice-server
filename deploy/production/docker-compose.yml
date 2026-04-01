@@ -33,6 +33,21 @@ services:
     volumes:
       - valkey-data:/data
 
+  admin-console:
+    image: ghcr.io/sellserv/admin-console:latest
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      API_URL: http://app:3000
+      OAUTH2_CLIENT_ID: ${OAUTH2_CLIENT_ID}
+      OAUTH2_CLIENT_SECRET: ${OAUTH2_CLIENT_SECRET}
+      OAUTH2_REDIRECT_URI: ${OAUTH2_REDIRECT_URI}
+      SESSION_SECRET: ${SESSION_SECRET}
+    depends_on:
+      - app
+
   livekit:
     image: livekit/livekit-server:latest
     restart: unless-stopped
