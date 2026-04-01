@@ -304,11 +304,16 @@ function cleanupVoiceMode() {
 // RNNoise helpers
 // ---------------------------------------------------------------------------
 
+let rnnoiseModuleLoaded = false;
+
 async function createRnnoiseTrack(rawTrack: MediaStreamTrack): Promise<MediaStreamTrack> {
   if (!audioContext) throw new Error('No AudioContext');
 
   const wasmBinary = await loadRnnoise({ url: rnnoiseWasmPath, simdUrl: rnnoiseSimdWasmPath });
-  await audioContext.audioWorklet.addModule(rnnoiseWorkletPath);
+  if (!rnnoiseModuleLoaded) {
+    await audioContext.audioWorklet.addModule(rnnoiseWorkletPath);
+    rnnoiseModuleLoaded = true;
+  }
 
   rnnoiseNode = new RnnoiseWorkletNode(audioContext, { maxChannels: 1, wasmBinary });
   rnnoiseSource = audioContext.createMediaStreamSource(new MediaStream([rawTrack]));
@@ -454,7 +459,16 @@ export async function rebuildAudioChain(): Promise<void> {
   destroyRnnoise();
   destroyVadGate();
 
-  const track = await buildChain();
+  let track: MediaStreamTrack;
+  try {
+    track = await buildChain();
+  } catch (e) {
+    console.error('Audio chain rebuild failed, falling back to raw track:', e);
+    // Fall back to raw mic with just a VAD gate so audio still works
+    const rawTrack = localStream.getAudioTracks()[0];
+    if (!rawTrack) return;
+    track = createVadGate(rawTrack);
+  }
 
   // Restore gate state based on current mode
   restoreGateState();
@@ -471,6 +485,7 @@ export function destroyAudioPipeline(): void {
 
   audioContext?.close();
   audioContext = null;
+  rnnoiseModuleLoaded = false;
 
   localStream?.getTracks().forEach((t) => t.stop());
   localStream = null;
