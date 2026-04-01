@@ -889,6 +889,7 @@ export type ServerEvent =
       token: string;
       url: string;
       channelId: string;
+      e2eeKey: string;
     }
   | {
       type: 'error';
