@@ -518,7 +518,3 @@ export async function applyNoiseSuppression(_enabled: boolean): Promise<void> {
 export async function applyVoiceChanger(): Promise<void> {
   await rebuildAudioChain();
 }
-
-export function getAudioContext(): AudioContext | null {
-  return audioContext;
-}
