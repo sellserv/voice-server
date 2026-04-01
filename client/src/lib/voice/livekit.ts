@@ -1,4 +1,4 @@
-import { Room, RoomEvent, Track, type RemoteAudioTrack, type LocalTrackPublication } from 'livekit-client';
+import { Room, RoomEvent, Track, ExternalE2EEKeyProvider, type RemoteAudioTrack, type LocalTrackPublication } from 'livekit-client';
 import { sendWs, onWsEvent } from '../ws';
 import { pingMs, inVoiceChannel } from '../stores/media';
 import { getUserVolume } from '../stores/settings';
@@ -7,6 +7,7 @@ import { localVideoStream } from '../stores/video';
 import { startBackgroundAudio, stopBackgroundAudio } from '../capacitor.js';
 import { get } from 'svelte/store';
 import { channels } from '../stores/channels.js';
+import e2eeWorkerUrl from 'livekit-client/e2ee-worker?url';
 import {
   initAudioPipeline,
   destroyAudioPipeline,
@@ -28,7 +29,7 @@ const participantAudioTracks = new Map<string, RemoteAudioTrack>();
 let unsubTokenListener: (() => void) | null = null;
 
 // Wait for a voice:token event from the server
-function waitForToken(timeout = 10000): Promise<{ url: string; token: string }> {
+function waitForToken(timeout = 10000): Promise<{ url: string; token: string; e2eeKey: string }> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       unsubTokenListener?.();
@@ -41,7 +42,7 @@ function waitForToken(timeout = 10000): Promise<{ url: string; token: string }> 
         clearTimeout(timer);
         unsubTokenListener?.();
         unsubTokenListener = null;
-        resolve({ url: event.url, token: event.token });
+        resolve({ url: event.url, token: event.token, e2eeKey: event.e2eeKey });
       }
     });
   });
@@ -51,7 +52,7 @@ export async function joinVoice(channelId: string): Promise<MediaStream> {
   // Request a LiveKit token from the server
   sendWs({ type: 'voice:join', channelId });
 
-  const { url, token } = await waitForToken();
+  const { url, token, e2eeKey } = await waitForToken();
 
   // Capture mic via shared audio pipeline (voice changer, RNNoise, VAD gate)
   const pipeline = await initAudioPipeline((track) => {
@@ -63,10 +64,17 @@ export async function joinVoice(channelId: string): Promise<MediaStream> {
     }
   });
 
-  // TODO: E2EE support — livekit-client supports E2EE via KeyProvider/E2EEManager,
-  // but setup requires a shared key or key exchange mechanism. Add in a follow-up.
+  // E2EE — server distributes a per-channel key, LiveKit SDK handles
+  // frame-level encryption. Key ratchets forward when participants leave.
+  const keyProvider = new ExternalE2EEKeyProvider();
+  await keyProvider.setKey(e2eeKey);
 
-  room = new Room();
+  room = new Room({
+    e2ee: {
+      keyProvider,
+      worker: new Worker(new URL(e2eeWorkerUrl, import.meta.url), { type: 'module' }),
+    },
+  });
 
   // Handle remote audio tracks as they are subscribed
   room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
