@@ -102,42 +102,9 @@ Multi-container deployment for scaling to thousands of users. Same Docker image,
 
 > Both modes use the same adapter layer. Self-hosters get the simple stack by default. Production features activate when their env vars are set (e.g., `DB_TYPE=postgres`, `REDIS_URL`, `VOICE_TYPE=livekit`, `STORAGE_TYPE=s3`).
 
-## Self-Hosting
+## Documentation
 
-### Quick Start
-
-```bash
-git clone https://github.com/sellserv/voice-server.git
-cd voice-server/deploy/self-hosted
-cp .env.example .env
-# Edit .env — set JWT_SECRET and DOMAIN
-docker compose up -d
-```
-
-This starts 2 containers (Caddy + app) with automatic HTTPS via Let's Encrypt.
-
-### Production Deployment
-
-```bash
-cd deploy/production
-cp .env.example .env
-# Edit .env — configure PostgreSQL, Valkey, LiveKit, S3/R2 credentials
-docker compose up -d
-```
-
-This starts 6 containers: Caddy, app, admin-console, PostgreSQL, Valkey, and LiveKit.
-
-### Development
-
-```bash
-pnpm install
-pnpm run dev        # starts server + client concurrently
-pnpm run dev:server # server only (tsx watch)
-pnpm run dev:client # client only (Vite on :5173)
-pnpm test           # run all tests (Vitest)
-```
-
-For full guides, visit the **[Documentation](https://info.sellserv.net/docs.html)**.
+For self-hosting guides, setup instructions, and environment variable reference, visit the **[Documentation](https://info.sellserv.net/docs.html)**.
 
 ## License
 
