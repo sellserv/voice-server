@@ -15,9 +15,13 @@ services:
       ADMIN_DOMAIN: ${ADMIN_DOMAIN}
       LIVEKIT_DOMAIN: ${LIVEKIT_DOMAIN}
     depends_on:
-      - app
-      - admin-console
-      - livekit
+      app:
+        condition: service_healthy
+      admin-console:
+        condition: service_started
+        required: false
+      livekit:
+        condition: service_started
 
   app:
     image: ghcr.io/sellserv/voice-server:${IMAGE_TAG:-latest}
