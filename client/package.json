@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/local-notifications": "^6.1.3",
     "@emoji-mart/data": "^1.2.1",
     "@sapphi-red/web-noise-suppressor": "^0.3.5",
     "@voip-server/shared": "workspace:*",
