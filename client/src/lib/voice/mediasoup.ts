@@ -138,9 +138,6 @@ export async function joinVoice(channelId: string): Promise<MediaStream> {
   setupRtcListener();
   pendingPeers = [];
 
-  // Join the voice channel first (server will send voice:peers back)
-  sendWs({ type: 'voice:join', channelId });
-
   // Initialize shared audio pipeline (mic capture, voice changer, RNNoise, VAD/PTT)
   const pipeline = await initAudioPipeline((track) => {
     if (producer) {
@@ -149,6 +146,9 @@ export async function joinVoice(channelId: string): Promise<MediaStream> {
   });
   audioContext = pipeline.audioContext;
   localStream = pipeline.localStream;
+
+  // Join the voice channel (server will send voice:peers back)
+  sendWs({ type: 'voice:join', channelId });
 
   // Set output device on audioContext (used for remote audio playback on Firefox)
   selectedOutputDevice = get(selectedOutputDeviceId);
@@ -455,9 +455,6 @@ export function leaveVoice() {
   sendWs({ type: 'voice:leave' });
 
   inVoiceChannel.set(null);
-  destroyAudioPipeline();
-  localStream = null;
-  audioContext = null;
 
   // Clear ping interval
   if (pingInterval) {
@@ -514,6 +511,12 @@ export function leaveVoice() {
     gain.disconnect();
   }
   audioGainNodes.clear();
+
+  // Destroy audio pipeline after remote audio nodes are disconnected
+  // (pipeline closes the AudioContext, which those nodes depend on)
+  destroyAudioPipeline();
+  localStream = null;
+  audioContext = null;
   deafened = false;
 
   sendTransport?.close();
