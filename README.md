@@ -19,7 +19,7 @@
 ### Communication
 
 - **Text Chat** — Real-time messaging, editing/deletion, typing indicators, replies, emoji reactions, link previews, full-text search, message pinning
-- **Voice Chat** — WebRTC audio via mediasoup SFU, voice activity detection (VAD), push-to-talk (PTT), speaking indicators, per-user volume control
+- **Voice Chat** — WebRTC audio via mediasoup or LiveKit SFU, voice activity detection (VAD), push-to-talk (PTT), speaking indicators, per-user volume control
 - **Video Calls** — 1-on-1 video calls with webcam support, accept with video or audio only, camera toggle
 - **Screen Sharing** — Share your screen to a voice channel with a fullscreen viewer
 - **Direct Messages** — Private 1-on-1 DM channels with voice and video call support
@@ -30,7 +30,7 @@
 
 - **Watch Together** — Synchronized YouTube watching in voice channels with host control and video queue
 - **Soundboard** — Upload short audio clips and play them in voice channels
-- **Voice Changer** — Real-time audio effects with 6 presets: Deep, Chipmunk, Robot, Echo, Radio, Whisper
+- **Voice Changer** — Real-time audio effects with 6 presets: Deep, Chipmunk, Robot, Echo, Radio, Whisper (works on both mediasoup and LiveKit backends)
 
 ### Server Management
 
@@ -63,7 +63,7 @@
 - **Microsoft Store** — Available as an APPX package
 - **Mobile App** — Android via Capacitor with push notifications
 - **Themes** — Default, Midnight, Dark, Light
-- **Noise Suppression** — RNNoise via WebAssembly
+- **Noise Suppression** — RNNoise via WebAssembly (works on both mediasoup and LiveKit backends)
 - **Game Activity** — Detects and displays currently playing games
 - **Inline Video** — Play YouTube, Twitch, and Vimeo links directly in chat
 
@@ -83,6 +83,7 @@ Single container, zero external dependencies. Everything just works.
 | Database | SQLite via better-sqlite3 + FTS5 |
 | Voice/Video | mediasoup 3.15 (WebRTC SFU) |
 | File Storage | Local disk |
+| Reverse Proxy | Caddy (automatic Let's Encrypt TLS) |
 | Auth | bcrypt + JWT + otpauth (TOTP) |
 | Desktop | Electron + electron-builder |
 | Mobile | Capacitor (Android) |
@@ -97,15 +98,44 @@ Multi-container deployment for scaling to thousands of users. Same Docker image,
 | Cache / Pub/Sub | Valkey (Redis-compatible) |
 | Voice/Video | LiveKit (WebRTC SFU) with E2EE |
 | File Storage | S3-compatible (Cloudflare R2) with CDN |
+| Reverse Proxy | Caddy (Cloudflare origin certs) |
 
 > Both modes use the same adapter layer. Self-hosters get the simple stack by default. Production features activate when their env vars are set (e.g., `DB_TYPE=postgres`, `REDIS_URL`, `VOICE_TYPE=livekit`, `STORAGE_TYPE=s3`).
 
 ## Self-Hosting
 
-Deploy configs are in the `deploy/` directory:
+### Quick Start
 
-- **`deploy/self-hosted/`** — Single container Docker Compose + `.env.example`
-- **`deploy/production/`** — Multi-container setup (PostgreSQL, Valkey, LiveKit) + `.env.example`
+```bash
+git clone https://github.com/sellserv/voice-server.git
+cd voice-server/deploy/self-hosted
+cp .env.example .env
+# Edit .env — set JWT_SECRET and DOMAIN
+docker compose up -d
+```
+
+This starts 2 containers (Caddy + app) with automatic HTTPS via Let's Encrypt.
+
+### Production Deployment
+
+```bash
+cd deploy/production
+cp .env.example .env
+# Edit .env — configure PostgreSQL, Valkey, LiveKit, S3/R2 credentials
+docker compose up -d
+```
+
+This starts 6 containers: Caddy, app, admin-console, PostgreSQL, Valkey, and LiveKit.
+
+### Development
+
+```bash
+pnpm install
+pnpm run dev        # starts server + client concurrently
+pnpm run dev:server # server only (tsx watch)
+pnpm run dev:client # client only (Vite on :5173)
+pnpm test           # run all tests (Vitest)
+```
 
 For full guides, visit the **[Documentation](https://info.sellserv.net/docs.html)**.
 
