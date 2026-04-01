@@ -1,24 +1,22 @@
 #!/bin/bash
-# Voice Server — Setup Script
-# Run as root on a fresh Ubuntu 24.04 LTS (recommended) / Debian 12+
-# Review and adapt before running!
+# SellServ Voice — Production Setup Script
+# Run as root on a fresh Ubuntu 24.04 LTS / Debian 12+
+# Installs Docker, configures firewall for Cloudflare-only access.
 
 set -euo pipefail
 
-# Must be run as root
 if [[ $EUID -ne 0 ]]; then
     echo "This script must be run as root"
     exit 1
 fi
 
-DOMAIN="your-domain.com"
 APP_DIR="/opt/voip-server"
 
-echo "=== Voice Server Setup ==="
+echo "=== SellServ Voice — Production Setup ==="
 
-# 1. System updates + swap + automatic security updates
+# 1. System updates + swap
 apt update && apt upgrade -y
-apt install -y unattended-upgrades
+apt install -y curl git unattended-upgrades
 dpkg-reconfigure -plow unattended-upgrades
 if ! swapon --show | grep -q /swapfile; then
     fallocate -l 1G /swapfile
@@ -28,128 +26,100 @@ if ! swapon --show | grep -q /swapfile; then
     echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-# 2. Install Node.js 22 (download script first, then execute)
-curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh
-bash /tmp/nodesource_setup.sh
-rm -f /tmp/nodesource_setup.sh
-apt install -y nodejs
+# 2. Install Docker
+curl -fsSL https://get.docker.com | sh
 
-# 3. Install build tools (needed for mediasoup/bcrypt native modules)
-apt install -y build-essential python3
-
-# 4. Install nginx
-apt install -y nginx
-
-# 5. Firewall
-ufw allow 22/tcp
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 40000:40100/udp  # mediasoup RTP
-ufw --force enable
-
-# 6. SSH hardening
+# 3. SSH hardening
 sed -i 's/#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
 sed -i 's/#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
 systemctl restart ssh || systemctl restart sshd || true
 
-# 7. Install fail2ban
+# 4. Install fail2ban
 apt install -y fail2ban
 systemctl enable fail2ban
 systemctl start fail2ban
 
-# 8. Create app user
-useradd -r -m -d "$APP_DIR" -s /bin/false voip-server || true
+# 5. Firewall — allow only Cloudflare IPs on ports 80/443
+ufw --force reset
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp
 
-# 9. Setup directories
-mkdir -p "$APP_DIR/data" "$APP_DIR/uploads"
+# Cloudflare IPv4 ranges
+for ip in \
+    173.245.48.0/20 \
+    103.21.244.0/22 \
+    103.22.200.0/22 \
+    103.31.4.0/22 \
+    141.101.64.0/18 \
+    108.162.192.0/18 \
+    190.93.240.0/20 \
+    188.114.96.0/20 \
+    197.234.240.0/22 \
+    198.41.128.0/17 \
+    162.158.0.0/15 \
+    104.16.0.0/13 \
+    104.24.0.0/14 \
+    172.64.0.0/13 \
+    131.0.72.0/22; do
+    ufw allow from "$ip" to any port 80,443 proto tcp
+done
 
-# 10. Install pnpm and dependencies & build
-npm install -g pnpm
-cd "$APP_DIR"
-pnpm install --frozen-lockfile
-pnpm run build
+# Cloudflare IPv6 ranges
+for ip in \
+    2400:cb00::/32 \
+    2606:4700::/32 \
+    2803:f800::/32 \
+    2405:b500::/32 \
+    2405:8100::/32 \
+    2a06:98c0::/29 \
+    2c0f:f248::/32; do
+    ufw allow from "$ip" to any port 80,443 proto tcp
+done
 
-# 11. Set ownership
-chown -R voip-server:voip-server "$APP_DIR"
+# LiveKit ports (WebRTC — open to all)
+ufw allow 7881/tcp
+ufw allow 50000:50100/udp
 
-# 12. Create .env from example
-if [ ! -f "$APP_DIR/.env" ]; then
-    cp "$APP_DIR/.env.example" "$APP_DIR/.env"
-    # Generate random JWT secret
-    JWT_SECRET=$(openssl rand -hex 32)
-    sed -i "0,/change-me-to-a-random-string/s/change-me-to-a-random-string/$JWT_SECRET/" "$APP_DIR/.env"
-    # Generate random setup token for first admin registration
-    SETUP_TOKEN=$(openssl rand -hex 32)
-    sed -i "s/change-me-to-a-random-string/$SETUP_TOKEN/" "$APP_DIR/.env"
-    # Bind to localhost only (nginx is the reverse proxy)
-    sed -i "s/HOST=0.0.0.0/HOST=127.0.0.1/" "$APP_DIR/.env"
-    # Set CORS origins
-    sed -i "s|CORS_ORIGINS=.*|CORS_ORIGINS=https://$DOMAIN|" "$APP_DIR/.env"
-else
-    # .env already exists — regenerate secrets if still placeholders
-    if grep -q "change-me-to-a-random-string" "$APP_DIR/.env"; then
-        JWT_SECRET=$(openssl rand -hex 32)
-        sed -i "0,/change-me-to-a-random-string/s/change-me-to-a-random-string/$JWT_SECRET/" "$APP_DIR/.env"
-        SETUP_TOKEN=$(openssl rand -hex 32)
-        sed -i "s/change-me-to-a-random-string/$SETUP_TOKEN/" "$APP_DIR/.env"
-    fi
-    sed -i "s/HOST=0.0.0.0/HOST=127.0.0.1/" "$APP_DIR/.env"
-    sed -i "s|CORS_ORIGINS=.*|CORS_ORIGINS=https://$DOMAIN|" "$APP_DIR/.env"
-fi
+ufw --force enable
 
-# Read the setup token from .env so we can print it
-SETUP_TOKEN=$(grep '^SETUP_TOKEN=' "$APP_DIR/.env" | cut -d'=' -f2)
-
-echo ""
-echo "=== IMPORTANT: Edit .env ==="
-echo "nano $APP_DIR/.env"
-echo "Set MEDIASOUP_ANNOUNCED_IP to your server's public IP"
-echo ""
-
-# 13. SSL directory
-echo "=== SSL Setup ==="
-echo "1. Go to Cloudflare Dashboard > SSL/TLS > Origin Server"
-echo "2. Create a certificate for $DOMAIN"
-echo "3. Save the certificate to /etc/ssl/voip-server/origin.pem"
-echo "4. Save the private key to /etc/ssl/voip-server/origin-key.pem"
+# 6. Setup directories
+mkdir -p "$APP_DIR/deploy/production"
 mkdir -p -m 700 /etc/ssl/voip-server
 
-# 14. nginx config
-cp "$APP_DIR/deploy/nginx.conf" /etc/nginx/sites-available/voip-server
-sed -i "s/your-domain.com/$DOMAIN/g" /etc/nginx/sites-available/voip-server
-ln -sf /etc/nginx/sites-available/voip-server /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default
+# 7. SSL instructions
+echo ""
+echo "=== SSL Setup ==="
+echo "1. Go to Cloudflare Dashboard > SSL/TLS > Origin Server"
+echo "2. Create a certificate (or use existing) for your domain"
+echo "3. Save certificate to /etc/ssl/voip-server/origin.pem"
+echo "4. Save private key to /etc/ssl/voip-server/origin-key.pem"
 
-# Test nginx config — warn but don't fail if SSL certs aren't in place yet
-if nginx -t 2>/dev/null; then
-    systemctl reload nginx
-    echo "nginx configured and reloaded."
-else
-    echo ""
-    echo "WARNING: nginx config test failed (likely missing SSL certs)."
-    echo "After placing your SSL certs, run: nginx -t && systemctl reload nginx"
+# 8. .env setup
+if [ ! -f "$APP_DIR/deploy/production/.env" ]; then
+    if [ -f "$APP_DIR/deploy/production/.env.example" ]; then
+        cp "$APP_DIR/deploy/production/.env.example" "$APP_DIR/deploy/production/.env"
+        # Generate random secrets
+        sed -i "s/^JWT_SECRET=$/JWT_SECRET=$(openssl rand -hex 32)/" "$APP_DIR/deploy/production/.env"
+        sed -i "s/^DB_PASSWORD=change-me$/DB_PASSWORD=$(openssl rand -hex 16)/" "$APP_DIR/deploy/production/.env"
+        sed -i "s/^SESSION_SECRET=$/SESSION_SECRET=$(openssl rand -hex 32)/" "$APP_DIR/deploy/production/.env"
+        sed -i "s/^OAUTH2_CLIENT_SECRET=$/OAUTH2_CLIENT_SECRET=$(openssl rand -hex 32)/" "$APP_DIR/deploy/production/.env"
+    fi
 fi
 
-# 15. systemd service
-cp "$APP_DIR/deploy/voip-server.service" /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable voip-server
-
-# Don't start the service yet — .env needs to be configured first
 echo ""
 echo "=== Setup Complete ==="
 echo ""
-echo "SETUP TOKEN: $SETUP_TOKEN"
-echo "(Use this when registering the first admin account)"
-echo ""
 echo "Next steps:"
-echo "  1. Edit .env:  nano $APP_DIR/.env"
-echo "     - Set MEDIASOUP_ANNOUNCED_IP to your server's public IP"
-echo "     - Set RESEND_API_KEY if you want email verification/MFA"
+echo "  1. Clone the repo:  git clone https://github.com/sellserv/voice-server.git $APP_DIR"
 echo "  2. Place SSL certs in /etc/ssl/voip-server/"
 echo "     - origin.pem (certificate)"
 echo "     - origin-key.pem (private key)"
-echo "  3. Reload nginx:  nginx -t && systemctl reload nginx"
-echo "  4. Start the server:  systemctl start voip-server"
-echo "  5. Check status:  systemctl status voip-server"
-echo "  6. View logs:  journalctl -u voip-server -f"
+echo "  3. Edit .env:  nano $APP_DIR/deploy/production/.env"
+echo "     - Set DOMAIN, ADMIN_DOMAIN, LIVEKIT_DOMAIN"
+echo "     - Set LIVEKIT_API_KEY and LIVEKIT_API_SECRET"
+echo "     - Set ADMIN_USERS"
+echo "     - Configure email, storage, billing as needed"
+echo "  4. Start:  cd $APP_DIR/deploy/production && docker compose up -d"
+echo "  5. Check:  docker compose ps"
+echo "  6. Logs:   docker compose logs -f app"
