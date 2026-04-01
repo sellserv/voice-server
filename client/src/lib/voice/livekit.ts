@@ -1,4 +1,4 @@
-import { Room, RoomEvent, Track, type RemoteAudioTrack } from 'livekit-client';
+import { Room, RoomEvent, Track, type RemoteAudioTrack, type LocalTrackPublication } from 'livekit-client';
 import { sendWs, onWsEvent } from '../ws';
 import { pingMs, inVoiceChannel } from '../stores/media';
 import { getUserVolume } from '../stores/settings';
@@ -7,11 +7,19 @@ import { localVideoStream } from '../stores/video';
 import { startBackgroundAudio, stopBackgroundAudio } from '../capacitor.js';
 import { get } from 'svelte/store';
 import { channels } from '../stores/channels.js';
+import {
+  initAudioPipeline,
+  destroyAudioPipeline,
+  setManuallyMuted,
+  isManuallyMuted,
+  applyNoiseSuppression as pipelineApplyNoiseSuppression,
+  applyVoiceChanger as pipelineApplyVoiceChanger,
+} from './audio-pipeline.js';
 
 let room: Room | null = null;
 let deafened = false;
-let manuallyMuted = false;
 let pingInterval: ReturnType<typeof setInterval> | null = null;
+let audioPublication: LocalTrackPublication | null = null;
 
 // Map of participantIdentity -> attached audio element, for volume control
 const participantAudioTracks = new Map<string, RemoteAudioTrack>();
@@ -45,6 +53,16 @@ export async function joinVoice(channelId: string): Promise<MediaStream> {
 
   const { url, token } = await waitForToken();
 
+  // Capture mic via shared audio pipeline (voice changer, RNNoise, VAD gate)
+  const pipeline = await initAudioPipeline(async (track) => {
+    if (room && audioPublication) {
+      const localTrack = audioPublication.track;
+      if (localTrack) {
+        await localTrack.replaceTrack(track);
+      }
+    }
+  });
+
   // TODO: E2EE support — livekit-client supports E2EE via KeyProvider/E2EEManager,
   // but setup requires a shared key or key exchange mechanism. Add in a follow-up.
 
@@ -75,16 +93,13 @@ export async function joinVoice(channelId: string): Promise<MediaStream> {
     }
   });
 
-  // Speaking detection via LiveKit's built-in VAD
-  room.on(RoomEvent.ActiveSpeakersChanged, (_speakers) => {
-    // Speakers list is managed by the server — no local action needed here.
-    // Components can subscribe to this event via the room instance if needed.
-  });
-
   await room.connect(url, token);
 
-  // Enable microphone — LiveKit handles the getUserMedia call internally
-  await room.localParticipant.setMicrophoneEnabled(true);
+  // Publish pipeline-processed audio track instead of letting LiveKit capture the mic
+  const publication = await room.localParticipant.publishTrack(pipeline.initialTrack, {
+    source: Track.Source.Microphone,
+  });
+  audioPublication = publication;
 
   // Start ping interval
   sendWs({ type: 'ws:ping', timestamp: Date.now() });
@@ -96,9 +111,7 @@ export async function joinVoice(channelId: string): Promise<MediaStream> {
   const channel = get(channels).find(c => c.id === channelId);
   void startBackgroundAudio(channel?.name || 'voice');
 
-  // Return a dummy MediaStream — LiveKit manages tracks internally.
-  // Callers that store the returned stream only use it to check truthiness.
-  return new MediaStream();
+  return pipeline.localStream;
 }
 
 export function leaveVoice() {
@@ -123,19 +136,21 @@ export function leaveVoice() {
   isScreenSharing.set(false);
   localVideoStream.set(null);
   deafened = false;
-  manuallyMuted = false;
+  audioPublication = null;
 
   room?.disconnect();
   room = null;
+
+  // Destroy audio pipeline last (closes AudioContext, stops mic)
+  destroyAudioPipeline();
 }
 
 export function toggleMute(): boolean {
   if (!room) return false;
-
-  manuallyMuted = !manuallyMuted;
-  room.localParticipant.setMicrophoneEnabled(!manuallyMuted).catch(console.error);
-  sendWs({ type: 'voice:mute', muted: manuallyMuted });
-  return manuallyMuted;
+  const muted = !isManuallyMuted();
+  setManuallyMuted(muted);
+  sendWs({ type: 'voice:mute', muted });
+  return muted;
 }
 
 export function toggleDeafen(): boolean {
@@ -155,7 +170,7 @@ export function toggleDeafen(): boolean {
 }
 
 export function isMuted(): boolean {
-  return manuallyMuted;
+  return isManuallyMuted();
 }
 
 export async function startScreenShare() {
@@ -192,13 +207,12 @@ export function setUserAudioVolume(userId: string, volume: number, muted: boolea
   audioTrack.setVolume(deafened ? 0 : vol);
 }
 
-// No-op stubs — LiveKit handles audio processing differently
 export async function applyVoiceChanger() {
-  // Not supported in LiveKit backend — voice changer is mediasoup-only
+  await pipelineApplyVoiceChanger();
 }
 
-export async function applyNoiseSuppression(_enabled: boolean) {
-  // Not supported in LiveKit backend — use LiveKit's built-in noise cancellation
+export async function applyNoiseSuppression(enabled: boolean) {
+  await pipelineApplyNoiseSuppression(enabled);
 }
 
 export function setupRtcListener() {
