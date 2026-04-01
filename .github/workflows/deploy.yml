@@ -26,59 +26,28 @@ jobs:
           command_timeout: 8m
           script: |
             cd /opt/voip-server
-            git checkout -- .
-            git clean -fd --exclude=.env --exclude=uploads/ --exclude=data/
+
+            # Pull latest deploy config
             git fetch origin main
-            git reset --hard origin/main
+            git checkout origin/main -- deploy/production/
 
-            # Skip npm ci if lockfile unchanged (check node_modules too)
-            NEW_HASH=$(md5sum package-lock.json | cut -d' ' -f1)
-            OLD_HASH=$(cat .last-lock-hash 2>/dev/null || echo "")
-            # Force reinstall if vite is missing (dev deps were pruned)
-            if [ ! -f node_modules/.bin/vite ]; then OLD_HASH=""; fi
-            if [ "$NEW_HASH" != "$OLD_HASH" ]; then
-              echo "package-lock.json changed — running npm ci"
-              npm ci
-              echo "$NEW_HASH" > .last-lock-hash
-            else
-              echo "package-lock.json unchanged — skipping npm ci"
-            fi
+            cd deploy/production
 
-            npm run build
-            # Build admin console if it exists
-            if [ -f admin-console/package.json ]; then
-              npm run build --workspace=admin-console 2>/dev/null || true
-            fi
-            npm prune --omit=dev
+            # Pull latest images and restart
+            docker compose pull
+            docker compose up -d --remove-orphans
 
-            # Sync nginx config if it exists on this server and has changed
-            NGINX_CONF=/etc/nginx/sites-available/voip-server
-            if [ -f "$NGINX_CONF" ] && ! diff -q deploy/nginx.conf "$NGINX_CONF" > /dev/null 2>&1; then
-              echo "nginx config changed — updating"
-              sudo cp "$NGINX_CONF" "$NGINX_CONF.bak"
-              sudo cp deploy/nginx.conf "$NGINX_CONF"
-              if sudo nginx -t; then
-                sudo nginx -s reload
-              else
-                echo "nginx config test failed — rolling back"
-                sudo cp "$NGINX_CONF.bak" "$NGINX_CONF"
-                sudo nginx -s reload
-              fi
-            fi
-
-            # Only restart after successful build
-            sudo systemctl restart voip-server
-            # Restart admin console if service exists
-            if systemctl is-enabled voip-admin 2>/dev/null; then
-              sudo systemctl restart voip-admin
-            fi
+            # Wait for app to be healthy
             sleep 5
-            for i in 1 2 3 4 5 6; do
-              curl -sf http://localhost:3000/api/health && { echo "Deploy successful"; exit 0; }
-              echo "Health check attempt $i failed, retrying..."
+            for i in $(seq 1 12); do
+              STATUS=$(docker compose ps app --format '{{.Health}}' 2>/dev/null)
+              if [ "$STATUS" = "healthy" ]; then
+                echo "Deploy successful"
+                exit 0
+              fi
+              echo "Waiting for app to be healthy (attempt $i)... status: $STATUS"
               sleep 5
             done
-            echo "DEPLOY FAILED — service not healthy after 30s"
-            echo "=== Recent service logs ==="
-            sudo journalctl -u voip-server --no-pager -n 40
+            echo "DEPLOY FAILED — app not healthy after 60s"
+            docker compose logs --tail=40 app
             exit 1

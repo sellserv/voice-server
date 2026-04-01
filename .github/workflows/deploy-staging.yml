@@ -6,17 +6,43 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: deploy-staging
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: Deploy to staging
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push app staging image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/sellserv/voice-server:staging
+
+      - name: Build and push admin-console staging image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: admin-console/Dockerfile
+          push: true
+          tags: ghcr.io/sellserv/admin-console:staging
+
+      - name: Deploy to staging server
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -24,42 +50,23 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 8m
           script: |
-            cd /opt/voip-server-staging
-            git checkout -- .
-            git clean -fd --exclude=.env.staging --exclude=uploads-staging/ --exclude=data/
-            git fetch origin staging
-            git reset --hard origin/staging
+            cd /opt/voip-server-staging/deploy/production
 
-            # Skip npm ci if lockfile unchanged
-            NEW_HASH=$(md5sum package-lock.json | cut -d' ' -f1)
-            OLD_HASH=$(cat .last-lock-hash 2>/dev/null || echo "")
-            if [ ! -f node_modules/.bin/vite ]; then OLD_HASH=""; fi
-            if [ "$NEW_HASH" != "$OLD_HASH" ]; then
-              echo "package-lock.json changed — running npm ci"
-              npm ci
-              echo "$NEW_HASH" > .last-lock-hash
-            else
-              echo "package-lock.json unchanged — skipping npm ci"
-            fi
+            # Pull latest images and restart
+            docker compose pull
+            docker compose up -d --remove-orphans
 
-            npm run build
-            # Build admin console if it exists
-            if [ -f admin-console/package.json ]; then
-              npm run build --workspace=admin-console 2>/dev/null || true
-            fi
-            npm prune --omit=dev
-
-            sudo systemctl restart voip-server-staging
-            # Restart admin console if service exists
-            if systemctl is-enabled voip-admin-staging 2>/dev/null; then
-              sudo systemctl restart voip-admin-staging
-            fi
+            # Wait for app to be healthy
             sleep 5
-            for i in 1 2 3 4 5 6; do
-              curl -sf http://localhost:3001/api/health && { echo "Staging deploy successful"; exit 0; }
-              echo "Health check attempt $i failed, retrying..."
+            for i in $(seq 1 12); do
+              STATUS=$(docker compose ps app --format '{{.Health}}' 2>/dev/null)
+              if [ "$STATUS" = "healthy" ]; then
+                echo "Staging deploy successful"
+                exit 0
+              fi
+              echo "Waiting for app to be healthy (attempt $i)... status: $STATUS"
               sleep 5
             done
-            echo "STAGING DEPLOY FAILED — service not healthy after 30s"
-            sudo journalctl -u voip-server-staging --no-pager -n 40
+            echo "STAGING DEPLOY FAILED — app not healthy after 60s"
+            docker compose logs --tail=40 app
             exit 1
