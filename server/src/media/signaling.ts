@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import type { JwtPayload } from '../auth/jwt.js';
 import type { ClientEvent } from '@voip-server/shared';
 import { broadcastToChannel, sendTo, getDisplayName, getAvatarUrl } from '../ws/index.js';
@@ -33,6 +34,7 @@ type LiveKitPeer = {
   deafened: boolean;
 };
 const livekitPeers = new Map<string, Map<string, LiveKitPeer>>();
+const livekitE2eeKeys = new Map<string, string>();
 
 function getLivekitRoom(channelId: string): Map<string, LiveKitPeer> {
   let channel = livekitPeers.get(channelId);
@@ -59,6 +61,7 @@ export function leaveVoiceChannel(userId: string) {
       broadcastToChannel(channelId, { type: 'voice:left', channelId, userId, username: '' });
       if (channel.size === 0) {
         livekitPeers.delete(channelId);
+        livekitE2eeKeys.delete(channelId);
         // Best-effort room cleanup; ignore errors if room is already gone
         getAdapters().voice.deleteRoom(channelId).catch(() => {});
       }
@@ -155,6 +158,7 @@ export async function clearAllRooms() {
       }
     }
     livekitPeers.clear();
+    livekitE2eeKeys.clear();
   } else {
     for (const [channelId, room] of rooms) {
       for (const userId of room.peers.keys()) {
@@ -178,6 +182,11 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
           const voiceAdapter = getAdapters().voice;
           await voiceAdapter.createRoom(event.channelId);
 
+          if (!livekitE2eeKeys.has(event.channelId)) {
+            livekitE2eeKeys.set(event.channelId, randomBytes(32).toString('base64'));
+          }
+          const e2eeKey = livekitE2eeKeys.get(event.channelId)!;
+
           const displayName = await getDisplayName(user.userId);
           const token = await voiceAdapter.generateJoinToken(
             event.channelId,
@@ -187,7 +196,7 @@ export async function handleVoiceEvent(user: JwtPayload, event: ClientEvent) {
           const url = (voiceAdapter as any).getServerUrl() as string;
 
           // Send LiveKit credentials to the joining client
-          sendTo(user.userId, { type: 'voice:token', token, url, channelId: event.channelId });
+          sendTo(user.userId, { type: 'voice:token', token, url, channelId: event.channelId, e2eeKey });
 
           // Track peer locally
           const channel = getLivekitRoom(event.channelId);
